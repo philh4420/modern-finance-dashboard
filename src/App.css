@@ -126,6 +126,65 @@ h2 {
   gap: 0.6rem;
 }
 
+.format-panel {
+  display: grid;
+  gap: 0.72rem;
+}
+
+.format-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 10rem) minmax(0, 9rem) auto;
+  gap: 0.52rem;
+  align-items: center;
+}
+
+.format-controls select {
+  appearance: none;
+  border: 1px solid color-mix(in oklab, var(--stroke) 82%, white 18%);
+  border-radius: 0.9rem;
+  min-height: 2.45rem;
+  padding: 0.58rem 2.2rem 0.58rem 0.75rem;
+  font-family: inherit;
+  font-weight: 620;
+  font-size: 0.92rem;
+  color: var(--text-main);
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--surface-card) 85%, white 15%),
+      color-mix(in oklab, var(--surface-card) 97%, var(--tone-finance) 3%)
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5.25 7.25L10 12l4.75-4.75' stroke='%23304B53' stroke-width='1.85' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, no-repeat;
+  background-position: center, right 0.72rem center;
+  background-size: cover, 0.9rem;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 42%, transparent),
+    0 12px 26px -24px color-mix(in oklab, var(--tone-finance) 45%, transparent);
+  transition:
+    border-color 170ms ease,
+    box-shadow 170ms ease,
+    transform 170ms ease;
+}
+
+.format-controls select:hover {
+  border-color: color-mix(in oklab, var(--tone-finance) 45%, var(--stroke));
+}
+
+.format-controls select:focus-visible {
+  outline: none;
+  border-color: color-mix(in oklab, var(--tone-finance) 70%, var(--stroke));
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--tone-finance) 22%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 42%, transparent),
+    0 12px 24px -20px color-mix(in oklab, var(--tone-finance) 54%, transparent);
+}
+
+.format-controls option {
+  color: oklch(26% 0.03 245);
+  background-color: white;
+}
+
 .section-tabs {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -493,7 +552,9 @@ h2 {
 .entry-form textarea,
 .filter-row input,
 .filter-row select,
-.goal-actions input {
+.goal-actions input,
+.inline-input,
+.inline-select {
   width: 100%;
   border-radius: 0.78rem;
   border: 1px solid var(--stroke);
@@ -512,7 +573,9 @@ h2 {
 .entry-form textarea:focus,
 .filter-row input:focus,
 .filter-row select:focus,
-.goal-actions input:focus {
+.goal-actions input:focus,
+.inline-input:focus,
+.inline-select:focus {
   outline: 2px solid color-mix(in oklab, var(--tone-finance) 40%, transparent);
   outline-offset: 1px;
 }
@@ -557,6 +620,12 @@ tbody td {
 
 .table-amount {
   font-weight: 660;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
 .filter-row {
@@ -647,6 +716,10 @@ tbody td {
 
   .section-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .format-controls {
+    grid-template-columns: 1fr;
   }
 
   .tab-btn {

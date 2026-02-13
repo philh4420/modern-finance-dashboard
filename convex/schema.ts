@@ -194,4 +194,10 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  financePreferences: defineTable({
+    userId: v.string(),
+    currency: v.string(),
+    locale: v.string(),
+    updatedAt: v.number(),
+  }).index('by_userId', ['userId']),
 })

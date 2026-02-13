@@ -71,6 +71,11 @@ const goalPriorityOptions: Array<{ value: GoalPriority; label: string }> = [
   { value: 'high', label: 'High' },
 ]
 
+const defaultPreference = {
+  currency: 'USD',
+  locale: 'en-US',
+}
+
 const emptySummary: Summary = {
   monthlyIncome: 0,
   monthlyBills: 0,
@@ -91,42 +96,66 @@ const emptySummary: Summary = {
   goalsFundedPercent: 0,
 }
 
-const money = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
+const fallbackCurrencyOptions = [
+  'USD',
+  'EUR',
+  'GBP',
+  'JPY',
+  'AUD',
+  'CAD',
+  'CHF',
+  'CNY',
+  'SEK',
+  'NOK',
+  'NZD',
+  'MXN',
+  'SGD',
+  'HKD',
+  'INR',
+  'BRL',
+  'ZAR',
+  'AED',
+  'SAR',
+]
 
-const percent = new Intl.NumberFormat('en-US', {
-  style: 'percent',
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-})
+const fallbackLocaleOptions = [
+  'en-US',
+  'en-GB',
+  'en-AU',
+  'en-CA',
+  'de-DE',
+  'fr-FR',
+  'es-ES',
+  'it-IT',
+  'pt-BR',
+  'ja-JP',
+  'zh-CN',
+  'zh-HK',
+  'ko-KR',
+  'hi-IN',
+  'ar-AE',
+]
 
-const dateLabel = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  year: 'numeric',
-})
+const currencyOptions = (() => {
+  const supportedValuesOf = (Intl as typeof Intl & {
+    supportedValuesOf?: (input: 'currency') => string[]
+  }).supportedValuesOf
 
-const monthLabel = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  year: 'numeric',
-})
+  if (supportedValuesOf) {
+    const supported = supportedValuesOf('currency').map((code) => code.toUpperCase())
+    return Array.from(new Set(supported)).sort((a, b) => a.localeCompare(b))
+  }
 
-const cadenceLabel = (cadence: Cadence) => cadenceOptions.find((option) => option.value === cadence)?.label ?? cadence
+  return fallbackCurrencyOptions
+})()
 
-const accountTypeLabel = (value: AccountType) =>
-  accountTypeOptions.find((option) => option.value === value)?.label ?? value
-
-const priorityLabel = (priority: GoalPriority) =>
-  goalPriorityOptions.find((option) => option.value === priority)?.label ?? priority
-
-const severityLabel = (severity: InsightSeverity) => {
-  if (severity === 'critical') return 'Critical'
-  if (severity === 'warning') return 'Watch'
-  return 'Good'
+const isValidLocale = (locale: string) => {
+  try {
+    new Intl.NumberFormat(locale)
+    return true
+  } catch {
+    return false
+  }
 }
 
 const parseFloatInput = (value: string, label: string) => {
@@ -147,6 +176,26 @@ const parseIntInput = (value: string, label: string) => {
 
 const toIsoToday = () => new Date().toISOString().slice(0, 10)
 
+const dateLabel = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+})
+
+const cadenceLabel = (cadence: Cadence) => cadenceOptions.find((option) => option.value === cadence)?.label ?? cadence
+
+const accountTypeLabel = (value: AccountType) =>
+  accountTypeOptions.find((option) => option.value === value)?.label ?? value
+
+const priorityLabel = (priority: GoalPriority) =>
+  goalPriorityOptions.find((option) => option.value === priority)?.label ?? priority
+
+const severityLabel = (severity: InsightSeverity) => {
+  if (severity === 'critical') return 'Critical'
+  if (severity === 'warning') return 'Watch'
+  return 'Good'
+}
+
 const daysUntilDate = (dateString: string) => {
   const target = new Date(`${dateString}T00:00:00`)
   const now = new Date()
@@ -159,30 +208,38 @@ function App() {
   const financeState = useQuery(api.finance.getFinanceData)
 
   const addIncome = useMutation(api.finance.addIncome)
+  const updateIncome = useMutation(api.finance.updateIncome)
   const removeIncome = useMutation(api.finance.removeIncome)
 
   const addBill = useMutation(api.finance.addBill)
+  const updateBill = useMutation(api.finance.updateBill)
   const removeBill = useMutation(api.finance.removeBill)
 
   const addCard = useMutation(api.finance.addCard)
+  const updateCard = useMutation(api.finance.updateCard)
   const removeCard = useMutation(api.finance.removeCard)
 
   const addPurchase = useMutation(api.finance.addPurchase)
+  const updatePurchase = useMutation(api.finance.updatePurchase)
   const removePurchase = useMutation(api.finance.removePurchase)
 
   const addAccount = useMutation(api.finance.addAccount)
+  const updateAccount = useMutation(api.finance.updateAccount)
   const removeAccount = useMutation(api.finance.removeAccount)
 
   const addGoal = useMutation(api.finance.addGoal)
-  const updateGoalProgress = useMutation(api.finance.updateGoalProgress)
+  const updateGoal = useMutation(api.finance.updateGoal)
   const removeGoal = useMutation(api.finance.removeGoal)
 
+  const upsertFinancePreference = useMutation(api.finance.upsertFinancePreference)
   const cleanupLegacySeedData = useMutation(api.finance.cleanupLegacySeedData)
 
   const cleanupTriggered = useRef(false)
 
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
   const [errorMessage, setErrorMessage] = useState('')
+
+  const [formatOverride, setFormatOverride] = useState<Partial<typeof defaultPreference>>({})
 
   const [incomeForm, setIncomeForm] = useState({
     source: '',
@@ -232,13 +289,71 @@ function App() {
     priority: 'medium' as GoalPriority,
   })
 
+  const [incomeEditId, setIncomeEditId] = useState<Id<'incomes'> | null>(null)
+  const [incomeEditDraft, setIncomeEditDraft] = useState({
+    source: '',
+    amount: '',
+    cadence: 'monthly' as Cadence,
+    receivedDay: '',
+    notes: '',
+  })
+
+  const [billEditId, setBillEditId] = useState<Id<'bills'> | null>(null)
+  const [billEditDraft, setBillEditDraft] = useState({
+    name: '',
+    amount: '',
+    dueDay: '',
+    cadence: 'monthly' as Cadence,
+    autopay: false,
+    notes: '',
+  })
+
+  const [cardEditId, setCardEditId] = useState<Id<'cards'> | null>(null)
+  const [cardEditDraft, setCardEditDraft] = useState({
+    name: '',
+    creditLimit: '',
+    usedLimit: '',
+    minimumPayment: '',
+    spendPerMonth: '',
+  })
+
+  const [purchaseEditId, setPurchaseEditId] = useState<Id<'purchases'> | null>(null)
+  const [purchaseEditDraft, setPurchaseEditDraft] = useState({
+    item: '',
+    amount: '',
+    category: '',
+    purchaseDate: toIsoToday(),
+    notes: '',
+  })
+
+  const [accountEditId, setAccountEditId] = useState<Id<'accounts'> | null>(null)
+  const [accountEditDraft, setAccountEditDraft] = useState({
+    name: '',
+    type: 'checking' as AccountType,
+    balance: '',
+    liquid: true,
+  })
+
+  const [goalEditId, setGoalEditId] = useState<Id<'goals'> | null>(null)
+  const [goalEditDraft, setGoalEditDraft] = useState({
+    title: '',
+    targetAmount: '',
+    currentAmount: '',
+    targetDate: '',
+    priority: 'medium' as GoalPriority,
+  })
+
   const [purchaseFilter, setPurchaseFilter] = useState({
     query: '',
     category: 'all',
     month: new Date().toISOString().slice(0, 7),
   })
 
-  const [goalProgressDrafts, setGoalProgressDrafts] = useState<Record<string, string>>({})
+  const localeOptions = useMemo(() => {
+    const fromNavigator = typeof navigator !== 'undefined' ? navigator.languages : []
+    const combined = Array.from(new Set([...fallbackLocaleOptions, ...fromNavigator]))
+    return combined.filter((locale) => isValidLocale(locale))
+  }, [])
 
   useEffect(() => {
     if (financeState?.isAuthenticated && !cleanupTriggered.current) {
@@ -246,6 +361,50 @@ function App() {
       void cleanupLegacySeedData({})
     }
   }, [cleanupLegacySeedData, financeState?.isAuthenticated])
+
+  const preference = financeState?.data.preference ?? defaultPreference
+
+  const displayedFormat = {
+    currency: formatOverride.currency ?? preference.currency,
+    locale: formatOverride.locale ?? preference.locale,
+  }
+
+  const moneyFormatter = useMemo(() => {
+    try {
+      return new Intl.NumberFormat(preference.locale, {
+        style: 'currency',
+        currency: preference.currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+    } catch {
+      return new Intl.NumberFormat(defaultPreference.locale, {
+        style: 'currency',
+        currency: defaultPreference.currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+    }
+  }, [preference.currency, preference.locale])
+
+  const percentFormatter = useMemo(() => {
+    try {
+      return new Intl.NumberFormat(preference.locale, {
+        style: 'percent',
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      })
+    } catch {
+      return new Intl.NumberFormat(defaultPreference.locale, {
+        style: 'percent',
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      })
+    }
+  }, [preference.locale])
+
+  const formatMoney = (value: number) => moneyFormatter.format(value)
+  const formatPercent = (value: number) => percentFormatter.format(value)
 
   const incomeEntries = financeState?.data.incomes
   const billEntries = financeState?.data.bills
@@ -268,7 +427,7 @@ function App() {
 
   const connectionNote = financeState === undefined ? 'Connecting to Convex...' : 'Convex synced'
 
-  const lastUpdated = new Intl.DateTimeFormat('en-US', {
+  const lastUpdated = new Intl.DateTimeFormat(preference.locale || 'en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -295,16 +454,14 @@ function App() {
 
       const matchesCategory = purchaseFilter.category === 'all' || entry.category === purchaseFilter.category
 
-      const matchesMonth =
-        purchaseFilter.month.length === 0 || entry.purchaseDate.startsWith(purchaseFilter.month)
+      const matchesMonth = purchaseFilter.month.length === 0 || entry.purchaseDate.startsWith(purchaseFilter.month)
 
       return matchesQuery && matchesCategory && matchesMonth
     })
   }, [purchaseEntries, purchaseFilter])
 
   const filteredPurchaseTotal = filteredPurchases.reduce((sum, entry) => sum + entry.amount, 0)
-  const filteredPurchaseAverage =
-    filteredPurchases.length > 0 ? filteredPurchaseTotal / filteredPurchases.length : 0
+  const filteredPurchaseAverage = filteredPurchases.length > 0 ? filteredPurchaseTotal / filteredPurchases.length : 0
 
   const goalsWithMetrics = useMemo(() => {
     const source = goalEntries ?? []
@@ -334,36 +491,36 @@ function App() {
     {
       id: 'monthly-income',
       label: 'Monthly Income',
-      value: money.format(summary.monthlyIncome),
+      value: formatMoney(summary.monthlyIncome),
       note: `${incomes.length} sources tracked`,
       trend: 'up',
     },
     {
       id: 'monthly-commitments',
       label: 'Monthly Commitments',
-      value: money.format(summary.monthlyCommitments),
+      value: formatMoney(summary.monthlyCommitments),
       note: 'Bills + card spend plans',
       trend: 'down',
     },
     {
       id: 'projected-net',
       label: 'Projected Monthly Net',
-      value: money.format(summary.projectedMonthlyNet),
-      note: percent.format(summary.savingsRatePercent / 100),
+      value: formatMoney(summary.projectedMonthlyNet),
+      note: formatPercent(summary.savingsRatePercent / 100),
       trend: summary.projectedMonthlyNet >= 0 ? 'up' : 'down',
     },
     {
       id: 'net-worth',
       label: 'Net Worth',
-      value: money.format(summary.netWorth),
-      note: `${money.format(summary.totalAssets)} assets / ${money.format(summary.totalLiabilities)} liabilities`,
+      value: formatMoney(summary.netWorth),
+      note: `${formatMoney(summary.totalAssets)} assets / ${formatMoney(summary.totalLiabilities)} liabilities`,
       trend: summary.netWorth >= 0 ? 'up' : 'down',
     },
     {
       id: 'runway',
       label: 'Cash Runway',
       value: `${summary.runwayMonths.toFixed(1)} months`,
-      note: `${money.format(summary.liquidReserves)} liquid reserves`,
+      note: `${formatMoney(summary.liquidReserves)} liquid reserves`,
       trend: summary.runwayMonths >= 3 ? 'up' : summary.runwayMonths >= 1 ? 'flat' : 'down',
     },
   ]
@@ -380,6 +537,7 @@ function App() {
 
     const payload = {
       generatedAt: new Date().toISOString(),
+      preference,
       summary,
       records: {
         incomes,
@@ -403,6 +561,20 @@ function App() {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(url)
+  }
+
+  const onSaveFormat = async () => {
+    clearError()
+
+    try {
+      await upsertFinancePreference({
+        currency: displayedFormat.currency,
+        locale: displayedFormat.locale,
+      })
+      setFormatOverride({})
+    } catch (error) {
+      handleMutationError(error)
+    }
   }
 
   const onAddIncome = async (event: FormEvent<HTMLFormElement>) => {
@@ -558,6 +730,9 @@ function App() {
   const onDeleteIncome = async (id: Id<'incomes'>) => {
     clearError()
     try {
+      if (incomeEditId === id) {
+        setIncomeEditId(null)
+      }
       await removeIncome({ id })
     } catch (error) {
       handleMutationError(error)
@@ -567,6 +742,9 @@ function App() {
   const onDeleteBill = async (id: Id<'bills'>) => {
     clearError()
     try {
+      if (billEditId === id) {
+        setBillEditId(null)
+      }
       await removeBill({ id })
     } catch (error) {
       handleMutationError(error)
@@ -576,6 +754,9 @@ function App() {
   const onDeleteCard = async (id: Id<'cards'>) => {
     clearError()
     try {
+      if (cardEditId === id) {
+        setCardEditId(null)
+      }
       await removeCard({ id })
     } catch (error) {
       handleMutationError(error)
@@ -585,6 +766,9 @@ function App() {
   const onDeletePurchase = async (id: Id<'purchases'>) => {
     clearError()
     try {
+      if (purchaseEditId === id) {
+        setPurchaseEditId(null)
+      }
       await removePurchase({ id })
     } catch (error) {
       handleMutationError(error)
@@ -594,6 +778,9 @@ function App() {
   const onDeleteAccount = async (id: Id<'accounts'>) => {
     clearError()
     try {
+      if (accountEditId === id) {
+        setAccountEditId(null)
+      }
       await removeAccount({ id })
     } catch (error) {
       handleMutationError(error)
@@ -603,21 +790,194 @@ function App() {
   const onDeleteGoal = async (id: Id<'goals'>) => {
     clearError()
     try {
+      if (goalEditId === id) {
+        setGoalEditId(null)
+      }
       await removeGoal({ id })
     } catch (error) {
       handleMutationError(error)
     }
   }
 
-  const onUpdateGoalProgress = async (id: Id<'goals'>, fallbackCurrentAmount: number) => {
-    clearError()
+  const startIncomeEdit = (
+    entry: (typeof incomes)[number],
+  ) => {
+    setIncomeEditId(entry._id)
+    setIncomeEditDraft({
+      source: entry.source,
+      amount: String(entry.amount),
+      cadence: entry.cadence,
+      receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
+      notes: entry.notes ?? '',
+    })
+  }
 
+  const saveIncomeEdit = async () => {
+    if (!incomeEditId) return
+
+    clearError()
     try {
-      const raw = goalProgressDrafts[id] ?? String(fallbackCurrentAmount)
-      await updateGoalProgress({
-        id,
-        currentAmount: parseFloatInput(raw, 'Goal current amount'),
+      await updateIncome({
+        id: incomeEditId,
+        source: incomeEditDraft.source,
+        amount: parseFloatInput(incomeEditDraft.amount, 'Income amount'),
+        cadence: incomeEditDraft.cadence,
+        receivedDay: incomeEditDraft.receivedDay
+          ? parseIntInput(incomeEditDraft.receivedDay, 'Received day')
+          : undefined,
+        notes: incomeEditDraft.notes || undefined,
       })
+      setIncomeEditId(null)
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const startBillEdit = (entry: (typeof bills)[number]) => {
+    setBillEditId(entry._id)
+    setBillEditDraft({
+      name: entry.name,
+      amount: String(entry.amount),
+      dueDay: String(entry.dueDay),
+      cadence: entry.cadence,
+      autopay: entry.autopay,
+      notes: entry.notes ?? '',
+    })
+  }
+
+  const saveBillEdit = async () => {
+    if (!billEditId) return
+
+    clearError()
+    try {
+      await updateBill({
+        id: billEditId,
+        name: billEditDraft.name,
+        amount: parseFloatInput(billEditDraft.amount, 'Bill amount'),
+        dueDay: parseIntInput(billEditDraft.dueDay, 'Due day'),
+        cadence: billEditDraft.cadence,
+        autopay: billEditDraft.autopay,
+        notes: billEditDraft.notes || undefined,
+      })
+      setBillEditId(null)
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const startCardEdit = (entry: (typeof cards)[number]) => {
+    setCardEditId(entry._id)
+    setCardEditDraft({
+      name: entry.name,
+      creditLimit: String(entry.creditLimit),
+      usedLimit: String(entry.usedLimit),
+      minimumPayment: String(entry.minimumPayment),
+      spendPerMonth: String(entry.spendPerMonth),
+    })
+  }
+
+  const saveCardEdit = async () => {
+    if (!cardEditId) return
+
+    clearError()
+    try {
+      await updateCard({
+        id: cardEditId,
+        name: cardEditDraft.name,
+        creditLimit: parseFloatInput(cardEditDraft.creditLimit, 'Credit limit'),
+        usedLimit: parseFloatInput(cardEditDraft.usedLimit, 'Used limit'),
+        minimumPayment: parseFloatInput(cardEditDraft.minimumPayment, 'Minimum payment'),
+        spendPerMonth: parseFloatInput(cardEditDraft.spendPerMonth, 'Spend per month'),
+      })
+      setCardEditId(null)
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const startPurchaseEdit = (entry: (typeof purchases)[number]) => {
+    setPurchaseEditId(entry._id)
+    setPurchaseEditDraft({
+      item: entry.item,
+      amount: String(entry.amount),
+      category: entry.category,
+      purchaseDate: entry.purchaseDate,
+      notes: entry.notes ?? '',
+    })
+  }
+
+  const savePurchaseEdit = async () => {
+    if (!purchaseEditId) return
+
+    clearError()
+    try {
+      await updatePurchase({
+        id: purchaseEditId,
+        item: purchaseEditDraft.item,
+        amount: parseFloatInput(purchaseEditDraft.amount, 'Purchase amount'),
+        category: purchaseEditDraft.category,
+        purchaseDate: purchaseEditDraft.purchaseDate,
+        notes: purchaseEditDraft.notes || undefined,
+      })
+      setPurchaseEditId(null)
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const startAccountEdit = (entry: (typeof accounts)[number]) => {
+    setAccountEditId(entry._id)
+    setAccountEditDraft({
+      name: entry.name,
+      type: entry.type,
+      balance: String(entry.balance),
+      liquid: entry.liquid,
+    })
+  }
+
+  const saveAccountEdit = async () => {
+    if (!accountEditId) return
+
+    clearError()
+    try {
+      await updateAccount({
+        id: accountEditId,
+        name: accountEditDraft.name,
+        type: accountEditDraft.type,
+        balance: parseFloatInput(accountEditDraft.balance, 'Account balance'),
+        liquid: accountEditDraft.liquid,
+      })
+      setAccountEditId(null)
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const startGoalEdit = (entry: (typeof goals)[number]) => {
+    setGoalEditId(entry._id)
+    setGoalEditDraft({
+      title: entry.title,
+      targetAmount: String(entry.targetAmount),
+      currentAmount: String(entry.currentAmount),
+      targetDate: entry.targetDate,
+      priority: entry.priority,
+    })
+  }
+
+  const saveGoalEdit = async () => {
+    if (!goalEditId) return
+
+    clearError()
+    try {
+      await updateGoal({
+        id: goalEditId,
+        title: goalEditDraft.title,
+        targetAmount: parseFloatInput(goalEditDraft.targetAmount, 'Goal target amount'),
+        currentAmount: parseFloatInput(goalEditDraft.currentAmount, 'Goal current amount'),
+        targetDate: goalEditDraft.targetDate,
+        priority: goalEditDraft.priority,
+      })
+      setGoalEditId(null)
     } catch (error) {
       handleMutationError(error)
     }
@@ -680,6 +1040,60 @@ function App() {
       </SignedOut>
 
       <SignedIn>
+        <section className="panel format-panel" aria-label="Currency and locale settings">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Formatting</p>
+              <h2>Currency + Locale</h2>
+            </div>
+          </header>
+          <div className="format-controls">
+            <label htmlFor="currency-select" className="sr-only">
+              Currency
+            </label>
+            <select
+              id="currency-select"
+              value={displayedFormat.currency}
+              onChange={(event) =>
+                setFormatOverride((prev) => ({
+                  ...prev,
+                  currency: event.target.value,
+                }))
+              }
+            >
+              {currencyOptions.map((currency) => (
+                <option key={currency} value={currency}>
+                  {currency}
+                </option>
+              ))}
+            </select>
+
+            <label htmlFor="locale-select" className="sr-only">
+              Locale
+            </label>
+            <select
+              id="locale-select"
+              value={displayedFormat.locale}
+              onChange={(event) =>
+                setFormatOverride((prev) => ({
+                  ...prev,
+                  locale: event.target.value,
+                }))
+              }
+            >
+              {localeOptions.map((locale) => (
+                <option key={locale} value={locale}>
+                  {locale}
+                </option>
+              ))}
+            </select>
+
+            <button type="button" className="btn btn-secondary" onClick={() => void onSaveFormat()}>
+              Apply Format
+            </button>
+          </div>
+        </section>
+
         <nav className="section-tabs" aria-label="Finance sections">
           {tabs.map((tab) => (
             <button
@@ -728,15 +1142,15 @@ function App() {
                   <ul className="status-list">
                     <li>
                       <span>Savings Rate</span>
-                      <strong>{percent.format(summary.savingsRatePercent / 100)}</strong>
+                      <strong>{formatPercent(summary.savingsRatePercent / 100)}</strong>
                     </li>
                     <li>
                       <span>Card Utilization</span>
-                      <strong>{percent.format(summary.cardUtilizationPercent / 100)}</strong>
+                      <strong>{formatPercent(summary.cardUtilizationPercent / 100)}</strong>
                     </li>
                     <li>
                       <span>Goal Funding</span>
-                      <strong>{percent.format(summary.goalsFundedPercent / 100)}</strong>
+                      <strong>{formatPercent(summary.goalsFundedPercent / 100)}</strong>
                     </li>
                   </ul>
                 </div>
@@ -787,7 +1201,7 @@ function App() {
                           </small>
                         </div>
                         <strong className={event.type === 'income' ? 'amount-positive' : 'amount-negative'}>
-                          {money.format(event.amount)}
+                          {formatMoney(event.amount)}
                         </strong>
                       </li>
                     ))}
@@ -801,22 +1215,22 @@ function App() {
                     <p className="panel-kicker">Spending</p>
                     <h2>Category Concentration</h2>
                   </div>
-                  <p className="panel-value">{money.format(summary.purchasesThisMonth)} this month</p>
+                  <p className="panel-value">{formatMoney(summary.purchasesThisMonth)} this month</p>
                 </header>
                 {topCategories.length === 0 ? (
-                  <p className="empty-state">No purchases in {monthLabel.format(new Date())} yet.</p>
+                  <p className="empty-state">No purchases this month yet.</p>
                 ) : (
                   <ul className="category-bars">
                     {topCategories.map((category) => (
                       <li key={category.category}>
                         <div className="category-row">
                           <span>{category.category}</span>
-                          <strong>{money.format(category.total)}</strong>
+                          <strong>{formatMoney(category.total)}</strong>
                         </div>
                         <div className="bar-track">
                           <span className="bar-fill" style={{ '--bar-width': `${category.sharePercent}%` } as CSSProperties} />
                         </div>
-                        <small>{percent.format(category.sharePercent / 100)} of monthly purchases</small>
+                        <small>{formatPercent(category.sharePercent / 100)} of monthly purchases</small>
                       </li>
                     ))}
                   </ul>
@@ -838,12 +1252,12 @@ function App() {
                       <li key={goal._id}>
                         <div className="goal-preview-row">
                           <span>{goal.title}</span>
-                          <strong>{percent.format(goal.progressPercent / 100)}</strong>
+                          <strong>{formatPercent(goal.progressPercent / 100)}</strong>
                         </div>
                         <div className="bar-track">
                           <span className="bar-fill" style={{ '--bar-width': `${goal.progressPercent}%` } as CSSProperties} />
                         </div>
-                        <small>{money.format(goal.remaining)} remaining</small>
+                        <small>{formatMoney(goal.remaining)} remaining</small>
                       </li>
                     ))}
                   </ul>
@@ -921,9 +1335,7 @@ function App() {
                 <select
                   id="income-cadence"
                   value={incomeForm.cadence}
-                  onChange={(event) =>
-                    setIncomeForm((prev) => ({ ...prev, cadence: event.target.value as Cadence }))
-                  }
+                  onChange={(event) => setIncomeForm((prev) => ({ ...prev, cadence: event.target.value as Cadence }))}
                 >
                   {cadenceOptions.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -976,23 +1388,132 @@ function App() {
                         <th scope="col">Amount</th>
                         <th scope="col">Frequency</th>
                         <th scope="col">Day</th>
+                        <th scope="col">Notes</th>
                         <th scope="col">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {incomes.map((entry) => (
-                        <tr key={entry._id}>
-                          <td>{entry.source}</td>
-                          <td className="table-amount amount-positive">{money.format(entry.amount)}</td>
-                          <td>{cadenceLabel(entry.cadence)}</td>
-                          <td>{entry.receivedDay ?? '-'}</td>
-                          <td>
-                            <button type="button" className="btn btn-ghost" onClick={() => void onDeleteIncome(entry._id)}>
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {incomes.map((entry) => {
+                        const isEditing = incomeEditId === entry._id
+
+                        return (
+                          <tr key={entry._id}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={incomeEditDraft.source}
+                                  onChange={(event) =>
+                                    setIncomeEditDraft((prev) => ({
+                                      ...prev,
+                                      source: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.source
+                              )}
+                            </td>
+                            <td className="table-amount amount-positive">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={incomeEditDraft.amount}
+                                  onChange={(event) =>
+                                    setIncomeEditDraft((prev) => ({
+                                      ...prev,
+                                      amount: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.amount)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <select
+                                  className="inline-select"
+                                  value={incomeEditDraft.cadence}
+                                  onChange={(event) =>
+                                    setIncomeEditDraft((prev) => ({
+                                      ...prev,
+                                      cadence: event.target.value as Cadence,
+                                    }))
+                                  }
+                                >
+                                  {cadenceOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                cadenceLabel(entry.cadence)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="1"
+                                  max="31"
+                                  value={incomeEditDraft.receivedDay}
+                                  onChange={(event) =>
+                                    setIncomeEditDraft((prev) => ({
+                                      ...prev,
+                                      receivedDay: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.receivedDay ?? '-'
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={incomeEditDraft.notes}
+                                  onChange={(event) =>
+                                    setIncomeEditDraft((prev) => ({
+                                      ...prev,
+                                      notes: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.notes ?? '-'
+                              )}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button type="button" className="btn btn-secondary" onClick={() => void saveIncomeEdit()}>
+                                      Save
+                                    </button>
+                                    <button type="button" className="btn btn-ghost" onClick={() => setIncomeEditId(null)}>
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button type="button" className="btn btn-secondary" onClick={() => startIncomeEdit(entry)}>
+                                    Edit
+                                  </button>
+                                )}
+                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteIncome(entry._id)}>
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1099,24 +1620,150 @@ function App() {
                         <th scope="col">Due Day</th>
                         <th scope="col">Frequency</th>
                         <th scope="col">Autopay</th>
+                        <th scope="col">Notes</th>
                         <th scope="col">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {bills.map((entry) => (
-                        <tr key={entry._id}>
-                          <td>{entry.name}</td>
-                          <td className="table-amount amount-negative">{money.format(entry.amount)}</td>
-                          <td>{entry.dueDay}</td>
-                          <td>{cadenceLabel(entry.cadence)}</td>
-                          <td>{entry.autopay ? 'Yes' : 'No'}</td>
-                          <td>
-                            <button type="button" className="btn btn-ghost" onClick={() => void onDeleteBill(entry._id)}>
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {bills.map((entry) => {
+                        const isEditing = billEditId === entry._id
+
+                        return (
+                          <tr key={entry._id}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={billEditDraft.name}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      name: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.name
+                              )}
+                            </td>
+                            <td className="table-amount amount-negative">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={billEditDraft.amount}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      amount: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.amount)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="1"
+                                  max="31"
+                                  value={billEditDraft.dueDay}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      dueDay: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.dueDay
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <select
+                                  className="inline-select"
+                                  value={billEditDraft.cadence}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      cadence: event.target.value as Cadence,
+                                    }))
+                                  }
+                                >
+                                  {cadenceOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                cadenceLabel(entry.cadence)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  type="checkbox"
+                                  checked={billEditDraft.autopay}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      autopay: event.target.checked,
+                                    }))
+                                  }
+                                />
+                              ) : entry.autopay ? (
+                                'Yes'
+                              ) : (
+                                'No'
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={billEditDraft.notes}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      notes: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.notes ?? '-'
+                              )}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button type="button" className="btn btn-secondary" onClick={() => void saveBillEdit()}>
+                                      Save
+                                    </button>
+                                    <button type="button" className="btn btn-ghost" onClick={() => setBillEditId(null)}>
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button type="button" className="btn btn-secondary" onClick={() => startBillEdit(entry)}>
+                                    Edit
+                                  </button>
+                                )}
+                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteBill(entry._id)}>
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1219,20 +1866,127 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {cards.map((entry) => (
-                        <tr key={entry._id}>
-                          <td>{entry.name}</td>
-                          <td className="table-amount">{money.format(entry.creditLimit)}</td>
-                          <td className="table-amount amount-negative">{money.format(entry.usedLimit)}</td>
-                          <td>{money.format(entry.minimumPayment)}</td>
-                          <td>{money.format(entry.spendPerMonth)}</td>
-                          <td>
-                            <button type="button" className="btn btn-ghost" onClick={() => void onDeleteCard(entry._id)}>
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {cards.map((entry) => {
+                        const isEditing = cardEditId === entry._id
+
+                        return (
+                          <tr key={entry._id}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={cardEditDraft.name}
+                                  onChange={(event) =>
+                                    setCardEditDraft((prev) => ({
+                                      ...prev,
+                                      name: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.name
+                              )}
+                            </td>
+                            <td className="table-amount">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={cardEditDraft.creditLimit}
+                                  onChange={(event) =>
+                                    setCardEditDraft((prev) => ({
+                                      ...prev,
+                                      creditLimit: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.creditLimit)
+                              )}
+                            </td>
+                            <td className="table-amount amount-negative">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={cardEditDraft.usedLimit}
+                                  onChange={(event) =>
+                                    setCardEditDraft((prev) => ({
+                                      ...prev,
+                                      usedLimit: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.usedLimit)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={cardEditDraft.minimumPayment}
+                                  onChange={(event) =>
+                                    setCardEditDraft((prev) => ({
+                                      ...prev,
+                                      minimumPayment: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.minimumPayment)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={cardEditDraft.spendPerMonth}
+                                  onChange={(event) =>
+                                    setCardEditDraft((prev) => ({
+                                      ...prev,
+                                      spendPerMonth: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.spendPerMonth)
+                              )}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button type="button" className="btn btn-secondary" onClick={() => void saveCardEdit()}>
+                                      Save
+                                    </button>
+                                    <button type="button" className="btn btn-ghost" onClick={() => setCardEditId(null)}>
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button type="button" className="btn btn-secondary" onClick={() => startCardEdit(entry)}>
+                                    Edit
+                                  </button>
+                                )}
+                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteCard(entry._id)}>
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1308,7 +2062,7 @@ function App() {
                   <p className="panel-kicker">Purchases</p>
                   <h2>Current Entries</h2>
                 </div>
-                <p className="panel-value">{money.format(filteredPurchaseTotal)} filtered total</p>
+                <p className="panel-value">{formatMoney(filteredPurchaseTotal)} filtered total</p>
               </header>
 
               <div className="filter-row" role="group" aria-label="Purchase filters">
@@ -1353,7 +2107,7 @@ function App() {
 
               <p className="subnote">
                 {filteredPurchases.length} result{filteredPurchases.length === 1 ? '' : 's'} • avg{' '}
-                {money.format(filteredPurchaseAverage)}
+                {formatMoney(filteredPurchaseAverage)}
               </p>
 
               {filteredPurchases.length === 0 ? (
@@ -1368,27 +2122,136 @@ function App() {
                         <th scope="col">Category</th>
                         <th scope="col">Date</th>
                         <th scope="col">Amount</th>
+                        <th scope="col">Notes</th>
                         <th scope="col">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredPurchases.map((entry) => (
-                        <tr key={entry._id}>
-                          <td>{entry.item}</td>
-                          <td>{entry.category}</td>
-                          <td>{dateLabel.format(new Date(`${entry.purchaseDate}T00:00:00`))}</td>
-                          <td className="table-amount amount-negative">{money.format(entry.amount)}</td>
-                          <td>
-                            <button
-                              type="button"
-                              className="btn btn-ghost"
-                              onClick={() => void onDeletePurchase(entry._id)}
-                            >
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredPurchases.map((entry) => {
+                        const isEditing = purchaseEditId === entry._id
+
+                        return (
+                          <tr key={entry._id}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={purchaseEditDraft.item}
+                                  onChange={(event) =>
+                                    setPurchaseEditDraft((prev) => ({
+                                      ...prev,
+                                      item: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.item
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={purchaseEditDraft.category}
+                                  onChange={(event) =>
+                                    setPurchaseEditDraft((prev) => ({
+                                      ...prev,
+                                      category: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.category
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="date"
+                                  value={purchaseEditDraft.purchaseDate}
+                                  onChange={(event) =>
+                                    setPurchaseEditDraft((prev) => ({
+                                      ...prev,
+                                      purchaseDate: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                dateLabel.format(new Date(`${entry.purchaseDate}T00:00:00`))
+                              )}
+                            </td>
+                            <td className="table-amount amount-negative">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={purchaseEditDraft.amount}
+                                  onChange={(event) =>
+                                    setPurchaseEditDraft((prev) => ({
+                                      ...prev,
+                                      amount: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.amount)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={purchaseEditDraft.notes}
+                                  onChange={(event) =>
+                                    setPurchaseEditDraft((prev) => ({
+                                      ...prev,
+                                      notes: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.notes ?? '-'
+                              )}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn btn-secondary"
+                                      onClick={() => void savePurchaseEdit()}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost"
+                                      onClick={() => setPurchaseEditId(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button type="button" className="btn btn-secondary" onClick={() => startPurchaseEdit(entry)}>
+                                    Edit
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={() => void onDeletePurchase(entry._id)}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1484,25 +2347,121 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {accounts.map((entry) => (
-                        <tr key={entry._id}>
-                          <td>{entry.name}</td>
-                          <td>{accountTypeLabel(entry.type)}</td>
-                          <td className={`table-amount ${entry.balance >= 0 ? 'amount-positive' : 'amount-negative'}`}>
-                            {money.format(entry.balance)}
-                          </td>
-                          <td>{entry.liquid ? 'Yes' : 'No'}</td>
-                          <td>
-                            <button
-                              type="button"
-                              className="btn btn-ghost"
-                              onClick={() => void onDeleteAccount(entry._id)}
-                            >
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {accounts.map((entry) => {
+                        const isEditing = accountEditId === entry._id
+
+                        return (
+                          <tr key={entry._id}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={accountEditDraft.name}
+                                  onChange={(event) =>
+                                    setAccountEditDraft((prev) => ({
+                                      ...prev,
+                                      name: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.name
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <select
+                                  className="inline-select"
+                                  value={accountEditDraft.type}
+                                  onChange={(event) =>
+                                    setAccountEditDraft((prev) => ({
+                                      ...prev,
+                                      type: event.target.value as AccountType,
+                                    }))
+                                  }
+                                >
+                                  {accountTypeOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                accountTypeLabel(entry.type)
+                              )}
+                            </td>
+                            <td className={`table-amount ${entry.balance >= 0 ? 'amount-positive' : 'amount-negative'}`}>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  step="0.01"
+                                  value={accountEditDraft.balance}
+                                  onChange={(event) =>
+                                    setAccountEditDraft((prev) => ({
+                                      ...prev,
+                                      balance: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.balance)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  type="checkbox"
+                                  checked={accountEditDraft.liquid}
+                                  onChange={(event) =>
+                                    setAccountEditDraft((prev) => ({
+                                      ...prev,
+                                      liquid: event.target.checked,
+                                    }))
+                                  }
+                                />
+                              ) : entry.liquid ? (
+                                'Yes'
+                              ) : (
+                                'No'
+                              )}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn btn-secondary"
+                                      onClick={() => void saveAccountEdit()}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost"
+                                      onClick={() => setAccountEditId(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button type="button" className="btn btn-secondary" onClick={() => startAccountEdit(entry)}>
+                                    Edit
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={() => void onDeleteAccount(entry._id)}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1596,59 +2555,147 @@ function App() {
               {goalsWithMetrics.length === 0 ? (
                 <p className="empty-state">No goals created yet.</p>
               ) : (
-                <ul className="goal-list">
-                  {goalsWithMetrics.map((goal) => (
-                    <li key={goal._id}>
-                      <div className="goal-head">
-                        <div>
-                          <p>{goal.title}</p>
-                          <small>
-                            {priorityLabel(goal.priority)} priority • target {dateLabel.format(new Date(`${goal.targetDate}T00:00:00`))}
-                          </small>
-                        </div>
-                        <strong>{percent.format(goal.progressPercent / 100)}</strong>
-                      </div>
+                <div className="table-wrap">
+                  <table>
+                    <caption className="sr-only">Goals</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Title</th>
+                        <th scope="col">Target</th>
+                        <th scope="col">Current</th>
+                        <th scope="col">Date</th>
+                        <th scope="col">Priority</th>
+                        <th scope="col">Progress</th>
+                        <th scope="col">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {goalsWithMetrics.map((goal) => {
+                        const isEditing = goalEditId === goal._id
 
-                      <div className="bar-track">
-                        <span className="bar-fill" style={{ '--bar-width': `${goal.progressPercent}%` } as CSSProperties} />
-                      </div>
-
-                      <div className="goal-foot">
-                        <span>
-                          {money.format(goal.currentAmount)} / {money.format(goal.targetAmount)}
-                        </span>
-                        <span>{money.format(goal.remaining)} remaining</span>
-                        <span>{goal.daysLeft >= 0 ? `${goal.daysLeft} days left` : 'Past target date'}</span>
-                      </div>
-
-                      <div className="goal-actions">
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          placeholder="Update current amount"
-                          value={goalProgressDrafts[goal._id] ?? ''}
-                          onChange={(event) =>
-                            setGoalProgressDrafts((prev) => ({
-                              ...prev,
-                              [goal._id]: event.target.value,
-                            }))
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => void onUpdateGoalProgress(goal._id, goal.currentAmount)}
-                        >
-                          Update
-                        </button>
-                        <button type="button" className="btn btn-ghost" onClick={() => void onDeleteGoal(goal._id)}>
-                          Remove
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                        return (
+                          <tr key={goal._id}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={goalEditDraft.title}
+                                  onChange={(event) =>
+                                    setGoalEditDraft((prev) => ({
+                                      ...prev,
+                                      title: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                goal.title
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={goalEditDraft.targetAmount}
+                                  onChange={(event) =>
+                                    setGoalEditDraft((prev) => ({
+                                      ...prev,
+                                      targetAmount: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(goal.targetAmount)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={goalEditDraft.currentAmount}
+                                  onChange={(event) =>
+                                    setGoalEditDraft((prev) => ({
+                                      ...prev,
+                                      currentAmount: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(goal.currentAmount)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="date"
+                                  value={goalEditDraft.targetDate}
+                                  onChange={(event) =>
+                                    setGoalEditDraft((prev) => ({
+                                      ...prev,
+                                      targetDate: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                dateLabel.format(new Date(`${goal.targetDate}T00:00:00`))
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <select
+                                  className="inline-select"
+                                  value={goalEditDraft.priority}
+                                  onChange={(event) =>
+                                    setGoalEditDraft((prev) => ({
+                                      ...prev,
+                                      priority: event.target.value as GoalPriority,
+                                    }))
+                                  }
+                                >
+                                  {goalPriorityOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                priorityLabel(goal.priority)
+                              )}
+                            </td>
+                            <td>{formatPercent(goal.progressPercent / 100)}</td>
+                            <td>
+                              <div className="row-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button type="button" className="btn btn-secondary" onClick={() => void saveGoalEdit()}>
+                                      Save
+                                    </button>
+                                    <button type="button" className="btn btn-ghost" onClick={() => setGoalEditId(null)}>
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button type="button" className="btn btn-secondary" onClick={() => startGoalEdit(goal)}>
+                                    Edit
+                                  </button>
+                                )}
+                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteGoal(goal._id)}>
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </article>
           </section>

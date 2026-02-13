@@ -27,6 +27,11 @@ type InsightSeverity = 'good' | 'warning' | 'critical'
 type IncomeDoc = Doc<'incomes'>
 type BillDoc = Doc<'bills'>
 
+const defaultPreference = {
+  currency: 'USD',
+  locale: 'en-US',
+}
+
 const defaultSummary = {
   monthlyIncome: 0,
   monthlyBills: 0,
@@ -103,6 +108,31 @@ const validateRequiredText = (value: string, fieldName: string) => {
 const validateIsoDate = (value: string, fieldName: string) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error(`${fieldName} must use YYYY-MM-DD format.`)
+  }
+}
+
+const validateLocale = (locale: string) => {
+  try {
+    new Intl.NumberFormat(locale)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const validateCurrencyCode = (currency: string) => {
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    return false
+  }
+
+  try {
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+    })
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -325,6 +355,30 @@ const buildInsights = (args: {
   return insights.slice(0, 6)
 }
 
+const getUserPreference = async (ctx: QueryCtx, userId: string) => {
+  const existing = await ctx.db
+    .query('financePreferences')
+    .withIndex('by_userId', (q) => q.eq('userId', userId))
+    .first()
+
+  if (!existing) {
+    return defaultPreference
+  }
+
+  const currency = existing.currency.toUpperCase()
+
+  return {
+    currency: validateCurrencyCode(currency) ? currency : defaultPreference.currency,
+    locale: validateLocale(existing.locale) ? existing.locale : defaultPreference.locale,
+  }
+}
+
+const ensureOwned = (record: { userId: string } | null, expectedUserId: string, missingError: string) => {
+  if (!record || record.userId !== expectedUserId) {
+    throw new Error(missingError)
+  }
+}
+
 export const getFinanceData = query({
   args: {},
   handler: async (ctx) => {
@@ -335,6 +389,7 @@ export const getFinanceData = query({
         isAuthenticated: false,
         updatedAt: Date.now(),
         data: {
+          preference: defaultPreference,
           incomes: [],
           bills: [],
           cards: [],
@@ -349,7 +404,8 @@ export const getFinanceData = query({
       }
     }
 
-    const [incomes, bills, cards, purchases, accounts, goals] = await Promise.all([
+    const [preference, incomes, bills, cards, purchases, accounts, goals] = await Promise.all([
+      getUserPreference(ctx, identity.subject),
       ctx.db
         .query('incomes')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -482,6 +538,7 @@ export const getFinanceData = query({
       isAuthenticated: true,
       updatedAt,
       data: {
+        preference,
         incomes,
         bills,
         cards,
@@ -515,6 +572,48 @@ export const getFinanceData = query({
   },
 })
 
+export const upsertFinancePreference = mutation({
+  args: {
+    currency: v.string(),
+    locale: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    const currency = args.currency.trim().toUpperCase()
+    const locale = args.locale.trim()
+
+    if (!validateCurrencyCode(currency)) {
+      throw new Error('Currency must be a valid ISO 4217 code supported by the runtime.')
+    }
+
+    if (!validateLocale(locale)) {
+      throw new Error('Locale is not valid.')
+    }
+
+    const existing = await ctx.db
+      .query('financePreferences')
+      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+      .first()
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        currency,
+        locale,
+        updatedAt: Date.now(),
+      })
+      return
+    }
+
+    await ctx.db.insert('financePreferences', {
+      userId: identity.subject,
+      currency,
+      locale,
+      updatedAt: Date.now(),
+    })
+  },
+})
+
 export const addIncome = mutation({
   args: {
     source: v.string(),
@@ -545,6 +644,38 @@ export const addIncome = mutation({
   },
 })
 
+export const updateIncome = mutation({
+  args: {
+    id: v.id('incomes'),
+    source: v.string(),
+    amount: v.number(),
+    cadence: cadenceValidator,
+    receivedDay: v.optional(v.number()),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateRequiredText(args.source, 'Income source')
+    validatePositive(args.amount, 'Income amount')
+
+    if (args.receivedDay !== undefined && (args.receivedDay < 1 || args.receivedDay > 31)) {
+      throw new Error('Received day must be between 1 and 31.')
+    }
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Income record not found.')
+
+    await ctx.db.patch(args.id, {
+      source: args.source.trim(),
+      amount: args.amount,
+      cadence: args.cadence,
+      receivedDay: args.receivedDay,
+      notes: args.notes?.trim() || undefined,
+    })
+  },
+})
+
 export const removeIncome = mutation({
   args: {
     id: v.id('incomes'),
@@ -552,10 +683,7 @@ export const removeIncome = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
-
-    if (!existing || existing.userId !== identity.subject) {
-      throw new Error('Income record not found.')
-    }
+    ensureOwned(existing, identity.subject, 'Income record not found.')
 
     await ctx.db.delete(args.id)
   },
@@ -593,6 +721,40 @@ export const addBill = mutation({
   },
 })
 
+export const updateBill = mutation({
+  args: {
+    id: v.id('bills'),
+    name: v.string(),
+    amount: v.number(),
+    dueDay: v.number(),
+    cadence: cadenceValidator,
+    autopay: v.boolean(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateRequiredText(args.name, 'Bill name')
+    validatePositive(args.amount, 'Bill amount')
+
+    if (args.dueDay < 1 || args.dueDay > 31) {
+      throw new Error('Due day must be between 1 and 31.')
+    }
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Bill record not found.')
+
+    await ctx.db.patch(args.id, {
+      name: args.name.trim(),
+      amount: args.amount,
+      dueDay: args.dueDay,
+      cadence: args.cadence,
+      autopay: args.autopay,
+      notes: args.notes?.trim() || undefined,
+    })
+  },
+})
+
 export const removeBill = mutation({
   args: {
     id: v.id('bills'),
@@ -600,10 +762,7 @@ export const removeBill = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
-
-    if (!existing || existing.userId !== identity.subject) {
-      throw new Error('Bill record not found.')
-    }
+    ensureOwned(existing, identity.subject, 'Bill record not found.')
 
     await ctx.db.delete(args.id)
   },
@@ -638,6 +797,37 @@ export const addCard = mutation({
   },
 })
 
+export const updateCard = mutation({
+  args: {
+    id: v.id('cards'),
+    name: v.string(),
+    creditLimit: v.number(),
+    usedLimit: v.number(),
+    minimumPayment: v.number(),
+    spendPerMonth: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateRequiredText(args.name, 'Card name')
+    validatePositive(args.creditLimit, 'Credit limit')
+    validateNonNegative(args.usedLimit, 'Used limit')
+    validateNonNegative(args.minimumPayment, 'Minimum payment')
+    validateNonNegative(args.spendPerMonth, 'Spend per month')
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Card record not found.')
+
+    await ctx.db.patch(args.id, {
+      name: args.name.trim(),
+      creditLimit: args.creditLimit,
+      usedLimit: args.usedLimit,
+      minimumPayment: args.minimumPayment,
+      spendPerMonth: args.spendPerMonth,
+    })
+  },
+})
+
 export const removeCard = mutation({
   args: {
     id: v.id('cards'),
@@ -645,10 +835,7 @@ export const removeCard = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
-
-    if (!existing || existing.userId !== identity.subject) {
-      throw new Error('Card record not found.')
-    }
+    ensureOwned(existing, identity.subject, 'Card record not found.')
 
     await ctx.db.delete(args.id)
   },
@@ -682,6 +869,36 @@ export const addPurchase = mutation({
   },
 })
 
+export const updatePurchase = mutation({
+  args: {
+    id: v.id('purchases'),
+    item: v.string(),
+    amount: v.number(),
+    category: v.string(),
+    purchaseDate: v.string(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateRequiredText(args.item, 'Purchase item')
+    validateRequiredText(args.category, 'Purchase category')
+    validatePositive(args.amount, 'Purchase amount')
+    validateIsoDate(args.purchaseDate, 'Purchase date')
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Purchase record not found.')
+
+    await ctx.db.patch(args.id, {
+      item: args.item.trim(),
+      amount: args.amount,
+      category: args.category.trim(),
+      purchaseDate: args.purchaseDate,
+      notes: args.notes?.trim() || undefined,
+    })
+  },
+})
+
 export const removePurchase = mutation({
   args: {
     id: v.id('purchases'),
@@ -689,10 +906,7 @@ export const removePurchase = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
-
-    if (!existing || existing.userId !== identity.subject) {
-      throw new Error('Purchase record not found.')
-    }
+    ensureOwned(existing, identity.subject, 'Purchase record not found.')
 
     await ctx.db.delete(args.id)
   },
@@ -722,6 +936,32 @@ export const addAccount = mutation({
   },
 })
 
+export const updateAccount = mutation({
+  args: {
+    id: v.id('accounts'),
+    name: v.string(),
+    type: accountTypeValidator,
+    balance: v.number(),
+    liquid: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateRequiredText(args.name, 'Account name')
+    validateFinite(args.balance, 'Account balance')
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Account record not found.')
+
+    await ctx.db.patch(args.id, {
+      name: args.name.trim(),
+      type: args.type,
+      balance: args.balance,
+      liquid: args.liquid,
+    })
+  },
+})
+
 export const removeAccount = mutation({
   args: {
     id: v.id('accounts'),
@@ -729,10 +969,7 @@ export const removeAccount = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
-
-    if (!existing || existing.userId !== identity.subject) {
-      throw new Error('Account record not found.')
-    }
+    ensureOwned(existing, identity.subject, 'Account record not found.')
 
     await ctx.db.delete(args.id)
   },
@@ -766,6 +1003,36 @@ export const addGoal = mutation({
   },
 })
 
+export const updateGoal = mutation({
+  args: {
+    id: v.id('goals'),
+    title: v.string(),
+    targetAmount: v.number(),
+    currentAmount: v.number(),
+    targetDate: v.string(),
+    priority: goalPriorityValidator,
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateRequiredText(args.title, 'Goal title')
+    validatePositive(args.targetAmount, 'Target amount')
+    validateNonNegative(args.currentAmount, 'Current amount')
+    validateIsoDate(args.targetDate, 'Target date')
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Goal record not found.')
+
+    await ctx.db.patch(args.id, {
+      title: args.title.trim(),
+      targetAmount: args.targetAmount,
+      currentAmount: args.currentAmount,
+      targetDate: args.targetDate,
+      priority: args.priority,
+    })
+  },
+})
+
 export const updateGoalProgress = mutation({
   args: {
     id: v.id('goals'),
@@ -776,9 +1043,7 @@ export const updateGoalProgress = mutation({
     validateNonNegative(args.currentAmount, 'Current amount')
 
     const existing = await ctx.db.get(args.id)
-    if (!existing || existing.userId !== identity.subject) {
-      throw new Error('Goal record not found.')
-    }
+    ensureOwned(existing, identity.subject, 'Goal record not found.')
 
     await ctx.db.patch(args.id, {
       currentAmount: args.currentAmount,
@@ -793,10 +1058,7 @@ export const removeGoal = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
-
-    if (!existing || existing.userId !== identity.subject) {
-      throw new Error('Goal record not found.')
-    }
+    ensureOwned(existing, identity.subject, 'Goal record not found.')
 
     await ctx.db.delete(args.id)
   },
