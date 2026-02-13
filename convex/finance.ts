@@ -35,6 +35,7 @@ type InsightSeverity = 'good' | 'warning' | 'critical'
 
 type IncomeDoc = Doc<'incomes'>
 type BillDoc = Doc<'bills'>
+type LoanDoc = Doc<'loans'>
 
 const defaultPreference = {
   currency: 'USD',
@@ -45,9 +46,11 @@ const defaultSummary = {
   monthlyIncome: 0,
   monthlyBills: 0,
   monthlyCardSpend: 0,
+  monthlyLoanPayments: 0,
   monthlyCommitments: 0,
   cardLimitTotal: 0,
   cardUsedTotal: 0,
+  totalLoanBalance: 0,
   cardUtilizationPercent: 0,
   purchasesThisMonth: 0,
   projectedMonthlyNet: 0,
@@ -280,11 +283,11 @@ const nextDateForCadence = (
   return nextDateByMonthCycle(normalizedDay, cycleMonths, anchorDate, today)
 }
 
-const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], now: Date) => {
+const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: LoanDoc[], now: Date) => {
   const events: Array<{
     id: string
     label: string
-    type: 'income' | 'bill'
+    type: 'income' | 'bill' | 'loan'
     date: string
     amount: number
     daysAway: number
@@ -350,6 +353,38 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], now: Da
       type: 'bill',
       date: nextDate.toISOString().slice(0, 10),
       amount: -entry.amount,
+      daysAway,
+      cadence: entry.cadence,
+      customInterval: entry.customInterval,
+      customUnit: entry.customUnit,
+    })
+  })
+
+  loans.forEach((entry) => {
+    const nextDate = nextDateForCadence(
+      entry.cadence,
+      entry.createdAt,
+      now,
+      entry.dueDay,
+      entry.customInterval,
+      entry.customUnit,
+    )
+
+    if (!nextDate) {
+      return
+    }
+
+    const daysAway = Math.round((nextDate.getTime() - startOfDay(now).getTime()) / 86400000)
+    if (daysAway < 0 || daysAway > 60) {
+      return
+    }
+
+    events.push({
+      id: `loan-${entry._id}`,
+      label: `${entry.name} payment`,
+      type: 'loan',
+      date: nextDate.toISOString().slice(0, 10),
+      amount: -(entry.minimumPayment + (entry.subscriptionCost ?? 0)),
       daysAway,
       cadence: entry.cadence,
       customInterval: entry.customInterval,
@@ -493,6 +528,7 @@ export const getFinanceData = query({
           incomes: [],
           bills: [],
           cards: [],
+          loans: [],
           purchases: [],
           accounts: [],
           goals: [],
@@ -504,7 +540,7 @@ export const getFinanceData = query({
       }
     }
 
-    const [preference, incomes, bills, cards, purchases, accounts, goals] = await Promise.all([
+    const [preference, incomes, bills, cards, loans, purchases, accounts, goals] = await Promise.all([
       getUserPreference(ctx, identity.subject),
       ctx.db
         .query('incomes')
@@ -518,6 +554,11 @@ export const getFinanceData = query({
         .collect(),
       ctx.db
         .query('cards')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .collect(),
+      ctx.db
+        .query('loans')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .collect(),
@@ -546,11 +587,19 @@ export const getFinanceData = query({
       (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
       0,
     )
+    const monthlyLoanPayments = loans.reduce(
+      (sum, entry) =>
+        sum +
+        toMonthlyAmount(entry.minimumPayment, entry.cadence, entry.customInterval, entry.customUnit) +
+        (entry.subscriptionCost ?? 0),
+      0,
+    )
     const monthlyCardSpend = cards.reduce((sum, entry) => sum + entry.spendPerMonth, 0)
-    const monthlyCommitments = monthlyBills + monthlyCardSpend
+    const monthlyCommitments = monthlyBills + monthlyCardSpend + monthlyLoanPayments
 
     const cardLimitTotal = cards.reduce((sum, entry) => sum + entry.creditLimit, 0)
     const cardUsedTotal = cards.reduce((sum, entry) => sum + entry.usedLimit, 0)
+    const totalLoanBalance = loans.reduce((sum, entry) => sum + entry.balance, 0)
     const cardUtilizationPercent = cardLimitTotal > 0 ? (cardUsedTotal / cardLimitTotal) * 100 : 0
 
     const now = new Date()
@@ -575,7 +624,7 @@ export const getFinanceData = query({
       return entry.balance < 0 ? sum + Math.abs(entry.balance) : sum
     }, 0)
 
-    const totalLiabilities = accountDebts + cardUsedTotal
+    const totalLiabilities = accountDebts + cardUsedTotal + totalLoanBalance
     const netWorth = totalAssets - totalLiabilities
 
     const liquidReserves = accounts.reduce((sum, entry) => {
@@ -618,7 +667,7 @@ export const getFinanceData = query({
       .sort((a, b) => b.total - a.total)
       .slice(0, 5)
 
-    const upcomingCashEvents = buildUpcomingCashEvents(incomes, bills, now)
+    const upcomingCashEvents = buildUpcomingCashEvents(incomes, bills, loans, now)
 
     const insights = buildInsights({
       monthlyIncome,
@@ -633,6 +682,7 @@ export const getFinanceData = query({
       ...incomes.map((entry) => entry.createdAt),
       ...bills.map((entry) => entry.createdAt),
       ...cards.map((entry) => entry.createdAt),
+      ...loans.map((entry) => entry.createdAt),
       ...purchases.map((entry) => entry.createdAt),
       ...accounts.map((entry) => entry.createdAt),
       ...goals.map((entry) => entry.createdAt),
@@ -648,6 +698,7 @@ export const getFinanceData = query({
         incomes,
         bills,
         cards,
+        loans,
         purchases,
         accounts,
         goals,
@@ -658,9 +709,11 @@ export const getFinanceData = query({
           monthlyIncome,
           monthlyBills,
           monthlyCardSpend,
+          monthlyLoanPayments,
           monthlyCommitments,
           cardLimitTotal,
           cardUsedTotal,
+          totalLoanBalance,
           cardUtilizationPercent,
           purchasesThisMonth,
           projectedMonthlyNet,
@@ -893,6 +946,123 @@ export const removeBill = mutation({
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Bill record not found.')
+
+    await ctx.db.delete(args.id)
+  },
+})
+
+export const addLoan = mutation({
+  args: {
+    name: v.string(),
+    balance: v.number(),
+    minimumPayment: v.number(),
+    subscriptionCost: v.optional(v.number()),
+    interestRate: v.optional(v.number()),
+    dueDay: v.number(),
+    cadence: cadenceValidator,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnitValidator),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateRequiredText(args.name, 'Loan name')
+    validateNonNegative(args.balance, 'Loan balance')
+    validatePositive(args.minimumPayment, 'Loan minimum payment')
+
+    if (args.subscriptionCost !== undefined) {
+      validateNonNegative(args.subscriptionCost, 'Loan subscription cost')
+    }
+
+    if (args.interestRate !== undefined) {
+      validateNonNegative(args.interestRate, 'Loan interest rate')
+    }
+
+    if (args.dueDay < 1 || args.dueDay > 31) {
+      throw new Error('Due day must be between 1 and 31.')
+    }
+
+    const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+
+    await ctx.db.insert('loans', {
+      userId: identity.subject,
+      name: args.name.trim(),
+      balance: args.balance,
+      minimumPayment: args.minimumPayment,
+      subscriptionCost: args.subscriptionCost,
+      interestRate: args.interestRate,
+      dueDay: args.dueDay,
+      cadence: args.cadence,
+      customInterval: cadenceDetails.customInterval,
+      customUnit: cadenceDetails.customUnit,
+      notes: args.notes?.trim() || undefined,
+      createdAt: Date.now(),
+    })
+  },
+})
+
+export const updateLoan = mutation({
+  args: {
+    id: v.id('loans'),
+    name: v.string(),
+    balance: v.number(),
+    minimumPayment: v.number(),
+    subscriptionCost: v.optional(v.number()),
+    interestRate: v.optional(v.number()),
+    dueDay: v.number(),
+    cadence: cadenceValidator,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnitValidator),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateRequiredText(args.name, 'Loan name')
+    validateNonNegative(args.balance, 'Loan balance')
+    validatePositive(args.minimumPayment, 'Loan minimum payment')
+
+    if (args.subscriptionCost !== undefined) {
+      validateNonNegative(args.subscriptionCost, 'Loan subscription cost')
+    }
+
+    if (args.interestRate !== undefined) {
+      validateNonNegative(args.interestRate, 'Loan interest rate')
+    }
+
+    if (args.dueDay < 1 || args.dueDay > 31) {
+      throw new Error('Due day must be between 1 and 31.')
+    }
+
+    const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Loan record not found.')
+
+    await ctx.db.patch(args.id, {
+      name: args.name.trim(),
+      balance: args.balance,
+      minimumPayment: args.minimumPayment,
+      subscriptionCost: args.subscriptionCost,
+      interestRate: args.interestRate,
+      dueDay: args.dueDay,
+      cadence: args.cadence,
+      customInterval: cadenceDetails.customInterval,
+      customUnit: cadenceDetails.customUnit,
+      notes: args.notes?.trim() || undefined,
+    })
+  },
+})
+
+export const removeLoan = mutation({
+  args: {
+    id: v.id('loans'),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Loan record not found.')
 
     await ctx.db.delete(args.id)
   },

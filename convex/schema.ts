@@ -169,6 +169,22 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  loans: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    balance: v.number(),
+    minimumPayment: v.number(),
+    subscriptionCost: v.optional(v.number()),
+    interestRate: v.optional(v.number()),
+    dueDay: v.number(),
+    cadence,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnit),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
   purchases: defineTable({
     userId: v.string(),
     item: v.string(),

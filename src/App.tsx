@@ -11,7 +11,7 @@ import type { Id } from '../convex/_generated/dataModel'
 import { api } from '../convex/_generated/api'
 import './App.css'
 
-type TabKey = 'dashboard' | 'income' | 'bills' | 'cards' | 'purchases' | 'accounts' | 'goals'
+type TabKey = 'dashboard' | 'income' | 'bills' | 'cards' | 'loans' | 'purchases' | 'accounts' | 'goals'
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
@@ -23,9 +23,11 @@ type Summary = {
   monthlyIncome: number
   monthlyBills: number
   monthlyCardSpend: number
+  monthlyLoanPayments: number
   monthlyCommitments: number
   cardLimitTotal: number
   cardUsedTotal: number
+  totalLoanBalance: number
   cardUtilizationPercent: number
   purchasesThisMonth: number
   projectedMonthlyNet: number
@@ -44,6 +46,7 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'income', label: 'Income' },
   { key: 'bills', label: 'Bills' },
   { key: 'cards', label: 'Cards' },
+  { key: 'loans', label: 'Loans' },
   { key: 'purchases', label: 'Purchases' },
   { key: 'accounts', label: 'Accounts' },
   { key: 'goals', label: 'Goals' },
@@ -89,9 +92,11 @@ const emptySummary: Summary = {
   monthlyIncome: 0,
   monthlyBills: 0,
   monthlyCardSpend: 0,
+  monthlyLoanPayments: 0,
   monthlyCommitments: 0,
   cardLimitTotal: 0,
   cardUsedTotal: 0,
+  totalLoanBalance: 0,
   cardUtilizationPercent: 0,
   purchasesThisMonth: 0,
   projectedMonthlyNet: 0,
@@ -252,6 +257,10 @@ function App() {
   const updateCard = useMutation(api.finance.updateCard)
   const removeCard = useMutation(api.finance.removeCard)
 
+  const addLoan = useMutation(api.finance.addLoan)
+  const updateLoan = useMutation(api.finance.updateLoan)
+  const removeLoan = useMutation(api.finance.removeLoan)
+
   const addPurchase = useMutation(api.finance.addPurchase)
   const updatePurchase = useMutation(api.finance.updatePurchase)
   const removePurchase = useMutation(api.finance.removePurchase)
@@ -301,6 +310,19 @@ function App() {
     usedLimit: '',
     minimumPayment: '',
     spendPerMonth: '',
+  })
+
+  const [loanForm, setLoanForm] = useState({
+    name: '',
+    balance: '',
+    minimumPayment: '',
+    subscriptionCost: '',
+    interestRate: '',
+    dueDay: '',
+    cadence: 'monthly' as Cadence,
+    customInterval: '',
+    customUnit: 'weeks' as CustomCadenceUnit,
+    notes: '',
   })
 
   const [purchaseForm, setPurchaseForm] = useState({
@@ -356,6 +378,20 @@ function App() {
     usedLimit: '',
     minimumPayment: '',
     spendPerMonth: '',
+  })
+
+  const [loanEditId, setLoanEditId] = useState<Id<'loans'> | null>(null)
+  const [loanEditDraft, setLoanEditDraft] = useState({
+    name: '',
+    balance: '',
+    minimumPayment: '',
+    subscriptionCost: '',
+    interestRate: '',
+    dueDay: '',
+    cadence: 'monthly' as Cadence,
+    customInterval: '',
+    customUnit: 'weeks' as CustomCadenceUnit,
+    notes: '',
   })
 
   const [purchaseEditId, setPurchaseEditId] = useState<Id<'purchases'> | null>(null)
@@ -450,6 +486,7 @@ function App() {
   const incomeEntries = financeState?.data.incomes
   const billEntries = financeState?.data.bills
   const cardEntries = financeState?.data.cards
+  const loanEntries = financeState?.data.loans
   const purchaseEntries = financeState?.data.purchases
   const accountEntries = financeState?.data.accounts
   const goalEntries = financeState?.data.goals
@@ -457,6 +494,7 @@ function App() {
   const incomes = incomeEntries ?? []
   const bills = billEntries ?? []
   const cards = cardEntries ?? []
+  const loans = loanEntries ?? []
   const purchases = purchaseEntries ?? []
   const accounts = accountEntries ?? []
   const goals = goalEntries ?? []
@@ -540,8 +578,15 @@ function App() {
       id: 'monthly-commitments',
       label: 'Monthly Commitments',
       value: formatMoney(summary.monthlyCommitments),
-      note: 'Bills + card spend plans',
+      note: `${formatMoney(summary.monthlyBills)} bills • ${formatMoney(summary.monthlyCardSpend)} cards • ${formatMoney(summary.monthlyLoanPayments)} loans`,
       trend: 'down',
+    },
+    {
+      id: 'loan-balance',
+      label: 'Loan Balance',
+      value: formatMoney(summary.totalLoanBalance),
+      note: `${formatMoney(summary.monthlyLoanPayments)} in monthly loan obligations`,
+      trend: summary.totalLoanBalance > 0 ? 'down' : 'flat',
     },
     {
       id: 'projected-net',
@@ -584,6 +629,7 @@ function App() {
         incomes,
         bills,
         cards,
+        loans,
         purchases,
         accounts,
         goals,
@@ -709,6 +755,45 @@ function App() {
     }
   }
 
+  const onAddLoan = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    clearError()
+
+    try {
+      const customInterval = isCustomCadence(loanForm.cadence) ? parseCustomInterval(loanForm.customInterval) : undefined
+
+      await addLoan({
+        name: loanForm.name,
+        balance: parseFloatInput(loanForm.balance, 'Loan balance'),
+        minimumPayment: parseFloatInput(loanForm.minimumPayment, 'Loan minimum payment'),
+        subscriptionCost: loanForm.subscriptionCost
+          ? parseFloatInput(loanForm.subscriptionCost, 'Loan subscription cost')
+          : undefined,
+        interestRate: loanForm.interestRate ? parseFloatInput(loanForm.interestRate, 'Loan APR') : undefined,
+        dueDay: parseIntInput(loanForm.dueDay, 'Due day'),
+        cadence: loanForm.cadence,
+        customInterval,
+        customUnit: isCustomCadence(loanForm.cadence) ? loanForm.customUnit : undefined,
+        notes: loanForm.notes || undefined,
+      })
+
+      setLoanForm({
+        name: '',
+        balance: '',
+        minimumPayment: '',
+        subscriptionCost: '',
+        interestRate: '',
+        dueDay: '',
+        cadence: 'monthly',
+        customInterval: '',
+        customUnit: 'weeks',
+        notes: '',
+      })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
   const onAddPurchase = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     clearError()
@@ -813,6 +898,18 @@ function App() {
         setCardEditId(null)
       }
       await removeCard({ id })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onDeleteLoan = async (id: Id<'loans'>) => {
+    clearError()
+    try {
+      if (loanEditId === id) {
+        setLoanEditId(null)
+      }
+      await removeLoan({ id })
     } catch (error) {
       handleMutationError(error)
     }
@@ -959,6 +1056,50 @@ function App() {
         spendPerMonth: parseFloatInput(cardEditDraft.spendPerMonth, 'Spend per month'),
       })
       setCardEditId(null)
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const startLoanEdit = (entry: (typeof loans)[number]) => {
+    setLoanEditId(entry._id)
+    setLoanEditDraft({
+      name: entry.name,
+      balance: String(entry.balance),
+      minimumPayment: String(entry.minimumPayment),
+      subscriptionCost: entry.subscriptionCost !== undefined ? String(entry.subscriptionCost) : '',
+      interestRate: entry.interestRate !== undefined ? String(entry.interestRate) : '',
+      dueDay: String(entry.dueDay),
+      cadence: entry.cadence,
+      customInterval: entry.customInterval ? String(entry.customInterval) : '',
+      customUnit: entry.customUnit ?? 'weeks',
+      notes: entry.notes ?? '',
+    })
+  }
+
+  const saveLoanEdit = async () => {
+    if (!loanEditId) return
+
+    clearError()
+    try {
+      const customInterval = isCustomCadence(loanEditDraft.cadence) ? parseCustomInterval(loanEditDraft.customInterval) : undefined
+
+      await updateLoan({
+        id: loanEditId,
+        name: loanEditDraft.name,
+        balance: parseFloatInput(loanEditDraft.balance, 'Loan balance'),
+        minimumPayment: parseFloatInput(loanEditDraft.minimumPayment, 'Loan minimum payment'),
+        subscriptionCost: loanEditDraft.subscriptionCost
+          ? parseFloatInput(loanEditDraft.subscriptionCost, 'Loan subscription cost')
+          : undefined,
+        interestRate: loanEditDraft.interestRate ? parseFloatInput(loanEditDraft.interestRate, 'Loan APR') : undefined,
+        dueDay: parseIntInput(loanEditDraft.dueDay, 'Due day'),
+        cadence: loanEditDraft.cadence,
+        customInterval,
+        customUnit: isCustomCadence(loanEditDraft.cadence) ? loanEditDraft.customUnit : undefined,
+        notes: loanEditDraft.notes || undefined,
+      })
+      setLoanEditId(null)
     } catch (error) {
       handleMutationError(error)
     }
@@ -1353,6 +1494,10 @@ function App() {
                   <li>
                     <span>Card entries</span>
                     <strong>{cards.length}</strong>
+                  </li>
+                  <li>
+                    <span>Loan entries</span>
+                    <strong>{loans.length}</strong>
                   </li>
                   <li>
                     <span>Purchase entries</span>
@@ -2210,6 +2355,403 @@ function App() {
                                   </button>
                                 )}
                                 <button type="button" className="btn btn-ghost" onClick={() => void onDeleteCard(entry._id)}>
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </article>
+          </section>
+        ) : null}
+
+        {activeTab === 'loans' ? (
+          <section className="editor-grid" aria-label="Loan management">
+            <article className="panel panel-form">
+              <header className="panel-header">
+                <div>
+                  <p className="panel-kicker">Loans</p>
+                  <h2>Add Loan Entry</h2>
+                </div>
+              </header>
+
+              <form className="entry-form" onSubmit={onAddLoan}>
+                <label htmlFor="loan-name">Loan Name</label>
+                <input
+                  id="loan-name"
+                  value={loanForm.name}
+                  onChange={(event) => setLoanForm((prev) => ({ ...prev, name: event.target.value }))}
+                  required
+                />
+
+                <label htmlFor="loan-balance">Outstanding Balance</label>
+                <input
+                  id="loan-balance"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={loanForm.balance}
+                  onChange={(event) => setLoanForm((prev) => ({ ...prev, balance: event.target.value }))}
+                  required
+                />
+
+                <label htmlFor="loan-payment">Minimum Payment</label>
+                <input
+                  id="loan-payment"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={loanForm.minimumPayment}
+                  onChange={(event) => setLoanForm((prev) => ({ ...prev, minimumPayment: event.target.value }))}
+                  required
+                />
+
+                <label htmlFor="loan-subscription">Subscription Cost (optional)</label>
+                <input
+                  id="loan-subscription"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={loanForm.subscriptionCost}
+                  onChange={(event) => setLoanForm((prev) => ({ ...prev, subscriptionCost: event.target.value }))}
+                />
+
+                <label htmlFor="loan-interest-rate">APR % (optional)</label>
+                <input
+                  id="loan-interest-rate"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={loanForm.interestRate}
+                  onChange={(event) => setLoanForm((prev) => ({ ...prev, interestRate: event.target.value }))}
+                />
+
+                <label htmlFor="loan-due-day">Due Day (1-31)</label>
+                <input
+                  id="loan-due-day"
+                  type="number"
+                  min="1"
+                  max="31"
+                  value={loanForm.dueDay}
+                  onChange={(event) => setLoanForm((prev) => ({ ...prev, dueDay: event.target.value }))}
+                  required
+                />
+
+                <label htmlFor="loan-cadence">Frequency</label>
+                <select
+                  id="loan-cadence"
+                  value={loanForm.cadence}
+                  onChange={(event) =>
+                    setLoanForm((prev) => ({
+                      ...prev,
+                      cadence: event.target.value as Cadence,
+                      customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                    }))
+                  }
+                >
+                  {cadenceOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+
+                {isCustomCadence(loanForm.cadence) ? (
+                  <>
+                    <label htmlFor="loan-custom-interval">Custom Repeat Every</label>
+                    <div className="inline-cadence-controls">
+                      <input
+                        id="loan-custom-interval"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={loanForm.customInterval}
+                        onChange={(event) =>
+                          setLoanForm((prev) => ({
+                            ...prev,
+                            customInterval: event.target.value,
+                          }))
+                        }
+                        required
+                      />
+                      <select
+                        id="loan-custom-unit"
+                        value={loanForm.customUnit}
+                        onChange={(event) =>
+                          setLoanForm((prev) => ({
+                            ...prev,
+                            customUnit: event.target.value as CustomCadenceUnit,
+                          }))
+                        }
+                      >
+                        {customCadenceUnitOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : null}
+
+                <label htmlFor="loan-notes">Notes (optional)</label>
+                <textarea
+                  id="loan-notes"
+                  rows={3}
+                  value={loanForm.notes}
+                  onChange={(event) => setLoanForm((prev) => ({ ...prev, notes: event.target.value }))}
+                />
+
+                <button type="submit" className="btn btn-primary">
+                  Save Loan
+                </button>
+              </form>
+            </article>
+
+            <article className="panel panel-list">
+              <header className="panel-header">
+                <div>
+                  <p className="panel-kicker">Loans</p>
+                  <h2>Current Entries</h2>
+                </div>
+              </header>
+
+              {loans.length === 0 ? (
+                <p className="empty-state">No loans added yet.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <caption className="sr-only">Loan entries</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Balance</th>
+                        <th scope="col">Min Payment</th>
+                        <th scope="col">Subscription</th>
+                        <th scope="col">APR</th>
+                        <th scope="col">Due Day</th>
+                        <th scope="col">Frequency</th>
+                        <th scope="col">Notes</th>
+                        <th scope="col">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loans.map((entry) => {
+                        const isEditing = loanEditId === entry._id
+
+                        return (
+                          <tr key={entry._id}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={loanEditDraft.name}
+                                  onChange={(event) =>
+                                    setLoanEditDraft((prev) => ({
+                                      ...prev,
+                                      name: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.name
+                              )}
+                            </td>
+                            <td className="table-amount amount-negative">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={loanEditDraft.balance}
+                                  onChange={(event) =>
+                                    setLoanEditDraft((prev) => ({
+                                      ...prev,
+                                      balance: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.balance)
+                              )}
+                            </td>
+                            <td className="table-amount amount-negative">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={loanEditDraft.minimumPayment}
+                                  onChange={(event) =>
+                                    setLoanEditDraft((prev) => ({
+                                      ...prev,
+                                      minimumPayment: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.minimumPayment)
+                              )}
+                            </td>
+                            <td className="table-amount amount-negative">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={loanEditDraft.subscriptionCost}
+                                  onChange={(event) =>
+                                    setLoanEditDraft((prev) => ({
+                                      ...prev,
+                                      subscriptionCost: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : entry.subscriptionCost !== undefined ? (
+                                formatMoney(entry.subscriptionCost)
+                              ) : (
+                                '-'
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={loanEditDraft.interestRate}
+                                  onChange={(event) =>
+                                    setLoanEditDraft((prev) => ({
+                                      ...prev,
+                                      interestRate: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : entry.interestRate !== undefined ? (
+                                `${entry.interestRate.toFixed(2)}%`
+                              ) : (
+                                '-'
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  min="1"
+                                  max="31"
+                                  value={loanEditDraft.dueDay}
+                                  onChange={(event) =>
+                                    setLoanEditDraft((prev) => ({
+                                      ...prev,
+                                      dueDay: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.dueDay
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <div className="inline-cadence-controls">
+                                  <select
+                                    className="inline-select"
+                                    value={loanEditDraft.cadence}
+                                    onChange={(event) =>
+                                      setLoanEditDraft((prev) => ({
+                                        ...prev,
+                                        cadence: event.target.value as Cadence,
+                                        customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                                      }))
+                                    }
+                                  >
+                                    {cadenceOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {isCustomCadence(loanEditDraft.cadence) ? (
+                                    <>
+                                      <input
+                                        className="inline-input inline-cadence-number"
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        value={loanEditDraft.customInterval}
+                                        onChange={(event) =>
+                                          setLoanEditDraft((prev) => ({
+                                            ...prev,
+                                            customInterval: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                      <select
+                                        className="inline-select inline-cadence-unit"
+                                        value={loanEditDraft.customUnit}
+                                        onChange={(event) =>
+                                          setLoanEditDraft((prev) => ({
+                                            ...prev,
+                                            customUnit: event.target.value as CustomCadenceUnit,
+                                          }))
+                                        }
+                                      >
+                                        {customCadenceUnitOptions.map((option) => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={loanEditDraft.notes}
+                                  onChange={(event) =>
+                                    setLoanEditDraft((prev) => ({
+                                      ...prev,
+                                      notes: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                entry.notes ?? '-'
+                              )}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button type="button" className="btn btn-secondary" onClick={() => void saveLoanEdit()}>
+                                      Save
+                                    </button>
+                                    <button type="button" className="btn btn-ghost" onClick={() => setLoanEditId(null)}>
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button type="button" className="btn btn-secondary" onClick={() => startLoanEdit(entry)}>
+                                    Edit
+                                  </button>
+                                )}
+                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteLoan(entry._id)}>
                                   Remove
                                 </button>
                               </div>
