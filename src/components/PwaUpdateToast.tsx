@@ -7,7 +7,7 @@ export function PwaUpdateToast() {
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
   } = useRegisterSW({
-    onRegistered(registration) {
+    onRegisteredSW(_swScriptUrl, registration: ServiceWorkerRegistration | undefined) {
       if (!registration) {
         return
       }
