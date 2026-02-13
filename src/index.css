@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Sora:wght@500;600;700;800&display=swap');
+
+:root {
+  font-family: 'Manrope', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  line-height: 1.45;
+  font-weight: 500;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --bg-top: oklch(96% 0.024 96);
+  --bg-bottom: oklch(92% 0.03 220);
+  --surface: color-mix(in oklab, white 78%, transparent);
+  --surface-card: color-mix(in oklab, white 88%, transparent);
+  --stroke: color-mix(in oklab, oklch(40% 0.02 230) 20%, transparent);
+  --text-main: oklch(25% 0.03 245);
+  --text-muted: oklch(48% 0.03 245);
+
+  --tone-finance: oklch(66% 0.17 178);
+  --tone-savings: oklch(72% 0.15 88);
+  --tone-housing: oklch(63% 0.14 195);
+  --tone-groceries: oklch(69% 0.18 65);
+  --tone-transport: oklch(62% 0.15 246);
+  --tone-dining: oklch(66% 0.18 30);
+
+  --tone-positive: oklch(62% 0.18 160);
+  --tone-negative: oklch(60% 0.18 28);
+  --tone-neutral: oklch(56% 0.04 238);
+  --tone-warning: oklch(72% 0.16 80);
+
+  --shadow-soft: 0 18px 38px -24px oklch(35% 0.03 220 / 0.34);
+}
+
+* {
+  font-family: inherit;
+}
+
+* ,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  color: var(--text-main);
+  background:
+    radial-gradient(circle at 12% 15%, color-mix(in oklab, var(--tone-savings) 30%, transparent), transparent 36%),
+    radial-gradient(circle at 86% 85%, color-mix(in oklab, var(--tone-finance) 24%, transparent), transparent 42%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+}
+
+h1,
+h2 {
+  font-family: 'Sora', 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.015em;
+}
