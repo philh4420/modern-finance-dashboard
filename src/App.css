@@ -216,6 +216,49 @@ h2 {
   font-size: 0.9rem;
 }
 
+.pwa-update-toast {
+  position: fixed;
+  right: clamp(0.85rem, 1.5vw, 1.35rem);
+  bottom: clamp(0.85rem, 1.5vw, 1.35rem);
+  z-index: 40;
+  width: min(26rem, calc(100vw - 1.7rem));
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--tone-finance) 35%, var(--stroke));
+  background:
+    radial-gradient(130% 180% at 100% -20%, color-mix(in oklab, var(--tone-savings) 22%, transparent), transparent 62%),
+    linear-gradient(
+      150deg,
+      color-mix(in oklab, var(--surface-card) 92%, white 8%),
+      color-mix(in oklab, var(--surface-card) 97%, var(--tone-finance) 3%)
+    );
+  box-shadow:
+    0 20px 48px -34px color-mix(in oklab, var(--tone-finance) 56%, transparent),
+    0 14px 28px -24px color-mix(in oklab, black 35%, transparent);
+  backdrop-filter: blur(14px);
+  padding: 0.84rem;
+  display: grid;
+  gap: 0.66rem;
+}
+
+.pwa-update-toast__title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 730;
+  color: var(--text-main);
+}
+
+.pwa-update-toast__text {
+  margin: 0.24rem 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.pwa-update-toast__actions {
+  display: flex;
+  gap: 0.42rem;
+  justify-content: flex-end;
+}
+
 .metric-grid {
   display: grid;
   gap: 1rem;

@@ -16,6 +16,7 @@ import type { DashboardCard, TabKey } from './components/financeTypes'
 import { GoalsTab } from './components/GoalsTab'
 import { IncomeTab } from './components/IncomeTab'
 import { LoansTab } from './components/LoansTab'
+import { PwaUpdateToast } from './components/PwaUpdateToast'
 import { PurchasesTab } from './components/PurchasesTab'
 import { useAccountsSection } from './hooks/useAccountsSection'
 import { useBillsSection } from './hooks/useBillsSection'
@@ -511,6 +512,7 @@ function App() {
           />
         ) : null}
       </SignedIn>
+      <PwaUpdateToast />
     </main>
   )
 }
