@@ -133,6 +133,9 @@ const validateFinite = (value: number, fieldName: string) => {
   }
 }
 
+const finiteOrZero = (value: number | undefined | null) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : 0
+
 const validateRequiredText = (value: string, fieldName: string) => {
   if (value.trim().length === 0) {
     throw new Error(`${fieldName} is required.`)
@@ -384,7 +387,7 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: 
       label: `${entry.name} payment`,
       type: 'loan',
       date: nextDate.toISOString().slice(0, 10),
-      amount: -(entry.minimumPayment + (entry.subscriptionCost ?? 0)),
+      amount: -(finiteOrZero(entry.minimumPayment) + finiteOrZero(entry.subscriptionCost)),
       daysAway,
       cadence: entry.cadence,
       customInterval: entry.customInterval,
@@ -590,8 +593,8 @@ export const getFinanceData = query({
     const monthlyLoanPayments = loans.reduce(
       (sum, entry) =>
         sum +
-        toMonthlyAmount(entry.minimumPayment, entry.cadence, entry.customInterval, entry.customUnit) +
-        (entry.subscriptionCost ?? 0),
+        toMonthlyAmount(finiteOrZero(entry.minimumPayment), entry.cadence, entry.customInterval, entry.customUnit) +
+        finiteOrZero(entry.subscriptionCost),
       0,
     )
     const monthlyCardSpend = cards.reduce((sum, entry) => sum + entry.spendPerMonth, 0)
@@ -599,7 +602,7 @@ export const getFinanceData = query({
 
     const cardLimitTotal = cards.reduce((sum, entry) => sum + entry.creditLimit, 0)
     const cardUsedTotal = cards.reduce((sum, entry) => sum + entry.usedLimit, 0)
-    const totalLoanBalance = loans.reduce((sum, entry) => sum + entry.balance, 0)
+    const totalLoanBalance = loans.reduce((sum, entry) => sum + finiteOrZero(entry.balance), 0)
     const cardUtilizationPercent = cardLimitTotal > 0 ? (cardUsedTotal / cardLimitTotal) * 100 : 0
 
     const now = new Date()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   SignedIn,
   SignedOut,
@@ -7,430 +7,51 @@ import {
   UserButton,
 } from '@clerk/clerk-react'
 import { useMutation, useQuery } from 'convex/react'
-import type { Id } from '../convex/_generated/dataModel'
 import { api } from '../convex/_generated/api'
+import { AccountsTab } from './components/AccountsTab'
+import { BillsTab } from './components/BillsTab'
+import { CardsTab } from './components/CardsTab'
+import { DashboardTab } from './components/DashboardTab'
+import type { DashboardCard, TabKey } from './components/financeTypes'
+import { GoalsTab } from './components/GoalsTab'
+import { IncomeTab } from './components/IncomeTab'
+import { LoansTab } from './components/LoansTab'
+import { PurchasesTab } from './components/PurchasesTab'
+import { useAccountsSection } from './hooks/useAccountsSection'
+import { useBillsSection } from './hooks/useBillsSection'
+import { useCardsSection } from './hooks/useCardsSection'
+import { useFinanceFormat } from './hooks/useFinanceFormat'
+import { useGoalsSection } from './hooks/useGoalsSection'
+import { useIncomeSection } from './hooks/useIncomeSection'
+import { useLoansSection } from './hooks/useLoansSection'
+import { useMutationFeedback } from './hooks/useMutationFeedback'
+import { usePurchasesSection } from './hooks/usePurchasesSection'
+import {
+  accountTypeOptions,
+  cadenceOptions,
+  customCadenceUnitOptions,
+  dateLabel,
+  defaultPreference,
+  emptySummary,
+  goalPriorityOptions,
+  tabs,
+} from './lib/financeConstants'
+import {
+  accountTypeLabel,
+  cadenceLabel,
+  isCustomCadence,
+  priorityLabel,
+  severityLabel,
+} from './lib/financeHelpers'
 import './App.css'
-
-type TabKey = 'dashboard' | 'income' | 'bills' | 'cards' | 'loans' | 'purchases' | 'accounts' | 'goals'
-
-type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
-type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
-type AccountType = 'checking' | 'savings' | 'investment' | 'cash' | 'debt'
-type GoalPriority = 'low' | 'medium' | 'high'
-type InsightSeverity = 'good' | 'warning' | 'critical'
-
-type Summary = {
-  monthlyIncome: number
-  monthlyBills: number
-  monthlyCardSpend: number
-  monthlyLoanPayments: number
-  monthlyCommitments: number
-  cardLimitTotal: number
-  cardUsedTotal: number
-  totalLoanBalance: number
-  cardUtilizationPercent: number
-  purchasesThisMonth: number
-  projectedMonthlyNet: number
-  savingsRatePercent: number
-  totalAssets: number
-  totalLiabilities: number
-  netWorth: number
-  liquidReserves: number
-  runwayMonths: number
-  healthScore: number
-  goalsFundedPercent: number
-}
-
-const tabs: Array<{ key: TabKey; label: string }> = [
-  { key: 'dashboard', label: 'Dashboard' },
-  { key: 'income', label: 'Income' },
-  { key: 'bills', label: 'Bills' },
-  { key: 'cards', label: 'Cards' },
-  { key: 'loans', label: 'Loans' },
-  { key: 'purchases', label: 'Purchases' },
-  { key: 'accounts', label: 'Accounts' },
-  { key: 'goals', label: 'Goals' },
-]
-
-const cadenceOptions: Array<{ value: Cadence; label: string }> = [
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'biweekly', label: 'Biweekly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'quarterly', label: 'Quarterly' },
-  { value: 'yearly', label: 'Yearly' },
-  { value: 'custom', label: 'Custom' },
-  { value: 'one_time', label: 'One Time' },
-]
-
-const customCadenceUnitOptions: Array<{ value: CustomCadenceUnit; label: string }> = [
-  { value: 'days', label: 'Days' },
-  { value: 'weeks', label: 'Weeks' },
-  { value: 'months', label: 'Months' },
-  { value: 'years', label: 'Years' },
-]
-
-const accountTypeOptions: Array<{ value: AccountType; label: string }> = [
-  { value: 'checking', label: 'Checking' },
-  { value: 'savings', label: 'Savings' },
-  { value: 'investment', label: 'Investment' },
-  { value: 'cash', label: 'Cash' },
-  { value: 'debt', label: 'Debt' },
-]
-
-const goalPriorityOptions: Array<{ value: GoalPriority; label: string }> = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-]
-
-const defaultPreference = {
-  currency: 'USD',
-  locale: 'en-US',
-}
-
-const emptySummary: Summary = {
-  monthlyIncome: 0,
-  monthlyBills: 0,
-  monthlyCardSpend: 0,
-  monthlyLoanPayments: 0,
-  monthlyCommitments: 0,
-  cardLimitTotal: 0,
-  cardUsedTotal: 0,
-  totalLoanBalance: 0,
-  cardUtilizationPercent: 0,
-  purchasesThisMonth: 0,
-  projectedMonthlyNet: 0,
-  savingsRatePercent: 0,
-  totalAssets: 0,
-  totalLiabilities: 0,
-  netWorth: 0,
-  liquidReserves: 0,
-  runwayMonths: 0,
-  healthScore: 0,
-  goalsFundedPercent: 0,
-}
-
-const fallbackCurrencyOptions = [
-  'USD',
-  'EUR',
-  'GBP',
-  'JPY',
-  'AUD',
-  'CAD',
-  'CHF',
-  'CNY',
-  'SEK',
-  'NOK',
-  'NZD',
-  'MXN',
-  'SGD',
-  'HKD',
-  'INR',
-  'BRL',
-  'ZAR',
-  'AED',
-  'SAR',
-]
-
-const fallbackLocaleOptions = [
-  'en-US',
-  'en-GB',
-  'en-AU',
-  'en-CA',
-  'de-DE',
-  'fr-FR',
-  'es-ES',
-  'it-IT',
-  'pt-BR',
-  'ja-JP',
-  'zh-CN',
-  'zh-HK',
-  'ko-KR',
-  'hi-IN',
-  'ar-AE',
-]
-
-const currencyOptions = (() => {
-  const supportedValuesOf = (Intl as typeof Intl & {
-    supportedValuesOf?: (input: 'currency') => string[]
-  }).supportedValuesOf
-
-  if (supportedValuesOf) {
-    const supported = supportedValuesOf('currency').map((code) => code.toUpperCase())
-    return Array.from(new Set(supported)).sort((a, b) => a.localeCompare(b))
-  }
-
-  return fallbackCurrencyOptions
-})()
-
-const isValidLocale = (locale: string) => {
-  try {
-    new Intl.NumberFormat(locale)
-    return true
-  } catch {
-    return false
-  }
-}
-
-const parseFloatInput = (value: string, label: string) => {
-  const parsed = Number.parseFloat(value)
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`${label} must be a valid number.`)
-  }
-  return parsed
-}
-
-const parseIntInput = (value: string, label: string) => {
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`${label} must be a valid number.`)
-  }
-  return parsed
-}
-
-const parseCustomInterval = (value: string) => {
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new Error('Custom frequency interval must be at least 1.')
-  }
-  return parsed
-}
-
-const toIsoToday = () => new Date().toISOString().slice(0, 10)
-
-const dateLabel = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  year: 'numeric',
-})
-
-const isCustomCadence = (cadence: Cadence) => cadence === 'custom'
-
-const customCadenceLabel = (customInterval?: number, customUnit?: CustomCadenceUnit) => {
-  if (!customInterval || !customUnit) {
-    return 'Custom'
-  }
-
-  const unit = customInterval === 1 ? customUnit.slice(0, -1) : customUnit
-  return `Every ${customInterval} ${unit}`
-}
-
-const cadenceLabel = (cadence: Cadence, customInterval?: number, customUnit?: CustomCadenceUnit) => {
-  if (cadence === 'custom') {
-    return customCadenceLabel(customInterval, customUnit)
-  }
-  return cadenceOptions.find((option) => option.value === cadence)?.label ?? cadence
-}
-
-const accountTypeLabel = (value: AccountType) =>
-  accountTypeOptions.find((option) => option.value === value)?.label ?? value
-
-const priorityLabel = (priority: GoalPriority) =>
-  goalPriorityOptions.find((option) => option.value === priority)?.label ?? priority
-
-const severityLabel = (severity: InsightSeverity) => {
-  if (severity === 'critical') return 'Critical'
-  if (severity === 'warning') return 'Watch'
-  return 'Good'
-}
-
-const daysUntilDate = (dateString: string) => {
-  const target = new Date(`${dateString}T00:00:00`)
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const end = target.getTime()
-  return Math.round((end - start) / 86400000)
-}
 
 function App() {
   const financeState = useQuery(api.finance.getFinanceData)
-
-  const addIncome = useMutation(api.finance.addIncome)
-  const updateIncome = useMutation(api.finance.updateIncome)
-  const removeIncome = useMutation(api.finance.removeIncome)
-
-  const addBill = useMutation(api.finance.addBill)
-  const updateBill = useMutation(api.finance.updateBill)
-  const removeBill = useMutation(api.finance.removeBill)
-
-  const addCard = useMutation(api.finance.addCard)
-  const updateCard = useMutation(api.finance.updateCard)
-  const removeCard = useMutation(api.finance.removeCard)
-
-  const addLoan = useMutation(api.finance.addLoan)
-  const updateLoan = useMutation(api.finance.updateLoan)
-  const removeLoan = useMutation(api.finance.removeLoan)
-
-  const addPurchase = useMutation(api.finance.addPurchase)
-  const updatePurchase = useMutation(api.finance.updatePurchase)
-  const removePurchase = useMutation(api.finance.removePurchase)
-
-  const addAccount = useMutation(api.finance.addAccount)
-  const updateAccount = useMutation(api.finance.updateAccount)
-  const removeAccount = useMutation(api.finance.removeAccount)
-
-  const addGoal = useMutation(api.finance.addGoal)
-  const updateGoal = useMutation(api.finance.updateGoal)
-  const removeGoal = useMutation(api.finance.removeGoal)
-
-  const upsertFinancePreference = useMutation(api.finance.upsertFinancePreference)
   const cleanupLegacySeedData = useMutation(api.finance.cleanupLegacySeedData)
 
   const cleanupTriggered = useRef(false)
-
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
-  const [errorMessage, setErrorMessage] = useState('')
-
-  const [formatOverride, setFormatOverride] = useState<Partial<typeof defaultPreference>>({})
-
-  const [incomeForm, setIncomeForm] = useState({
-    source: '',
-    amount: '',
-    cadence: 'monthly' as Cadence,
-    customInterval: '',
-    customUnit: 'weeks' as CustomCadenceUnit,
-    receivedDay: '',
-    notes: '',
-  })
-
-  const [billForm, setBillForm] = useState({
-    name: '',
-    amount: '',
-    dueDay: '',
-    cadence: 'monthly' as Cadence,
-    customInterval: '',
-    customUnit: 'weeks' as CustomCadenceUnit,
-    autopay: true,
-    notes: '',
-  })
-
-  const [cardForm, setCardForm] = useState({
-    name: '',
-    creditLimit: '',
-    usedLimit: '',
-    minimumPayment: '',
-    spendPerMonth: '',
-  })
-
-  const [loanForm, setLoanForm] = useState({
-    name: '',
-    balance: '',
-    minimumPayment: '',
-    subscriptionCost: '',
-    interestRate: '',
-    dueDay: '',
-    cadence: 'monthly' as Cadence,
-    customInterval: '',
-    customUnit: 'weeks' as CustomCadenceUnit,
-    notes: '',
-  })
-
-  const [purchaseForm, setPurchaseForm] = useState({
-    item: '',
-    amount: '',
-    category: '',
-    purchaseDate: toIsoToday(),
-    notes: '',
-  })
-
-  const [accountForm, setAccountForm] = useState({
-    name: '',
-    type: 'checking' as AccountType,
-    balance: '',
-    liquid: true,
-  })
-
-  const [goalForm, setGoalForm] = useState({
-    title: '',
-    targetAmount: '',
-    currentAmount: '',
-    targetDate: '',
-    priority: 'medium' as GoalPriority,
-  })
-
-  const [incomeEditId, setIncomeEditId] = useState<Id<'incomes'> | null>(null)
-  const [incomeEditDraft, setIncomeEditDraft] = useState({
-    source: '',
-    amount: '',
-    cadence: 'monthly' as Cadence,
-    customInterval: '',
-    customUnit: 'weeks' as CustomCadenceUnit,
-    receivedDay: '',
-    notes: '',
-  })
-
-  const [billEditId, setBillEditId] = useState<Id<'bills'> | null>(null)
-  const [billEditDraft, setBillEditDraft] = useState({
-    name: '',
-    amount: '',
-    dueDay: '',
-    cadence: 'monthly' as Cadence,
-    customInterval: '',
-    customUnit: 'weeks' as CustomCadenceUnit,
-    autopay: false,
-    notes: '',
-  })
-
-  const [cardEditId, setCardEditId] = useState<Id<'cards'> | null>(null)
-  const [cardEditDraft, setCardEditDraft] = useState({
-    name: '',
-    creditLimit: '',
-    usedLimit: '',
-    minimumPayment: '',
-    spendPerMonth: '',
-  })
-
-  const [loanEditId, setLoanEditId] = useState<Id<'loans'> | null>(null)
-  const [loanEditDraft, setLoanEditDraft] = useState({
-    name: '',
-    balance: '',
-    minimumPayment: '',
-    subscriptionCost: '',
-    interestRate: '',
-    dueDay: '',
-    cadence: 'monthly' as Cadence,
-    customInterval: '',
-    customUnit: 'weeks' as CustomCadenceUnit,
-    notes: '',
-  })
-
-  const [purchaseEditId, setPurchaseEditId] = useState<Id<'purchases'> | null>(null)
-  const [purchaseEditDraft, setPurchaseEditDraft] = useState({
-    item: '',
-    amount: '',
-    category: '',
-    purchaseDate: toIsoToday(),
-    notes: '',
-  })
-
-  const [accountEditId, setAccountEditId] = useState<Id<'accounts'> | null>(null)
-  const [accountEditDraft, setAccountEditDraft] = useState({
-    name: '',
-    type: 'checking' as AccountType,
-    balance: '',
-    liquid: true,
-  })
-
-  const [goalEditId, setGoalEditId] = useState<Id<'goals'> | null>(null)
-  const [goalEditDraft, setGoalEditDraft] = useState({
-    title: '',
-    targetAmount: '',
-    currentAmount: '',
-    targetDate: '',
-    priority: 'medium' as GoalPriority,
-  })
-
-  const [purchaseFilter, setPurchaseFilter] = useState({
-    query: '',
-    category: 'all',
-    month: new Date().toISOString().slice(0, 7),
-  })
-
-  const localeOptions = useMemo(() => {
-    const fromNavigator = typeof navigator !== 'undefined' ? navigator.languages : []
-    const combined = Array.from(new Set([...fallbackLocaleOptions, ...fromNavigator]))
-    return combined.filter((locale) => isValidLocale(locale))
-  }, [])
+  const { errorMessage, clearError, handleMutationError } = useMutationFeedback()
 
   useEffect(() => {
     if (financeState?.isAuthenticated && !cleanupTriggered.current) {
@@ -441,68 +62,66 @@ function App() {
 
   const preference = financeState?.data.preference ?? defaultPreference
 
-  const displayedFormat = {
-    currency: formatOverride.currency ?? preference.currency,
-    locale: formatOverride.locale ?? preference.locale,
-  }
-
-  const moneyFormatter = useMemo(() => {
-    try {
-      return new Intl.NumberFormat(preference.locale, {
-        style: 'currency',
-        currency: preference.currency,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })
-    } catch {
-      return new Intl.NumberFormat(defaultPreference.locale, {
-        style: 'currency',
-        currency: defaultPreference.currency,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })
-    }
-  }, [preference.currency, preference.locale])
-
-  const percentFormatter = useMemo(() => {
-    try {
-      return new Intl.NumberFormat(preference.locale, {
-        style: 'percent',
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-      })
-    } catch {
-      return new Intl.NumberFormat(defaultPreference.locale, {
-        style: 'percent',
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-      })
-    }
-  }, [preference.locale])
-
-  const formatMoney = (value: number) => moneyFormatter.format(value)
-  const formatPercent = (value: number) => percentFormatter.format(value)
-
-  const incomeEntries = financeState?.data.incomes
-  const billEntries = financeState?.data.bills
-  const cardEntries = financeState?.data.cards
-  const loanEntries = financeState?.data.loans
-  const purchaseEntries = financeState?.data.purchases
-  const accountEntries = financeState?.data.accounts
-  const goalEntries = financeState?.data.goals
-
-  const incomes = incomeEntries ?? []
-  const bills = billEntries ?? []
-  const cards = cardEntries ?? []
-  const loans = loanEntries ?? []
-  const purchases = purchaseEntries ?? []
-  const accounts = accountEntries ?? []
-  const goals = goalEntries ?? []
+  const incomes = financeState?.data.incomes ?? []
+  const bills = financeState?.data.bills ?? []
+  const cards = financeState?.data.cards ?? []
+  const loans = financeState?.data.loans ?? []
+  const purchases = financeState?.data.purchases ?? []
+  const accounts = financeState?.data.accounts ?? []
+  const goals = financeState?.data.goals ?? []
 
   const topCategories = financeState?.data.topCategories ?? []
   const upcomingCashEvents = financeState?.data.upcomingCashEvents ?? []
   const insights = financeState?.data.insights ?? []
   const summary = financeState?.data.summary ?? emptySummary
+
+  const formatSection = useFinanceFormat({
+    preference,
+    clearError,
+    handleMutationError,
+  })
+
+  const incomeSection = useIncomeSection({
+    incomes,
+    clearError,
+    handleMutationError,
+  })
+
+  const billsSection = useBillsSection({
+    bills,
+    clearError,
+    handleMutationError,
+  })
+
+  const cardsSection = useCardsSection({
+    cards,
+    clearError,
+    handleMutationError,
+  })
+
+  const loansSection = useLoansSection({
+    loans,
+    clearError,
+    handleMutationError,
+  })
+
+  const purchasesSection = usePurchasesSection({
+    purchases,
+    clearError,
+    handleMutationError,
+  })
+
+  const accountsSection = useAccountsSection({
+    accounts,
+    clearError,
+    handleMutationError,
+  })
+
+  const goalsSection = useGoalsSection({
+    goals,
+    clearError,
+    handleMutationError,
+  })
 
   const connectionNote = financeState === undefined ? 'Connecting to Convex...' : 'Convex synced'
 
@@ -514,52 +133,7 @@ function App() {
     minute: '2-digit',
   }).format(financeState?.updatedAt ? new Date(financeState.updatedAt) : new Date())
 
-  const purchaseCategories = useMemo(() => {
-    const source = purchaseEntries ?? []
-    return Array.from(new Set(source.map((entry) => entry.category))).sort((a, b) => a.localeCompare(b))
-  }, [purchaseEntries])
-
-  const filteredPurchases = useMemo(() => {
-    const search = purchaseFilter.query.trim().toLowerCase()
-
-    const source = purchaseEntries ?? []
-
-    return source.filter((entry) => {
-      const matchesQuery =
-        search.length === 0 ||
-        entry.item.toLowerCase().includes(search) ||
-        entry.category.toLowerCase().includes(search) ||
-        (entry.notes ?? '').toLowerCase().includes(search)
-
-      const matchesCategory = purchaseFilter.category === 'all' || entry.category === purchaseFilter.category
-
-      const matchesMonth = purchaseFilter.month.length === 0 || entry.purchaseDate.startsWith(purchaseFilter.month)
-
-      return matchesQuery && matchesCategory && matchesMonth
-    })
-  }, [purchaseEntries, purchaseFilter])
-
-  const filteredPurchaseTotal = filteredPurchases.reduce((sum, entry) => sum + entry.amount, 0)
-  const filteredPurchaseAverage = filteredPurchases.length > 0 ? filteredPurchaseTotal / filteredPurchases.length : 0
-
-  const goalsWithMetrics = useMemo(() => {
-    const source = goalEntries ?? []
-
-    return source.map((goal) => {
-      const progressPercent = Math.min((goal.currentAmount / Math.max(goal.targetAmount, 1)) * 100, 100)
-      const remaining = Math.max(goal.targetAmount - goal.currentAmount, 0)
-      const daysLeft = daysUntilDate(goal.targetDate)
-
-      return {
-        ...goal,
-        progressPercent,
-        remaining,
-        daysLeft,
-      }
-    })
-  }, [goalEntries])
-
-  const dashboardCards = [
+  const dashboardCards: DashboardCard[] = [
     {
       id: 'health-score',
       label: 'Financial Health Score',
@@ -570,53 +144,46 @@ function App() {
     {
       id: 'monthly-income',
       label: 'Monthly Income',
-      value: formatMoney(summary.monthlyIncome),
+      value: formatSection.formatMoney(summary.monthlyIncome),
       note: `${incomes.length} sources tracked`,
       trend: 'up',
     },
     {
       id: 'monthly-commitments',
       label: 'Monthly Commitments',
-      value: formatMoney(summary.monthlyCommitments),
-      note: `${formatMoney(summary.monthlyBills)} bills • ${formatMoney(summary.monthlyCardSpend)} cards • ${formatMoney(summary.monthlyLoanPayments)} loans`,
+      value: formatSection.formatMoney(summary.monthlyCommitments),
+      note: `${formatSection.formatMoney(summary.monthlyBills)} bills • ${formatSection.formatMoney(summary.monthlyCardSpend)} cards • ${formatSection.formatMoney(summary.monthlyLoanPayments)} loans`,
       trend: 'down',
     },
     {
       id: 'loan-balance',
       label: 'Loan Balance',
-      value: formatMoney(summary.totalLoanBalance),
-      note: `${formatMoney(summary.monthlyLoanPayments)} in monthly loan obligations`,
+      value: formatSection.formatMoney(summary.totalLoanBalance),
+      note: `${formatSection.formatMoney(summary.monthlyLoanPayments)} in monthly loan obligations`,
       trend: summary.totalLoanBalance > 0 ? 'down' : 'flat',
     },
     {
       id: 'projected-net',
       label: 'Projected Monthly Net',
-      value: formatMoney(summary.projectedMonthlyNet),
-      note: formatPercent(summary.savingsRatePercent / 100),
+      value: formatSection.formatMoney(summary.projectedMonthlyNet),
+      note: formatSection.formatPercent(summary.savingsRatePercent / 100),
       trend: summary.projectedMonthlyNet >= 0 ? 'up' : 'down',
     },
     {
       id: 'net-worth',
       label: 'Net Worth',
-      value: formatMoney(summary.netWorth),
-      note: `${formatMoney(summary.totalAssets)} assets / ${formatMoney(summary.totalLiabilities)} liabilities`,
+      value: formatSection.formatMoney(summary.netWorth),
+      note: `${formatSection.formatMoney(summary.totalAssets)} assets / ${formatSection.formatMoney(summary.totalLiabilities)} liabilities`,
       trend: summary.netWorth >= 0 ? 'up' : 'down',
     },
     {
       id: 'runway',
       label: 'Cash Runway',
       value: `${summary.runwayMonths.toFixed(1)} months`,
-      note: `${formatMoney(summary.liquidReserves)} liquid reserves`,
+      note: `${formatSection.formatMoney(summary.liquidReserves)} liquid reserves`,
       trend: summary.runwayMonths >= 3 ? 'up' : summary.runwayMonths >= 1 ? 'flat' : 'down',
     },
   ]
-
-  const clearError = () => setErrorMessage('')
-
-  const handleMutationError = (error: unknown) => {
-    const message = error instanceof Error ? error.message : 'Something went wrong. Try again.'
-    setErrorMessage(message)
-  }
 
   const downloadSnapshot = () => {
     clearError()
@@ -648,549 +215,6 @@ function App() {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(url)
-  }
-
-  const onSaveFormat = async () => {
-    clearError()
-
-    try {
-      await upsertFinancePreference({
-        currency: displayedFormat.currency,
-        locale: displayedFormat.locale,
-      })
-      setFormatOverride({})
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onAddIncome = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    clearError()
-
-    try {
-      const customInterval = isCustomCadence(incomeForm.cadence)
-        ? parseCustomInterval(incomeForm.customInterval)
-        : undefined
-
-      await addIncome({
-        source: incomeForm.source,
-        amount: parseFloatInput(incomeForm.amount, 'Income amount'),
-        cadence: incomeForm.cadence,
-        customInterval,
-        customUnit: isCustomCadence(incomeForm.cadence) ? incomeForm.customUnit : undefined,
-        receivedDay: incomeForm.receivedDay ? parseIntInput(incomeForm.receivedDay, 'Received day') : undefined,
-        notes: incomeForm.notes || undefined,
-      })
-
-      setIncomeForm({
-        source: '',
-        amount: '',
-        cadence: 'monthly',
-        customInterval: '',
-        customUnit: 'weeks',
-        receivedDay: '',
-        notes: '',
-      })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onAddBill = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    clearError()
-
-    try {
-      const customInterval = isCustomCadence(billForm.cadence) ? parseCustomInterval(billForm.customInterval) : undefined
-
-      await addBill({
-        name: billForm.name,
-        amount: parseFloatInput(billForm.amount, 'Bill amount'),
-        dueDay: parseIntInput(billForm.dueDay, 'Due day'),
-        cadence: billForm.cadence,
-        customInterval,
-        customUnit: isCustomCadence(billForm.cadence) ? billForm.customUnit : undefined,
-        autopay: billForm.autopay,
-        notes: billForm.notes || undefined,
-      })
-
-      setBillForm({
-        name: '',
-        amount: '',
-        dueDay: '',
-        cadence: 'monthly',
-        customInterval: '',
-        customUnit: 'weeks',
-        autopay: true,
-        notes: '',
-      })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onAddCard = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    clearError()
-
-    try {
-      await addCard({
-        name: cardForm.name,
-        creditLimit: parseFloatInput(cardForm.creditLimit, 'Credit limit'),
-        usedLimit: parseFloatInput(cardForm.usedLimit, 'Used limit'),
-        minimumPayment: parseFloatInput(cardForm.minimumPayment, 'Minimum payment'),
-        spendPerMonth: parseFloatInput(cardForm.spendPerMonth, 'Spend per month'),
-      })
-
-      setCardForm({
-        name: '',
-        creditLimit: '',
-        usedLimit: '',
-        minimumPayment: '',
-        spendPerMonth: '',
-      })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onAddLoan = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    clearError()
-
-    try {
-      const customInterval = isCustomCadence(loanForm.cadence) ? parseCustomInterval(loanForm.customInterval) : undefined
-
-      await addLoan({
-        name: loanForm.name,
-        balance: parseFloatInput(loanForm.balance, 'Loan balance'),
-        minimumPayment: parseFloatInput(loanForm.minimumPayment, 'Loan minimum payment'),
-        subscriptionCost: loanForm.subscriptionCost
-          ? parseFloatInput(loanForm.subscriptionCost, 'Loan subscription cost')
-          : undefined,
-        interestRate: loanForm.interestRate ? parseFloatInput(loanForm.interestRate, 'Loan APR') : undefined,
-        dueDay: parseIntInput(loanForm.dueDay, 'Due day'),
-        cadence: loanForm.cadence,
-        customInterval,
-        customUnit: isCustomCadence(loanForm.cadence) ? loanForm.customUnit : undefined,
-        notes: loanForm.notes || undefined,
-      })
-
-      setLoanForm({
-        name: '',
-        balance: '',
-        minimumPayment: '',
-        subscriptionCost: '',
-        interestRate: '',
-        dueDay: '',
-        cadence: 'monthly',
-        customInterval: '',
-        customUnit: 'weeks',
-        notes: '',
-      })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onAddPurchase = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    clearError()
-
-    try {
-      await addPurchase({
-        item: purchaseForm.item,
-        amount: parseFloatInput(purchaseForm.amount, 'Purchase amount'),
-        category: purchaseForm.category,
-        purchaseDate: purchaseForm.purchaseDate,
-        notes: purchaseForm.notes || undefined,
-      })
-
-      setPurchaseForm({
-        item: '',
-        amount: '',
-        category: '',
-        purchaseDate: toIsoToday(),
-        notes: '',
-      })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onAddAccount = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    clearError()
-
-    try {
-      await addAccount({
-        name: accountForm.name,
-        type: accountForm.type,
-        balance: parseFloatInput(accountForm.balance, 'Account balance'),
-        liquid: accountForm.liquid,
-      })
-
-      setAccountForm({
-        name: '',
-        type: 'checking',
-        balance: '',
-        liquid: true,
-      })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onAddGoal = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    clearError()
-
-    try {
-      await addGoal({
-        title: goalForm.title,
-        targetAmount: parseFloatInput(goalForm.targetAmount, 'Target amount'),
-        currentAmount: parseFloatInput(goalForm.currentAmount, 'Current amount'),
-        targetDate: goalForm.targetDate,
-        priority: goalForm.priority,
-      })
-
-      setGoalForm({
-        title: '',
-        targetAmount: '',
-        currentAmount: '',
-        targetDate: '',
-        priority: 'medium',
-      })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onDeleteIncome = async (id: Id<'incomes'>) => {
-    clearError()
-    try {
-      if (incomeEditId === id) {
-        setIncomeEditId(null)
-      }
-      await removeIncome({ id })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onDeleteBill = async (id: Id<'bills'>) => {
-    clearError()
-    try {
-      if (billEditId === id) {
-        setBillEditId(null)
-      }
-      await removeBill({ id })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onDeleteCard = async (id: Id<'cards'>) => {
-    clearError()
-    try {
-      if (cardEditId === id) {
-        setCardEditId(null)
-      }
-      await removeCard({ id })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onDeleteLoan = async (id: Id<'loans'>) => {
-    clearError()
-    try {
-      if (loanEditId === id) {
-        setLoanEditId(null)
-      }
-      await removeLoan({ id })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onDeletePurchase = async (id: Id<'purchases'>) => {
-    clearError()
-    try {
-      if (purchaseEditId === id) {
-        setPurchaseEditId(null)
-      }
-      await removePurchase({ id })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onDeleteAccount = async (id: Id<'accounts'>) => {
-    clearError()
-    try {
-      if (accountEditId === id) {
-        setAccountEditId(null)
-      }
-      await removeAccount({ id })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const onDeleteGoal = async (id: Id<'goals'>) => {
-    clearError()
-    try {
-      if (goalEditId === id) {
-        setGoalEditId(null)
-      }
-      await removeGoal({ id })
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const startIncomeEdit = (
-    entry: (typeof incomes)[number],
-  ) => {
-    setIncomeEditId(entry._id)
-    setIncomeEditDraft({
-      source: entry.source,
-      amount: String(entry.amount),
-      cadence: entry.cadence,
-      customInterval: entry.customInterval ? String(entry.customInterval) : '',
-      customUnit: entry.customUnit ?? 'weeks',
-      receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
-      notes: entry.notes ?? '',
-    })
-  }
-
-  const saveIncomeEdit = async () => {
-    if (!incomeEditId) return
-
-    clearError()
-    try {
-      const customInterval = isCustomCadence(incomeEditDraft.cadence)
-        ? parseCustomInterval(incomeEditDraft.customInterval)
-        : undefined
-
-      await updateIncome({
-        id: incomeEditId,
-        source: incomeEditDraft.source,
-        amount: parseFloatInput(incomeEditDraft.amount, 'Income amount'),
-        cadence: incomeEditDraft.cadence,
-        customInterval,
-        customUnit: isCustomCadence(incomeEditDraft.cadence) ? incomeEditDraft.customUnit : undefined,
-        receivedDay: incomeEditDraft.receivedDay
-          ? parseIntInput(incomeEditDraft.receivedDay, 'Received day')
-          : undefined,
-        notes: incomeEditDraft.notes || undefined,
-      })
-      setIncomeEditId(null)
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const startBillEdit = (entry: (typeof bills)[number]) => {
-    setBillEditId(entry._id)
-    setBillEditDraft({
-      name: entry.name,
-      amount: String(entry.amount),
-      dueDay: String(entry.dueDay),
-      cadence: entry.cadence,
-      customInterval: entry.customInterval ? String(entry.customInterval) : '',
-      customUnit: entry.customUnit ?? 'weeks',
-      autopay: entry.autopay,
-      notes: entry.notes ?? '',
-    })
-  }
-
-  const saveBillEdit = async () => {
-    if (!billEditId) return
-
-    clearError()
-    try {
-      const customInterval = isCustomCadence(billEditDraft.cadence) ? parseCustomInterval(billEditDraft.customInterval) : undefined
-
-      await updateBill({
-        id: billEditId,
-        name: billEditDraft.name,
-        amount: parseFloatInput(billEditDraft.amount, 'Bill amount'),
-        dueDay: parseIntInput(billEditDraft.dueDay, 'Due day'),
-        cadence: billEditDraft.cadence,
-        customInterval,
-        customUnit: isCustomCadence(billEditDraft.cadence) ? billEditDraft.customUnit : undefined,
-        autopay: billEditDraft.autopay,
-        notes: billEditDraft.notes || undefined,
-      })
-      setBillEditId(null)
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const startCardEdit = (entry: (typeof cards)[number]) => {
-    setCardEditId(entry._id)
-    setCardEditDraft({
-      name: entry.name,
-      creditLimit: String(entry.creditLimit),
-      usedLimit: String(entry.usedLimit),
-      minimumPayment: String(entry.minimumPayment),
-      spendPerMonth: String(entry.spendPerMonth),
-    })
-  }
-
-  const saveCardEdit = async () => {
-    if (!cardEditId) return
-
-    clearError()
-    try {
-      await updateCard({
-        id: cardEditId,
-        name: cardEditDraft.name,
-        creditLimit: parseFloatInput(cardEditDraft.creditLimit, 'Credit limit'),
-        usedLimit: parseFloatInput(cardEditDraft.usedLimit, 'Used limit'),
-        minimumPayment: parseFloatInput(cardEditDraft.minimumPayment, 'Minimum payment'),
-        spendPerMonth: parseFloatInput(cardEditDraft.spendPerMonth, 'Spend per month'),
-      })
-      setCardEditId(null)
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const startLoanEdit = (entry: (typeof loans)[number]) => {
-    setLoanEditId(entry._id)
-    setLoanEditDraft({
-      name: entry.name,
-      balance: String(entry.balance),
-      minimumPayment: String(entry.minimumPayment),
-      subscriptionCost: entry.subscriptionCost !== undefined ? String(entry.subscriptionCost) : '',
-      interestRate: entry.interestRate !== undefined ? String(entry.interestRate) : '',
-      dueDay: String(entry.dueDay),
-      cadence: entry.cadence,
-      customInterval: entry.customInterval ? String(entry.customInterval) : '',
-      customUnit: entry.customUnit ?? 'weeks',
-      notes: entry.notes ?? '',
-    })
-  }
-
-  const saveLoanEdit = async () => {
-    if (!loanEditId) return
-
-    clearError()
-    try {
-      const customInterval = isCustomCadence(loanEditDraft.cadence) ? parseCustomInterval(loanEditDraft.customInterval) : undefined
-
-      await updateLoan({
-        id: loanEditId,
-        name: loanEditDraft.name,
-        balance: parseFloatInput(loanEditDraft.balance, 'Loan balance'),
-        minimumPayment: parseFloatInput(loanEditDraft.minimumPayment, 'Loan minimum payment'),
-        subscriptionCost: loanEditDraft.subscriptionCost
-          ? parseFloatInput(loanEditDraft.subscriptionCost, 'Loan subscription cost')
-          : undefined,
-        interestRate: loanEditDraft.interestRate ? parseFloatInput(loanEditDraft.interestRate, 'Loan APR') : undefined,
-        dueDay: parseIntInput(loanEditDraft.dueDay, 'Due day'),
-        cadence: loanEditDraft.cadence,
-        customInterval,
-        customUnit: isCustomCadence(loanEditDraft.cadence) ? loanEditDraft.customUnit : undefined,
-        notes: loanEditDraft.notes || undefined,
-      })
-      setLoanEditId(null)
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const startPurchaseEdit = (entry: (typeof purchases)[number]) => {
-    setPurchaseEditId(entry._id)
-    setPurchaseEditDraft({
-      item: entry.item,
-      amount: String(entry.amount),
-      category: entry.category,
-      purchaseDate: entry.purchaseDate,
-      notes: entry.notes ?? '',
-    })
-  }
-
-  const savePurchaseEdit = async () => {
-    if (!purchaseEditId) return
-
-    clearError()
-    try {
-      await updatePurchase({
-        id: purchaseEditId,
-        item: purchaseEditDraft.item,
-        amount: parseFloatInput(purchaseEditDraft.amount, 'Purchase amount'),
-        category: purchaseEditDraft.category,
-        purchaseDate: purchaseEditDraft.purchaseDate,
-        notes: purchaseEditDraft.notes || undefined,
-      })
-      setPurchaseEditId(null)
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const startAccountEdit = (entry: (typeof accounts)[number]) => {
-    setAccountEditId(entry._id)
-    setAccountEditDraft({
-      name: entry.name,
-      type: entry.type,
-      balance: String(entry.balance),
-      liquid: entry.liquid,
-    })
-  }
-
-  const saveAccountEdit = async () => {
-    if (!accountEditId) return
-
-    clearError()
-    try {
-      await updateAccount({
-        id: accountEditId,
-        name: accountEditDraft.name,
-        type: accountEditDraft.type,
-        balance: parseFloatInput(accountEditDraft.balance, 'Account balance'),
-        liquid: accountEditDraft.liquid,
-      })
-      setAccountEditId(null)
-    } catch (error) {
-      handleMutationError(error)
-    }
-  }
-
-  const startGoalEdit = (entry: (typeof goals)[number]) => {
-    setGoalEditId(entry._id)
-    setGoalEditDraft({
-      title: entry.title,
-      targetAmount: String(entry.targetAmount),
-      currentAmount: String(entry.currentAmount),
-      targetDate: entry.targetDate,
-      priority: entry.priority,
-    })
-  }
-
-  const saveGoalEdit = async () => {
-    if (!goalEditId) return
-
-    clearError()
-    try {
-      await updateGoal({
-        id: goalEditId,
-        title: goalEditDraft.title,
-        targetAmount: parseFloatInput(goalEditDraft.targetAmount, 'Goal target amount'),
-        currentAmount: parseFloatInput(goalEditDraft.currentAmount, 'Goal current amount'),
-        targetDate: goalEditDraft.targetDate,
-        priority: goalEditDraft.priority,
-      })
-      setGoalEditId(null)
-    } catch (error) {
-      handleMutationError(error)
-    }
   }
 
   return (
@@ -1263,15 +287,15 @@ function App() {
             </label>
             <select
               id="currency-select"
-              value={displayedFormat.currency}
+              value={formatSection.displayedFormat.currency}
               onChange={(event) =>
-                setFormatOverride((prev) => ({
+                formatSection.setFormatOverride((prev) => ({
                   ...prev,
                   currency: event.target.value,
                 }))
               }
             >
-              {currencyOptions.map((currency) => (
+              {formatSection.currencyOptions.map((currency) => (
                 <option key={currency} value={currency}>
                   {currency}
                 </option>
@@ -1283,22 +307,22 @@ function App() {
             </label>
             <select
               id="locale-select"
-              value={displayedFormat.locale}
+              value={formatSection.displayedFormat.locale}
               onChange={(event) =>
-                setFormatOverride((prev) => ({
+                formatSection.setFormatOverride((prev) => ({
                   ...prev,
                   locale: event.target.value,
                 }))
               }
             >
-              {localeOptions.map((locale) => (
+              {formatSection.localeOptions.map((locale) => (
                 <option key={locale} value={locale}>
                   {locale}
                 </option>
               ))}
             </select>
 
-            <button type="button" className="btn btn-secondary" onClick={() => void onSaveFormat()}>
+            <button type="button" className="btn btn-secondary" onClick={() => void formatSection.onSaveFormat()}>
               Apply Format
             </button>
           </div>
@@ -1320,2157 +344,171 @@ function App() {
         {errorMessage ? <p className="error-banner">{errorMessage}</p> : null}
 
         {activeTab === 'dashboard' ? (
-          <>
-            <section className="metric-grid" aria-label="Finance intelligence metrics">
-              {dashboardCards.map((card) => (
-                <article className="metric-card" key={card.id}>
-                  <p className="metric-label">{card.label}</p>
-                  <p className="metric-value">{card.value}</p>
-                  <p className={`metric-change metric-change--${card.trend}`}>{card.note}</p>
-                </article>
-              ))}
-            </section>
-
-            <section className="content-grid" aria-label="Finance intelligence panels">
-              <article className="panel panel-health">
-                <header className="panel-header">
-                  <div>
-                    <p className="panel-kicker">Health</p>
-                    <h2>System Status</h2>
-                  </div>
-                </header>
-                <div className="health-ring-wrap">
-                  <div
-                    className="health-ring"
-                    style={{ '--ring-score': `${Math.min(Math.max(summary.healthScore, 0), 100)}%` } as CSSProperties}
-                  >
-                    <div className="health-ring-inner">
-                      <strong>{summary.healthScore}</strong>
-                      <span>/ 100</span>
-                    </div>
-                  </div>
-                  <ul className="status-list">
-                    <li>
-                      <span>Savings Rate</span>
-                      <strong>{formatPercent(summary.savingsRatePercent / 100)}</strong>
-                    </li>
-                    <li>
-                      <span>Card Utilization</span>
-                      <strong>{formatPercent(summary.cardUtilizationPercent / 100)}</strong>
-                    </li>
-                    <li>
-                      <span>Goal Funding</span>
-                      <strong>{formatPercent(summary.goalsFundedPercent / 100)}</strong>
-                    </li>
-                  </ul>
-                </div>
-              </article>
-
-              <article className="panel panel-insights">
-                <header className="panel-header">
-                  <div>
-                    <p className="panel-kicker">Insights</p>
-                    <h2>Automated Finance Brief</h2>
-                  </div>
-                </header>
-                {insights.length === 0 ? (
-                  <p className="empty-state">Add finance data to generate contextual insights.</p>
-                ) : (
-                  <ul className="insight-list">
-                    {insights.map((insight) => (
-                      <li key={insight.id}>
-                        <div>
-                          <p>{insight.title}</p>
-                          <small>{insight.detail}</small>
-                        </div>
-                        <span className={`severity severity--${insight.severity}`}>{severityLabel(insight.severity)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </article>
-
-              <article className="panel panel-cash-events">
-                <header className="panel-header">
-                  <div>
-                    <p className="panel-kicker">Flow</p>
-                    <h2>Upcoming Cash Events</h2>
-                  </div>
-                </header>
-                {upcomingCashEvents.length === 0 ? (
-                  <p className="empty-state">No recurring events scheduled in the next 60 days.</p>
-                ) : (
-                  <ul className="timeline-list">
-                    {upcomingCashEvents.map((event) => (
-                      <li key={event.id}>
-                        <div>
-                          <p>{event.label}</p>
-                          <small>
-                            {dateLabel.format(new Date(`${event.date}T00:00:00`))} • {event.daysAway} day
-                            {event.daysAway === 1 ? '' : 's'} •{' '}
-                            {cadenceLabel(event.cadence, event.customInterval, event.customUnit)}
-                          </small>
-                        </div>
-                        <strong className={event.type === 'income' ? 'amount-positive' : 'amount-negative'}>
-                          {formatMoney(event.amount)}
-                        </strong>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </article>
-
-              <article className="panel panel-categories">
-                <header className="panel-header">
-                  <div>
-                    <p className="panel-kicker">Spending</p>
-                    <h2>Category Concentration</h2>
-                  </div>
-                  <p className="panel-value">{formatMoney(summary.purchasesThisMonth)} this month</p>
-                </header>
-                {topCategories.length === 0 ? (
-                  <p className="empty-state">No purchases this month yet.</p>
-                ) : (
-                  <ul className="category-bars">
-                    {topCategories.map((category) => (
-                      <li key={category.category}>
-                        <div className="category-row">
-                          <span>{category.category}</span>
-                          <strong>{formatMoney(category.total)}</strong>
-                        </div>
-                        <div className="bar-track">
-                          <span className="bar-fill" style={{ '--bar-width': `${category.sharePercent}%` } as CSSProperties} />
-                        </div>
-                        <small>{formatPercent(category.sharePercent / 100)} of monthly purchases</small>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </article>
-
-              <article className="panel panel-goal-preview">
-                <header className="panel-header">
-                  <div>
-                    <p className="panel-kicker">Goals</p>
-                    <h2>Progress Tracker</h2>
-                  </div>
-                </header>
-                {goalsWithMetrics.length === 0 ? (
-                  <p className="empty-state">No goals yet. Add one in the Goals section.</p>
-                ) : (
-                  <ul className="goal-preview-list">
-                    {goalsWithMetrics.slice(0, 4).map((goal) => (
-                      <li key={goal._id}>
-                        <div className="goal-preview-row">
-                          <span>{goal.title}</span>
-                          <strong>{formatPercent(goal.progressPercent / 100)}</strong>
-                        </div>
-                        <div className="bar-track">
-                          <span className="bar-fill" style={{ '--bar-width': `${goal.progressPercent}%` } as CSSProperties} />
-                        </div>
-                        <small>{formatMoney(goal.remaining)} remaining</small>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </article>
-
-              <article className="panel panel-snapshot">
-                <header className="panel-header">
-                  <div>
-                    <p className="panel-kicker">Snapshot</p>
-                    <h2>Data Coverage</h2>
-                  </div>
-                </header>
-                <ul className="snapshot-list">
-                  <li>
-                    <span>Income entries</span>
-                    <strong>{incomes.length}</strong>
-                  </li>
-                  <li>
-                    <span>Bill entries</span>
-                    <strong>{bills.length}</strong>
-                  </li>
-                  <li>
-                    <span>Card entries</span>
-                    <strong>{cards.length}</strong>
-                  </li>
-                  <li>
-                    <span>Loan entries</span>
-                    <strong>{loans.length}</strong>
-                  </li>
-                  <li>
-                    <span>Purchase entries</span>
-                    <strong>{purchases.length}</strong>
-                  </li>
-                  <li>
-                    <span>Account entries</span>
-                    <strong>{accounts.length}</strong>
-                  </li>
-                  <li>
-                    <span>Goal entries</span>
-                    <strong>{goals.length}</strong>
-                  </li>
-                </ul>
-              </article>
-            </section>
-          </>
+          <DashboardTab
+            dashboardCards={dashboardCards}
+            summary={summary}
+            insights={insights}
+            upcomingCashEvents={upcomingCashEvents}
+            topCategories={topCategories}
+            goalsWithMetrics={goalsSection.goalsWithMetrics}
+            counts={{
+              incomes: incomes.length,
+              bills: bills.length,
+              cards: cards.length,
+              loans: loans.length,
+              purchases: purchases.length,
+              accounts: accounts.length,
+              goals: goals.length,
+            }}
+            formatMoney={formatSection.formatMoney}
+            formatPercent={formatSection.formatPercent}
+            cadenceLabel={cadenceLabel}
+            severityLabel={severityLabel}
+            dateLabel={dateLabel}
+          />
         ) : null}
 
         {activeTab === 'income' ? (
-          <section className="editor-grid" aria-label="Income management">
-            <article className="panel panel-form">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Income</p>
-                  <h2>Add Income Entry</h2>
-                </div>
-              </header>
-              <form className="entry-form" onSubmit={onAddIncome}>
-                <label htmlFor="income-source">Source</label>
-                <input
-                  id="income-source"
-                  value={incomeForm.source}
-                  onChange={(event) => setIncomeForm((prev) => ({ ...prev, source: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="income-amount">Amount</label>
-                <input
-                  id="income-amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={incomeForm.amount}
-                  onChange={(event) => setIncomeForm((prev) => ({ ...prev, amount: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="income-cadence">Frequency</label>
-                <select
-                  id="income-cadence"
-                  value={incomeForm.cadence}
-                  onChange={(event) =>
-                    setIncomeForm((prev) => ({
-                      ...prev,
-                      cadence: event.target.value as Cadence,
-                      customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
-                    }))
-                  }
-                >
-                  {cadenceOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-
-                {isCustomCadence(incomeForm.cadence) ? (
-                  <>
-                    <label htmlFor="income-custom-interval">Custom Repeat Every</label>
-                    <div className="inline-cadence-controls">
-                      <input
-                        id="income-custom-interval"
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={incomeForm.customInterval}
-                        onChange={(event) =>
-                          setIncomeForm((prev) => ({
-                            ...prev,
-                            customInterval: event.target.value,
-                          }))
-                        }
-                        required
-                      />
-                      <select
-                        id="income-custom-unit"
-                        value={incomeForm.customUnit}
-                        onChange={(event) =>
-                          setIncomeForm((prev) => ({
-                            ...prev,
-                            customUnit: event.target.value as CustomCadenceUnit,
-                          }))
-                        }
-                      >
-                        {customCadenceUnitOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
-                ) : null}
-
-                <label htmlFor="income-day">Received Day (optional)</label>
-                <input
-                  id="income-day"
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={incomeForm.receivedDay}
-                  onChange={(event) => setIncomeForm((prev) => ({ ...prev, receivedDay: event.target.value }))}
-                />
-
-                <label htmlFor="income-notes">Notes (optional)</label>
-                <textarea
-                  id="income-notes"
-                  rows={3}
-                  value={incomeForm.notes}
-                  onChange={(event) => setIncomeForm((prev) => ({ ...prev, notes: event.target.value }))}
-                />
-
-                <button type="submit" className="btn btn-primary">
-                  Save Income
-                </button>
-              </form>
-            </article>
-
-            <article className="panel panel-list">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Income</p>
-                  <h2>Current Entries</h2>
-                </div>
-              </header>
-
-              {incomes.length === 0 ? (
-                <p className="empty-state">No income entries added yet.</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <caption className="sr-only">Income entries</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Source</th>
-                        <th scope="col">Amount</th>
-                        <th scope="col">Frequency</th>
-                        <th scope="col">Day</th>
-                        <th scope="col">Notes</th>
-                        <th scope="col">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {incomes.map((entry) => {
-                        const isEditing = incomeEditId === entry._id
-
-                        return (
-                          <tr key={entry._id}>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={incomeEditDraft.source}
-                                  onChange={(event) =>
-                                    setIncomeEditDraft((prev) => ({
-                                      ...prev,
-                                      source: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.source
-                              )}
-                            </td>
-                            <td className="table-amount amount-positive">
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  value={incomeEditDraft.amount}
-                                  onChange={(event) =>
-                                    setIncomeEditDraft((prev) => ({
-                                      ...prev,
-                                      amount: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.amount)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <div className="inline-cadence-controls">
-                                  <select
-                                    className="inline-select"
-                                    value={incomeEditDraft.cadence}
-                                    onChange={(event) =>
-                                      setIncomeEditDraft((prev) => ({
-                                        ...prev,
-                                        cadence: event.target.value as Cadence,
-                                        customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
-                                      }))
-                                    }
-                                  >
-                                    {cadenceOptions.map((option) => (
-                                      <option key={option.value} value={option.value}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {isCustomCadence(incomeEditDraft.cadence) ? (
-                                    <>
-                                      <input
-                                        className="inline-input inline-cadence-number"
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        value={incomeEditDraft.customInterval}
-                                        onChange={(event) =>
-                                          setIncomeEditDraft((prev) => ({
-                                            ...prev,
-                                            customInterval: event.target.value,
-                                          }))
-                                        }
-                                      />
-                                      <select
-                                        className="inline-select inline-cadence-unit"
-                                        value={incomeEditDraft.customUnit}
-                                        onChange={(event) =>
-                                          setIncomeEditDraft((prev) => ({
-                                            ...prev,
-                                            customUnit: event.target.value as CustomCadenceUnit,
-                                          }))
-                                        }
-                                      >
-                                        {customCadenceUnitOptions.map((option) => (
-                                          <option key={option.value} value={option.value}>
-                                            {option.label}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </>
-                                  ) : null}
-                                </div>
-                              ) : (
-                                cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="1"
-                                  max="31"
-                                  value={incomeEditDraft.receivedDay}
-                                  onChange={(event) =>
-                                    setIncomeEditDraft((prev) => ({
-                                      ...prev,
-                                      receivedDay: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.receivedDay ?? '-'
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={incomeEditDraft.notes}
-                                  onChange={(event) =>
-                                    setIncomeEditDraft((prev) => ({
-                                      ...prev,
-                                      notes: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.notes ?? '-'
-                              )}
-                            </td>
-                            <td>
-                              <div className="row-actions">
-                                {isEditing ? (
-                                  <>
-                                    <button type="button" className="btn btn-secondary" onClick={() => void saveIncomeEdit()}>
-                                      Save
-                                    </button>
-                                    <button type="button" className="btn btn-ghost" onClick={() => setIncomeEditId(null)}>
-                                      Cancel
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button type="button" className="btn btn-secondary" onClick={() => startIncomeEdit(entry)}>
-                                    Edit
-                                  </button>
-                                )}
-                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteIncome(entry._id)}>
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </section>
+          <IncomeTab
+            incomes={incomes}
+            incomeForm={incomeSection.incomeForm}
+            setIncomeForm={incomeSection.setIncomeForm}
+            incomeEditId={incomeSection.incomeEditId}
+            setIncomeEditId={incomeSection.setIncomeEditId}
+            incomeEditDraft={incomeSection.incomeEditDraft}
+            setIncomeEditDraft={incomeSection.setIncomeEditDraft}
+            onAddIncome={incomeSection.onAddIncome}
+            onDeleteIncome={incomeSection.onDeleteIncome}
+            saveIncomeEdit={incomeSection.saveIncomeEdit}
+            startIncomeEdit={incomeSection.startIncomeEdit}
+            cadenceOptions={cadenceOptions}
+            customCadenceUnitOptions={customCadenceUnitOptions}
+            isCustomCadence={isCustomCadence}
+            cadenceLabel={cadenceLabel}
+            formatMoney={formatSection.formatMoney}
+          />
         ) : null}
 
         {activeTab === 'bills' ? (
-          <section className="editor-grid" aria-label="Bill management">
-            <article className="panel panel-form">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Bills</p>
-                  <h2>Add Bill Entry</h2>
-                </div>
-              </header>
-              <form className="entry-form" onSubmit={onAddBill}>
-                <label htmlFor="bill-name">Bill Name</label>
-                <input
-                  id="bill-name"
-                  value={billForm.name}
-                  onChange={(event) => setBillForm((prev) => ({ ...prev, name: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="bill-amount">Amount</label>
-                <input
-                  id="bill-amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={billForm.amount}
-                  onChange={(event) => setBillForm((prev) => ({ ...prev, amount: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="bill-day">Due Day (1-31)</label>
-                <input
-                  id="bill-day"
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={billForm.dueDay}
-                  onChange={(event) => setBillForm((prev) => ({ ...prev, dueDay: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="bill-cadence">Frequency</label>
-                <select
-                  id="bill-cadence"
-                  value={billForm.cadence}
-                  onChange={(event) =>
-                    setBillForm((prev) => ({
-                      ...prev,
-                      cadence: event.target.value as Cadence,
-                      customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
-                    }))
-                  }
-                >
-                  {cadenceOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-
-                {isCustomCadence(billForm.cadence) ? (
-                  <>
-                    <label htmlFor="bill-custom-interval">Custom Repeat Every</label>
-                    <div className="inline-cadence-controls">
-                      <input
-                        id="bill-custom-interval"
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={billForm.customInterval}
-                        onChange={(event) =>
-                          setBillForm((prev) => ({
-                            ...prev,
-                            customInterval: event.target.value,
-                          }))
-                        }
-                        required
-                      />
-                      <select
-                        id="bill-custom-unit"
-                        value={billForm.customUnit}
-                        onChange={(event) =>
-                          setBillForm((prev) => ({
-                            ...prev,
-                            customUnit: event.target.value as CustomCadenceUnit,
-                          }))
-                        }
-                      >
-                        {customCadenceUnitOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
-                ) : null}
-
-                <label className="checkbox-row" htmlFor="bill-autopay">
-                  <input
-                    id="bill-autopay"
-                    type="checkbox"
-                    checked={billForm.autopay}
-                    onChange={(event) => setBillForm((prev) => ({ ...prev, autopay: event.target.checked }))}
-                  />
-                  Autopay enabled
-                </label>
-
-                <label htmlFor="bill-notes">Notes (optional)</label>
-                <textarea
-                  id="bill-notes"
-                  rows={3}
-                  value={billForm.notes}
-                  onChange={(event) => setBillForm((prev) => ({ ...prev, notes: event.target.value }))}
-                />
-
-                <button type="submit" className="btn btn-primary">
-                  Save Bill
-                </button>
-              </form>
-            </article>
-
-            <article className="panel panel-list">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Bills</p>
-                  <h2>Current Entries</h2>
-                </div>
-              </header>
-
-              {bills.length === 0 ? (
-                <p className="empty-state">No bills added yet.</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <caption className="sr-only">Bill entries</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Name</th>
-                        <th scope="col">Amount</th>
-                        <th scope="col">Due Day</th>
-                        <th scope="col">Frequency</th>
-                        <th scope="col">Autopay</th>
-                        <th scope="col">Notes</th>
-                        <th scope="col">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bills.map((entry) => {
-                        const isEditing = billEditId === entry._id
-
-                        return (
-                          <tr key={entry._id}>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={billEditDraft.name}
-                                  onChange={(event) =>
-                                    setBillEditDraft((prev) => ({
-                                      ...prev,
-                                      name: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.name
-                              )}
-                            </td>
-                            <td className="table-amount amount-negative">
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  value={billEditDraft.amount}
-                                  onChange={(event) =>
-                                    setBillEditDraft((prev) => ({
-                                      ...prev,
-                                      amount: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.amount)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="1"
-                                  max="31"
-                                  value={billEditDraft.dueDay}
-                                  onChange={(event) =>
-                                    setBillEditDraft((prev) => ({
-                                      ...prev,
-                                      dueDay: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.dueDay
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <div className="inline-cadence-controls">
-                                  <select
-                                    className="inline-select"
-                                    value={billEditDraft.cadence}
-                                    onChange={(event) =>
-                                      setBillEditDraft((prev) => ({
-                                        ...prev,
-                                        cadence: event.target.value as Cadence,
-                                        customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
-                                      }))
-                                    }
-                                  >
-                                    {cadenceOptions.map((option) => (
-                                      <option key={option.value} value={option.value}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {isCustomCadence(billEditDraft.cadence) ? (
-                                    <>
-                                      <input
-                                        className="inline-input inline-cadence-number"
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        value={billEditDraft.customInterval}
-                                        onChange={(event) =>
-                                          setBillEditDraft((prev) => ({
-                                            ...prev,
-                                            customInterval: event.target.value,
-                                          }))
-                                        }
-                                      />
-                                      <select
-                                        className="inline-select inline-cadence-unit"
-                                        value={billEditDraft.customUnit}
-                                        onChange={(event) =>
-                                          setBillEditDraft((prev) => ({
-                                            ...prev,
-                                            customUnit: event.target.value as CustomCadenceUnit,
-                                          }))
-                                        }
-                                      >
-                                        {customCadenceUnitOptions.map((option) => (
-                                          <option key={option.value} value={option.value}>
-                                            {option.label}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </>
-                                  ) : null}
-                                </div>
-                              ) : (
-                                cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  type="checkbox"
-                                  checked={billEditDraft.autopay}
-                                  onChange={(event) =>
-                                    setBillEditDraft((prev) => ({
-                                      ...prev,
-                                      autopay: event.target.checked,
-                                    }))
-                                  }
-                                />
-                              ) : entry.autopay ? (
-                                'Yes'
-                              ) : (
-                                'No'
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={billEditDraft.notes}
-                                  onChange={(event) =>
-                                    setBillEditDraft((prev) => ({
-                                      ...prev,
-                                      notes: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.notes ?? '-'
-                              )}
-                            </td>
-                            <td>
-                              <div className="row-actions">
-                                {isEditing ? (
-                                  <>
-                                    <button type="button" className="btn btn-secondary" onClick={() => void saveBillEdit()}>
-                                      Save
-                                    </button>
-                                    <button type="button" className="btn btn-ghost" onClick={() => setBillEditId(null)}>
-                                      Cancel
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button type="button" className="btn btn-secondary" onClick={() => startBillEdit(entry)}>
-                                    Edit
-                                  </button>
-                                )}
-                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteBill(entry._id)}>
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </section>
+          <BillsTab
+            bills={bills}
+            billForm={billsSection.billForm}
+            setBillForm={billsSection.setBillForm}
+            billEditId={billsSection.billEditId}
+            setBillEditId={billsSection.setBillEditId}
+            billEditDraft={billsSection.billEditDraft}
+            setBillEditDraft={billsSection.setBillEditDraft}
+            onAddBill={billsSection.onAddBill}
+            onDeleteBill={billsSection.onDeleteBill}
+            saveBillEdit={billsSection.saveBillEdit}
+            startBillEdit={billsSection.startBillEdit}
+            cadenceOptions={cadenceOptions}
+            customCadenceUnitOptions={customCadenceUnitOptions}
+            isCustomCadence={isCustomCadence}
+            cadenceLabel={cadenceLabel}
+            formatMoney={formatSection.formatMoney}
+          />
         ) : null}
 
         {activeTab === 'cards' ? (
-          <section className="editor-grid" aria-label="Card management">
-            <article className="panel panel-form">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Cards</p>
-                  <h2>Add Card Entry</h2>
-                </div>
-              </header>
-
-              <form className="entry-form" onSubmit={onAddCard}>
-                <label htmlFor="card-name">Card Name</label>
-                <input
-                  id="card-name"
-                  value={cardForm.name}
-                  onChange={(event) => setCardForm((prev) => ({ ...prev, name: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="card-limit">Credit Limit</label>
-                <input
-                  id="card-limit"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={cardForm.creditLimit}
-                  onChange={(event) => setCardForm((prev) => ({ ...prev, creditLimit: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="card-used">Used Limit</label>
-                <input
-                  id="card-used"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cardForm.usedLimit}
-                  onChange={(event) => setCardForm((prev) => ({ ...prev, usedLimit: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="card-payment">Minimum Payment</label>
-                <input
-                  id="card-payment"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cardForm.minimumPayment}
-                  onChange={(event) => setCardForm((prev) => ({ ...prev, minimumPayment: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="card-spend">Spend Per Month</label>
-                <input
-                  id="card-spend"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cardForm.spendPerMonth}
-                  onChange={(event) => setCardForm((prev) => ({ ...prev, spendPerMonth: event.target.value }))}
-                  required
-                />
-
-                <button type="submit" className="btn btn-primary">
-                  Save Card
-                </button>
-              </form>
-            </article>
-
-            <article className="panel panel-list">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Cards</p>
-                  <h2>Current Entries</h2>
-                </div>
-              </header>
-
-              {cards.length === 0 ? (
-                <p className="empty-state">No cards added yet.</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <caption className="sr-only">Card entries</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Name</th>
-                        <th scope="col">Limit</th>
-                        <th scope="col">Used</th>
-                        <th scope="col">Min Payment</th>
-                        <th scope="col">Monthly Spend</th>
-                        <th scope="col">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cards.map((entry) => {
-                        const isEditing = cardEditId === entry._id
-
-                        return (
-                          <tr key={entry._id}>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={cardEditDraft.name}
-                                  onChange={(event) =>
-                                    setCardEditDraft((prev) => ({
-                                      ...prev,
-                                      name: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.name
-                              )}
-                            </td>
-                            <td className="table-amount">
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  value={cardEditDraft.creditLimit}
-                                  onChange={(event) =>
-                                    setCardEditDraft((prev) => ({
-                                      ...prev,
-                                      creditLimit: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.creditLimit)
-                              )}
-                            </td>
-                            <td className="table-amount amount-negative">
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={cardEditDraft.usedLimit}
-                                  onChange={(event) =>
-                                    setCardEditDraft((prev) => ({
-                                      ...prev,
-                                      usedLimit: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.usedLimit)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={cardEditDraft.minimumPayment}
-                                  onChange={(event) =>
-                                    setCardEditDraft((prev) => ({
-                                      ...prev,
-                                      minimumPayment: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.minimumPayment)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={cardEditDraft.spendPerMonth}
-                                  onChange={(event) =>
-                                    setCardEditDraft((prev) => ({
-                                      ...prev,
-                                      spendPerMonth: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.spendPerMonth)
-                              )}
-                            </td>
-                            <td>
-                              <div className="row-actions">
-                                {isEditing ? (
-                                  <>
-                                    <button type="button" className="btn btn-secondary" onClick={() => void saveCardEdit()}>
-                                      Save
-                                    </button>
-                                    <button type="button" className="btn btn-ghost" onClick={() => setCardEditId(null)}>
-                                      Cancel
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button type="button" className="btn btn-secondary" onClick={() => startCardEdit(entry)}>
-                                    Edit
-                                  </button>
-                                )}
-                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteCard(entry._id)}>
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </section>
+          <CardsTab
+            cards={cards}
+            cardForm={cardsSection.cardForm}
+            setCardForm={cardsSection.setCardForm}
+            cardEditId={cardsSection.cardEditId}
+            setCardEditId={cardsSection.setCardEditId}
+            cardEditDraft={cardsSection.cardEditDraft}
+            setCardEditDraft={cardsSection.setCardEditDraft}
+            onAddCard={cardsSection.onAddCard}
+            onDeleteCard={cardsSection.onDeleteCard}
+            saveCardEdit={cardsSection.saveCardEdit}
+            startCardEdit={cardsSection.startCardEdit}
+            formatMoney={formatSection.formatMoney}
+          />
         ) : null}
 
         {activeTab === 'loans' ? (
-          <section className="editor-grid" aria-label="Loan management">
-            <article className="panel panel-form">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Loans</p>
-                  <h2>Add Loan Entry</h2>
-                </div>
-              </header>
-
-              <form className="entry-form" onSubmit={onAddLoan}>
-                <label htmlFor="loan-name">Loan Name</label>
-                <input
-                  id="loan-name"
-                  value={loanForm.name}
-                  onChange={(event) => setLoanForm((prev) => ({ ...prev, name: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="loan-balance">Outstanding Balance</label>
-                <input
-                  id="loan-balance"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={loanForm.balance}
-                  onChange={(event) => setLoanForm((prev) => ({ ...prev, balance: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="loan-payment">Minimum Payment</label>
-                <input
-                  id="loan-payment"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={loanForm.minimumPayment}
-                  onChange={(event) => setLoanForm((prev) => ({ ...prev, minimumPayment: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="loan-subscription">Subscription Cost (optional)</label>
-                <input
-                  id="loan-subscription"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={loanForm.subscriptionCost}
-                  onChange={(event) => setLoanForm((prev) => ({ ...prev, subscriptionCost: event.target.value }))}
-                />
-
-                <label htmlFor="loan-interest-rate">APR % (optional)</label>
-                <input
-                  id="loan-interest-rate"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={loanForm.interestRate}
-                  onChange={(event) => setLoanForm((prev) => ({ ...prev, interestRate: event.target.value }))}
-                />
-
-                <label htmlFor="loan-due-day">Due Day (1-31)</label>
-                <input
-                  id="loan-due-day"
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={loanForm.dueDay}
-                  onChange={(event) => setLoanForm((prev) => ({ ...prev, dueDay: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="loan-cadence">Frequency</label>
-                <select
-                  id="loan-cadence"
-                  value={loanForm.cadence}
-                  onChange={(event) =>
-                    setLoanForm((prev) => ({
-                      ...prev,
-                      cadence: event.target.value as Cadence,
-                      customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
-                    }))
-                  }
-                >
-                  {cadenceOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-
-                {isCustomCadence(loanForm.cadence) ? (
-                  <>
-                    <label htmlFor="loan-custom-interval">Custom Repeat Every</label>
-                    <div className="inline-cadence-controls">
-                      <input
-                        id="loan-custom-interval"
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={loanForm.customInterval}
-                        onChange={(event) =>
-                          setLoanForm((prev) => ({
-                            ...prev,
-                            customInterval: event.target.value,
-                          }))
-                        }
-                        required
-                      />
-                      <select
-                        id="loan-custom-unit"
-                        value={loanForm.customUnit}
-                        onChange={(event) =>
-                          setLoanForm((prev) => ({
-                            ...prev,
-                            customUnit: event.target.value as CustomCadenceUnit,
-                          }))
-                        }
-                      >
-                        {customCadenceUnitOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
-                ) : null}
-
-                <label htmlFor="loan-notes">Notes (optional)</label>
-                <textarea
-                  id="loan-notes"
-                  rows={3}
-                  value={loanForm.notes}
-                  onChange={(event) => setLoanForm((prev) => ({ ...prev, notes: event.target.value }))}
-                />
-
-                <button type="submit" className="btn btn-primary">
-                  Save Loan
-                </button>
-              </form>
-            </article>
-
-            <article className="panel panel-list">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Loans</p>
-                  <h2>Current Entries</h2>
-                </div>
-              </header>
-
-              {loans.length === 0 ? (
-                <p className="empty-state">No loans added yet.</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <caption className="sr-only">Loan entries</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Name</th>
-                        <th scope="col">Balance</th>
-                        <th scope="col">Min Payment</th>
-                        <th scope="col">Subscription</th>
-                        <th scope="col">APR</th>
-                        <th scope="col">Due Day</th>
-                        <th scope="col">Frequency</th>
-                        <th scope="col">Notes</th>
-                        <th scope="col">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {loans.map((entry) => {
-                        const isEditing = loanEditId === entry._id
-
-                        return (
-                          <tr key={entry._id}>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={loanEditDraft.name}
-                                  onChange={(event) =>
-                                    setLoanEditDraft((prev) => ({
-                                      ...prev,
-                                      name: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.name
-                              )}
-                            </td>
-                            <td className="table-amount amount-negative">
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={loanEditDraft.balance}
-                                  onChange={(event) =>
-                                    setLoanEditDraft((prev) => ({
-                                      ...prev,
-                                      balance: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.balance)
-                              )}
-                            </td>
-                            <td className="table-amount amount-negative">
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  value={loanEditDraft.minimumPayment}
-                                  onChange={(event) =>
-                                    setLoanEditDraft((prev) => ({
-                                      ...prev,
-                                      minimumPayment: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.minimumPayment)
-                              )}
-                            </td>
-                            <td className="table-amount amount-negative">
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={loanEditDraft.subscriptionCost}
-                                  onChange={(event) =>
-                                    setLoanEditDraft((prev) => ({
-                                      ...prev,
-                                      subscriptionCost: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : entry.subscriptionCost !== undefined ? (
-                                formatMoney(entry.subscriptionCost)
-                              ) : (
-                                '-'
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={loanEditDraft.interestRate}
-                                  onChange={(event) =>
-                                    setLoanEditDraft((prev) => ({
-                                      ...prev,
-                                      interestRate: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : entry.interestRate !== undefined ? (
-                                `${entry.interestRate.toFixed(2)}%`
-                              ) : (
-                                '-'
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="1"
-                                  max="31"
-                                  value={loanEditDraft.dueDay}
-                                  onChange={(event) =>
-                                    setLoanEditDraft((prev) => ({
-                                      ...prev,
-                                      dueDay: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.dueDay
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <div className="inline-cadence-controls">
-                                  <select
-                                    className="inline-select"
-                                    value={loanEditDraft.cadence}
-                                    onChange={(event) =>
-                                      setLoanEditDraft((prev) => ({
-                                        ...prev,
-                                        cadence: event.target.value as Cadence,
-                                        customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
-                                      }))
-                                    }
-                                  >
-                                    {cadenceOptions.map((option) => (
-                                      <option key={option.value} value={option.value}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {isCustomCadence(loanEditDraft.cadence) ? (
-                                    <>
-                                      <input
-                                        className="inline-input inline-cadence-number"
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        value={loanEditDraft.customInterval}
-                                        onChange={(event) =>
-                                          setLoanEditDraft((prev) => ({
-                                            ...prev,
-                                            customInterval: event.target.value,
-                                          }))
-                                        }
-                                      />
-                                      <select
-                                        className="inline-select inline-cadence-unit"
-                                        value={loanEditDraft.customUnit}
-                                        onChange={(event) =>
-                                          setLoanEditDraft((prev) => ({
-                                            ...prev,
-                                            customUnit: event.target.value as CustomCadenceUnit,
-                                          }))
-                                        }
-                                      >
-                                        {customCadenceUnitOptions.map((option) => (
-                                          <option key={option.value} value={option.value}>
-                                            {option.label}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </>
-                                  ) : null}
-                                </div>
-                              ) : (
-                                cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={loanEditDraft.notes}
-                                  onChange={(event) =>
-                                    setLoanEditDraft((prev) => ({
-                                      ...prev,
-                                      notes: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.notes ?? '-'
-                              )}
-                            </td>
-                            <td>
-                              <div className="row-actions">
-                                {isEditing ? (
-                                  <>
-                                    <button type="button" className="btn btn-secondary" onClick={() => void saveLoanEdit()}>
-                                      Save
-                                    </button>
-                                    <button type="button" className="btn btn-ghost" onClick={() => setLoanEditId(null)}>
-                                      Cancel
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button type="button" className="btn btn-secondary" onClick={() => startLoanEdit(entry)}>
-                                    Edit
-                                  </button>
-                                )}
-                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteLoan(entry._id)}>
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </section>
+          <LoansTab
+            loans={loans}
+            loanForm={loansSection.loanForm}
+            setLoanForm={loansSection.setLoanForm}
+            loanEditId={loansSection.loanEditId}
+            setLoanEditId={loansSection.setLoanEditId}
+            loanEditDraft={loansSection.loanEditDraft}
+            setLoanEditDraft={loansSection.setLoanEditDraft}
+            onAddLoan={loansSection.onAddLoan}
+            onDeleteLoan={loansSection.onDeleteLoan}
+            saveLoanEdit={loansSection.saveLoanEdit}
+            startLoanEdit={loansSection.startLoanEdit}
+            cadenceOptions={cadenceOptions}
+            customCadenceUnitOptions={customCadenceUnitOptions}
+            isCustomCadence={isCustomCadence}
+            cadenceLabel={cadenceLabel}
+            formatMoney={formatSection.formatMoney}
+          />
         ) : null}
 
         {activeTab === 'purchases' ? (
-          <section className="editor-grid" aria-label="Purchase management">
-            <article className="panel panel-form">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Purchases</p>
-                  <h2>Add Purchase Entry</h2>
-                </div>
-              </header>
-
-              <form className="entry-form" onSubmit={onAddPurchase}>
-                <label htmlFor="purchase-item">Item</label>
-                <input
-                  id="purchase-item"
-                  value={purchaseForm.item}
-                  onChange={(event) => setPurchaseForm((prev) => ({ ...prev, item: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="purchase-amount">Amount</label>
-                <input
-                  id="purchase-amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={purchaseForm.amount}
-                  onChange={(event) => setPurchaseForm((prev) => ({ ...prev, amount: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="purchase-category">Category</label>
-                <input
-                  id="purchase-category"
-                  value={purchaseForm.category}
-                  onChange={(event) => setPurchaseForm((prev) => ({ ...prev, category: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="purchase-date">Purchase Date</label>
-                <input
-                  id="purchase-date"
-                  type="date"
-                  value={purchaseForm.purchaseDate}
-                  onChange={(event) => setPurchaseForm((prev) => ({ ...prev, purchaseDate: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="purchase-notes">Notes (optional)</label>
-                <textarea
-                  id="purchase-notes"
-                  rows={3}
-                  value={purchaseForm.notes}
-                  onChange={(event) => setPurchaseForm((prev) => ({ ...prev, notes: event.target.value }))}
-                />
-
-                <button type="submit" className="btn btn-primary">
-                  Save Purchase
-                </button>
-              </form>
-            </article>
-
-            <article className="panel panel-list">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Purchases</p>
-                  <h2>Current Entries</h2>
-                </div>
-                <p className="panel-value">{formatMoney(filteredPurchaseTotal)} filtered total</p>
-              </header>
-
-              <div className="filter-row" role="group" aria-label="Purchase filters">
-                <input
-                  type="search"
-                  placeholder="Search item, category, notes"
-                  value={purchaseFilter.query}
-                  onChange={(event) =>
-                    setPurchaseFilter((prev) => ({
-                      ...prev,
-                      query: event.target.value,
-                    }))
-                  }
-                />
-                <select
-                  value={purchaseFilter.category}
-                  onChange={(event) =>
-                    setPurchaseFilter((prev) => ({
-                      ...prev,
-                      category: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="all">All categories</option>
-                  {purchaseCategories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="month"
-                  value={purchaseFilter.month}
-                  onChange={(event) =>
-                    setPurchaseFilter((prev) => ({
-                      ...prev,
-                      month: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-
-              <p className="subnote">
-                {filteredPurchases.length} result{filteredPurchases.length === 1 ? '' : 's'} • avg{' '}
-                {formatMoney(filteredPurchaseAverage)}
-              </p>
-
-              {filteredPurchases.length === 0 ? (
-                <p className="empty-state">No purchases match this filter.</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <caption className="sr-only">Purchase entries</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Item</th>
-                        <th scope="col">Category</th>
-                        <th scope="col">Date</th>
-                        <th scope="col">Amount</th>
-                        <th scope="col">Notes</th>
-                        <th scope="col">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPurchases.map((entry) => {
-                        const isEditing = purchaseEditId === entry._id
-
-                        return (
-                          <tr key={entry._id}>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={purchaseEditDraft.item}
-                                  onChange={(event) =>
-                                    setPurchaseEditDraft((prev) => ({
-                                      ...prev,
-                                      item: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.item
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={purchaseEditDraft.category}
-                                  onChange={(event) =>
-                                    setPurchaseEditDraft((prev) => ({
-                                      ...prev,
-                                      category: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.category
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="date"
-                                  value={purchaseEditDraft.purchaseDate}
-                                  onChange={(event) =>
-                                    setPurchaseEditDraft((prev) => ({
-                                      ...prev,
-                                      purchaseDate: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                dateLabel.format(new Date(`${entry.purchaseDate}T00:00:00`))
-                              )}
-                            </td>
-                            <td className="table-amount amount-negative">
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  value={purchaseEditDraft.amount}
-                                  onChange={(event) =>
-                                    setPurchaseEditDraft((prev) => ({
-                                      ...prev,
-                                      amount: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.amount)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={purchaseEditDraft.notes}
-                                  onChange={(event) =>
-                                    setPurchaseEditDraft((prev) => ({
-                                      ...prev,
-                                      notes: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.notes ?? '-'
-                              )}
-                            </td>
-                            <td>
-                              <div className="row-actions">
-                                {isEditing ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className="btn btn-secondary"
-                                      onClick={() => void savePurchaseEdit()}
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn-ghost"
-                                      onClick={() => setPurchaseEditId(null)}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button type="button" className="btn btn-secondary" onClick={() => startPurchaseEdit(entry)}>
-                                    Edit
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost"
-                                  onClick={() => void onDeletePurchase(entry._id)}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </section>
+          <PurchasesTab
+            purchaseForm={purchasesSection.purchaseForm}
+            setPurchaseForm={purchasesSection.setPurchaseForm}
+            purchaseFilter={purchasesSection.purchaseFilter}
+            setPurchaseFilter={purchasesSection.setPurchaseFilter}
+            purchaseCategories={purchasesSection.purchaseCategories}
+            filteredPurchases={purchasesSection.filteredPurchases}
+            filteredPurchaseTotal={purchasesSection.filteredPurchaseTotal}
+            filteredPurchaseAverage={purchasesSection.filteredPurchaseAverage}
+            purchaseEditId={purchasesSection.purchaseEditId}
+            setPurchaseEditId={purchasesSection.setPurchaseEditId}
+            purchaseEditDraft={purchasesSection.purchaseEditDraft}
+            setPurchaseEditDraft={purchasesSection.setPurchaseEditDraft}
+            onAddPurchase={purchasesSection.onAddPurchase}
+            onDeletePurchase={purchasesSection.onDeletePurchase}
+            savePurchaseEdit={purchasesSection.savePurchaseEdit}
+            startPurchaseEdit={purchasesSection.startPurchaseEdit}
+            formatMoney={formatSection.formatMoney}
+            dateLabel={dateLabel}
+          />
         ) : null}
 
         {activeTab === 'accounts' ? (
-          <section className="editor-grid" aria-label="Account management">
-            <article className="panel panel-form">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Accounts</p>
-                  <h2>Add Account Entry</h2>
-                </div>
-              </header>
-
-              <form className="entry-form" onSubmit={onAddAccount}>
-                <label htmlFor="account-name">Account Name</label>
-                <input
-                  id="account-name"
-                  value={accountForm.name}
-                  onChange={(event) => setAccountForm((prev) => ({ ...prev, name: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="account-type">Type</label>
-                <select
-                  id="account-type"
-                  value={accountForm.type}
-                  onChange={(event) =>
-                    setAccountForm((prev) => ({
-                      ...prev,
-                      type: event.target.value as AccountType,
-                    }))
-                  }
-                >
-                  {accountTypeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-
-                <label htmlFor="account-balance">Current Balance</label>
-                <input
-                  id="account-balance"
-                  type="number"
-                  step="0.01"
-                  value={accountForm.balance}
-                  onChange={(event) => setAccountForm((prev) => ({ ...prev, balance: event.target.value }))}
-                  required
-                />
-
-                <label className="checkbox-row" htmlFor="account-liquid">
-                  <input
-                    id="account-liquid"
-                    type="checkbox"
-                    checked={accountForm.liquid}
-                    onChange={(event) => setAccountForm((prev) => ({ ...prev, liquid: event.target.checked }))}
-                  />
-                  Liquid reserve account
-                </label>
-
-                <button type="submit" className="btn btn-primary">
-                  Save Account
-                </button>
-              </form>
-            </article>
-
-            <article className="panel panel-list">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Accounts</p>
-                  <h2>Current Entries</h2>
-                </div>
-              </header>
-
-              {accounts.length === 0 ? (
-                <p className="empty-state">No accounts added yet.</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <caption className="sr-only">Account entries</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Name</th>
-                        <th scope="col">Type</th>
-                        <th scope="col">Balance</th>
-                        <th scope="col">Liquid</th>
-                        <th scope="col">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {accounts.map((entry) => {
-                        const isEditing = accountEditId === entry._id
-
-                        return (
-                          <tr key={entry._id}>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={accountEditDraft.name}
-                                  onChange={(event) =>
-                                    setAccountEditDraft((prev) => ({
-                                      ...prev,
-                                      name: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                entry.name
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <select
-                                  className="inline-select"
-                                  value={accountEditDraft.type}
-                                  onChange={(event) =>
-                                    setAccountEditDraft((prev) => ({
-                                      ...prev,
-                                      type: event.target.value as AccountType,
-                                    }))
-                                  }
-                                >
-                                  {accountTypeOptions.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                accountTypeLabel(entry.type)
-                              )}
-                            </td>
-                            <td className={`table-amount ${entry.balance >= 0 ? 'amount-positive' : 'amount-negative'}`}>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  step="0.01"
-                                  value={accountEditDraft.balance}
-                                  onChange={(event) =>
-                                    setAccountEditDraft((prev) => ({
-                                      ...prev,
-                                      balance: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(entry.balance)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  type="checkbox"
-                                  checked={accountEditDraft.liquid}
-                                  onChange={(event) =>
-                                    setAccountEditDraft((prev) => ({
-                                      ...prev,
-                                      liquid: event.target.checked,
-                                    }))
-                                  }
-                                />
-                              ) : entry.liquid ? (
-                                'Yes'
-                              ) : (
-                                'No'
-                              )}
-                            </td>
-                            <td>
-                              <div className="row-actions">
-                                {isEditing ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className="btn btn-secondary"
-                                      onClick={() => void saveAccountEdit()}
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn-ghost"
-                                      onClick={() => setAccountEditId(null)}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button type="button" className="btn btn-secondary" onClick={() => startAccountEdit(entry)}>
-                                    Edit
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost"
-                                  onClick={() => void onDeleteAccount(entry._id)}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </section>
+          <AccountsTab
+            accounts={accounts}
+            accountForm={accountsSection.accountForm}
+            setAccountForm={accountsSection.setAccountForm}
+            accountEditId={accountsSection.accountEditId}
+            setAccountEditId={accountsSection.setAccountEditId}
+            accountEditDraft={accountsSection.accountEditDraft}
+            setAccountEditDraft={accountsSection.setAccountEditDraft}
+            onAddAccount={accountsSection.onAddAccount}
+            onDeleteAccount={accountsSection.onDeleteAccount}
+            saveAccountEdit={accountsSection.saveAccountEdit}
+            startAccountEdit={accountsSection.startAccountEdit}
+            accountTypeOptions={accountTypeOptions}
+            accountTypeLabel={accountTypeLabel}
+            formatMoney={formatSection.formatMoney}
+          />
         ) : null}
 
         {activeTab === 'goals' ? (
-          <section className="editor-grid" aria-label="Goal management">
-            <article className="panel panel-form">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Goals</p>
-                  <h2>Create Goal</h2>
-                </div>
-              </header>
-
-              <form className="entry-form" onSubmit={onAddGoal}>
-                <label htmlFor="goal-title">Goal Title</label>
-                <input
-                  id="goal-title"
-                  value={goalForm.title}
-                  onChange={(event) => setGoalForm((prev) => ({ ...prev, title: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="goal-target">Target Amount</label>
-                <input
-                  id="goal-target"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={goalForm.targetAmount}
-                  onChange={(event) => setGoalForm((prev) => ({ ...prev, targetAmount: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="goal-current">Current Amount</label>
-                <input
-                  id="goal-current"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={goalForm.currentAmount}
-                  onChange={(event) => setGoalForm((prev) => ({ ...prev, currentAmount: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="goal-date">Target Date</label>
-                <input
-                  id="goal-date"
-                  type="date"
-                  value={goalForm.targetDate}
-                  onChange={(event) => setGoalForm((prev) => ({ ...prev, targetDate: event.target.value }))}
-                  required
-                />
-
-                <label htmlFor="goal-priority">Priority</label>
-                <select
-                  id="goal-priority"
-                  value={goalForm.priority}
-                  onChange={(event) =>
-                    setGoalForm((prev) => ({
-                      ...prev,
-                      priority: event.target.value as GoalPriority,
-                    }))
-                  }
-                >
-                  {goalPriorityOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-
-                <button type="submit" className="btn btn-primary">
-                  Save Goal
-                </button>
-              </form>
-            </article>
-
-            <article className="panel panel-list">
-              <header className="panel-header">
-                <div>
-                  <p className="panel-kicker">Goals</p>
-                  <h2>Current Goals</h2>
-                </div>
-              </header>
-
-              {goalsWithMetrics.length === 0 ? (
-                <p className="empty-state">No goals created yet.</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <caption className="sr-only">Goals</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Title</th>
-                        <th scope="col">Target</th>
-                        <th scope="col">Current</th>
-                        <th scope="col">Date</th>
-                        <th scope="col">Priority</th>
-                        <th scope="col">Progress</th>
-                        <th scope="col">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {goalsWithMetrics.map((goal) => {
-                        const isEditing = goalEditId === goal._id
-
-                        return (
-                          <tr key={goal._id}>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={goalEditDraft.title}
-                                  onChange={(event) =>
-                                    setGoalEditDraft((prev) => ({
-                                      ...prev,
-                                      title: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                goal.title
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  value={goalEditDraft.targetAmount}
-                                  onChange={(event) =>
-                                    setGoalEditDraft((prev) => ({
-                                      ...prev,
-                                      targetAmount: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(goal.targetAmount)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={goalEditDraft.currentAmount}
-                                  onChange={(event) =>
-                                    setGoalEditDraft((prev) => ({
-                                      ...prev,
-                                      currentAmount: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                formatMoney(goal.currentAmount)
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  type="date"
-                                  value={goalEditDraft.targetDate}
-                                  onChange={(event) =>
-                                    setGoalEditDraft((prev) => ({
-                                      ...prev,
-                                      targetDate: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : (
-                                dateLabel.format(new Date(`${goal.targetDate}T00:00:00`))
-                              )}
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <select
-                                  className="inline-select"
-                                  value={goalEditDraft.priority}
-                                  onChange={(event) =>
-                                    setGoalEditDraft((prev) => ({
-                                      ...prev,
-                                      priority: event.target.value as GoalPriority,
-                                    }))
-                                  }
-                                >
-                                  {goalPriorityOptions.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                priorityLabel(goal.priority)
-                              )}
-                            </td>
-                            <td>{formatPercent(goal.progressPercent / 100)}</td>
-                            <td>
-                              <div className="row-actions">
-                                {isEditing ? (
-                                  <>
-                                    <button type="button" className="btn btn-secondary" onClick={() => void saveGoalEdit()}>
-                                      Save
-                                    </button>
-                                    <button type="button" className="btn btn-ghost" onClick={() => setGoalEditId(null)}>
-                                      Cancel
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button type="button" className="btn btn-secondary" onClick={() => startGoalEdit(goal)}>
-                                    Edit
-                                  </button>
-                                )}
-                                <button type="button" className="btn btn-ghost" onClick={() => void onDeleteGoal(goal._id)}>
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </section>
+          <GoalsTab
+            goalsWithMetrics={goalsSection.goalsWithMetrics}
+            goalForm={goalsSection.goalForm}
+            setGoalForm={goalsSection.setGoalForm}
+            goalEditId={goalsSection.goalEditId}
+            setGoalEditId={goalsSection.setGoalEditId}
+            goalEditDraft={goalsSection.goalEditDraft}
+            setGoalEditDraft={goalsSection.setGoalEditDraft}
+            onAddGoal={goalsSection.onAddGoal}
+            onDeleteGoal={goalsSection.onDeleteGoal}
+            saveGoalEdit={goalsSection.saveGoalEdit}
+            startGoalEdit={goalsSection.startGoalEdit}
+            goalPriorityOptions={goalPriorityOptions}
+            priorityLabel={priorityLabel}
+            formatMoney={formatSection.formatMoney}
+            formatPercent={formatSection.formatPercent}
+            dateLabel={dateLabel}
+          />
         ) : null}
       </SignedIn>
     </main>
