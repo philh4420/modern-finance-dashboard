@@ -98,6 +98,16 @@ const cadence = v.union(
   v.literal('one_time'),
 )
 
+const accountType = v.union(
+  v.literal('checking'),
+  v.literal('savings'),
+  v.literal('investment'),
+  v.literal('cash'),
+  v.literal('debt'),
+)
+
+const goalPriority = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
+
 export default defineSchema({
   dashboardStates: defineTable({
     userId: v.string(),
@@ -159,6 +169,27 @@ export default defineSchema({
     category: v.string(),
     purchaseDate: v.string(),
     notes: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
+  accounts: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    type: accountType,
+    balance: v.number(),
+    liquid: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
+  goals: defineTable({
+    userId: v.string(),
+    title: v.string(),
+    targetAmount: v.number(),
+    currentAmount: v.number(),
+    targetDate: v.string(),
+    priority: goalPriority,
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
