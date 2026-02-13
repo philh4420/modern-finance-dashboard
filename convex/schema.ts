@@ -95,8 +95,11 @@ const cadence = v.union(
   v.literal('monthly'),
   v.literal('quarterly'),
   v.literal('yearly'),
+  v.literal('custom'),
   v.literal('one_time'),
 )
+
+const customCadenceUnit = v.union(v.literal('days'), v.literal('weeks'), v.literal('months'), v.literal('years'))
 
 const accountType = v.union(
   v.literal('checking'),
@@ -133,6 +136,8 @@ export default defineSchema({
     source: v.string(),
     amount: v.number(),
     cadence,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnit),
     receivedDay: v.optional(v.number()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
@@ -145,6 +150,8 @@ export default defineSchema({
     amount: v.number(),
     dueDay: v.number(),
     cadence,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnit),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
     createdAt: v.number(),

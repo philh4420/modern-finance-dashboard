@@ -8,7 +8,15 @@ const cadenceValidator = v.union(
   v.literal('monthly'),
   v.literal('quarterly'),
   v.literal('yearly'),
+  v.literal('custom'),
   v.literal('one_time'),
+)
+
+const customCadenceUnitValidator = v.union(
+  v.literal('days'),
+  v.literal('weeks'),
+  v.literal('months'),
+  v.literal('years'),
 )
 
 const accountTypeValidator = v.union(
@@ -21,7 +29,8 @@ const accountTypeValidator = v.union(
 
 const goalPriorityValidator = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
 
-type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'one_time'
+type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
+type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 type InsightSeverity = 'good' | 'warning' | 'critical'
 
 type IncomeDoc = Doc<'incomes'>
@@ -62,7 +71,12 @@ const requireIdentity = async (ctx: QueryCtx | MutationCtx) => {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-const toMonthlyAmount = (amount: number, cadence: Cadence) => {
+const toMonthlyAmount = (
+  amount: number,
+  cadence: Cadence,
+  customInterval?: number,
+  customUnit?: CustomCadenceUnit,
+) => {
   switch (cadence) {
     case 'weekly':
       return (amount * 52) / 12
@@ -74,6 +88,23 @@ const toMonthlyAmount = (amount: number, cadence: Cadence) => {
       return amount / 3
     case 'yearly':
       return amount / 12
+    case 'custom':
+      if (!customInterval || !customUnit || customInterval <= 0) {
+        return 0
+      }
+
+      switch (customUnit) {
+        case 'days':
+          return (amount * 365.2425) / (customInterval * 12)
+        case 'weeks':
+          return (amount * 365.2425) / (customInterval * 7 * 12)
+        case 'months':
+          return amount / customInterval
+        case 'years':
+          return amount / (customInterval * 12)
+        default:
+          return 0
+      }
     case 'one_time':
       return 0
     default:
@@ -108,6 +139,32 @@ const validateRequiredText = (value: string, fieldName: string) => {
 const validateIsoDate = (value: string, fieldName: string) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error(`${fieldName} must use YYYY-MM-DD format.`)
+  }
+}
+
+const sanitizeCadenceDetails = (
+  cadence: Cadence,
+  customInterval?: number,
+  customUnit?: CustomCadenceUnit,
+) => {
+  if (cadence !== 'custom') {
+    return {
+      customInterval: undefined,
+      customUnit: undefined,
+    }
+  }
+
+  if (!customUnit) {
+    throw new Error('Custom frequency unit is required.')
+  }
+
+  if (!customInterval || !Number.isInteger(customInterval) || customInterval < 1 || customInterval > 3650) {
+    throw new Error('Custom frequency interval must be an integer between 1 and 3650.')
+  }
+
+  return {
+    customInterval,
+    customUnit,
   }
 }
 
@@ -175,6 +232,8 @@ const nextDateForCadence = (
   createdAt: number,
   now: Date,
   dayOfMonth?: number,
+  customInterval?: number,
+  customUnit?: CustomCadenceUnit,
 ): Date | null => {
   const today = startOfDay(now)
 
@@ -193,6 +252,27 @@ const nextDateForCadence = (
     return base
   }
 
+  if (cadence === 'custom') {
+    if (!customInterval || !customUnit) {
+      return null
+    }
+
+    const base = startOfDay(new Date(createdAt))
+
+    if (customUnit === 'days' || customUnit === 'weeks') {
+      const interval = customUnit === 'days' ? customInterval : customInterval * 7
+      while (base < today) {
+        base.setDate(base.getDate() + interval)
+      }
+      return base
+    }
+
+    const anchorDate = new Date(createdAt)
+    const cycleMonths = customUnit === 'months' ? customInterval : customInterval * 12
+    const normalizedDay = clamp(dayOfMonth ?? anchorDate.getDate(), 1, 31)
+    return nextDateByMonthCycle(normalizedDay, cycleMonths, anchorDate, today)
+  }
+
   const anchorDate = new Date(createdAt)
   const cycleMonths = cadence === 'monthly' ? 1 : cadence === 'quarterly' ? 3 : 12
   const normalizedDay = clamp(dayOfMonth ?? anchorDate.getDate(), 1, 31)
@@ -209,10 +289,19 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], now: Da
     amount: number
     daysAway: number
     cadence: Cadence
+    customInterval?: number
+    customUnit?: CustomCadenceUnit
   }> = []
 
   incomes.forEach((entry) => {
-    const nextDate = nextDateForCadence(entry.cadence, entry.createdAt, now, entry.receivedDay)
+    const nextDate = nextDateForCadence(
+      entry.cadence,
+      entry.createdAt,
+      now,
+      entry.receivedDay,
+      entry.customInterval,
+      entry.customUnit,
+    )
 
     if (!nextDate) {
       return
@@ -231,11 +320,20 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], now: Da
       amount: entry.amount,
       daysAway,
       cadence: entry.cadence,
+      customInterval: entry.customInterval,
+      customUnit: entry.customUnit,
     })
   })
 
   bills.forEach((entry) => {
-    const nextDate = nextDateForCadence(entry.cadence, entry.createdAt, now, entry.dueDay)
+    const nextDate = nextDateForCadence(
+      entry.cadence,
+      entry.createdAt,
+      now,
+      entry.dueDay,
+      entry.customInterval,
+      entry.customUnit,
+    )
 
     if (!nextDate) {
       return
@@ -254,6 +352,8 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], now: Da
       amount: -entry.amount,
       daysAway,
       cadence: entry.cadence,
+      customInterval: entry.customInterval,
+      customUnit: entry.customUnit,
     })
   })
 
@@ -438,8 +538,14 @@ export const getFinanceData = query({
         .collect(),
     ])
 
-    const monthlyIncome = incomes.reduce((sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence), 0)
-    const monthlyBills = bills.reduce((sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence), 0)
+    const monthlyIncome = incomes.reduce(
+      (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
+      0,
+    )
+    const monthlyBills = bills.reduce(
+      (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
+      0,
+    )
     const monthlyCardSpend = cards.reduce((sum, entry) => sum + entry.spendPerMonth, 0)
     const monthlyCommitments = monthlyBills + monthlyCardSpend
 
@@ -619,6 +725,8 @@ export const addIncome = mutation({
     source: v.string(),
     amount: v.number(),
     cadence: cadenceValidator,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnitValidator),
     receivedDay: v.optional(v.number()),
     notes: v.optional(v.string()),
   },
@@ -632,11 +740,15 @@ export const addIncome = mutation({
       throw new Error('Received day must be between 1 and 31.')
     }
 
+    const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+
     await ctx.db.insert('incomes', {
       userId: identity.subject,
       source: args.source.trim(),
       amount: args.amount,
       cadence: args.cadence,
+      customInterval: cadenceDetails.customInterval,
+      customUnit: cadenceDetails.customUnit,
       receivedDay: args.receivedDay,
       notes: args.notes?.trim() || undefined,
       createdAt: Date.now(),
@@ -650,6 +762,8 @@ export const updateIncome = mutation({
     source: v.string(),
     amount: v.number(),
     cadence: cadenceValidator,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnitValidator),
     receivedDay: v.optional(v.number()),
     notes: v.optional(v.string()),
   },
@@ -663,6 +777,8 @@ export const updateIncome = mutation({
       throw new Error('Received day must be between 1 and 31.')
     }
 
+    const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Income record not found.')
 
@@ -670,6 +786,8 @@ export const updateIncome = mutation({
       source: args.source.trim(),
       amount: args.amount,
       cadence: args.cadence,
+      customInterval: cadenceDetails.customInterval,
+      customUnit: cadenceDetails.customUnit,
       receivedDay: args.receivedDay,
       notes: args.notes?.trim() || undefined,
     })
@@ -695,6 +813,8 @@ export const addBill = mutation({
     amount: v.number(),
     dueDay: v.number(),
     cadence: cadenceValidator,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnitValidator),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
   },
@@ -708,12 +828,16 @@ export const addBill = mutation({
       throw new Error('Due day must be between 1 and 31.')
     }
 
+    const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+
     await ctx.db.insert('bills', {
       userId: identity.subject,
       name: args.name.trim(),
       amount: args.amount,
       dueDay: args.dueDay,
       cadence: args.cadence,
+      customInterval: cadenceDetails.customInterval,
+      customUnit: cadenceDetails.customUnit,
       autopay: args.autopay,
       notes: args.notes?.trim() || undefined,
       createdAt: Date.now(),
@@ -728,6 +852,8 @@ export const updateBill = mutation({
     amount: v.number(),
     dueDay: v.number(),
     cadence: cadenceValidator,
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnitValidator),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
   },
@@ -741,6 +867,8 @@ export const updateBill = mutation({
       throw new Error('Due day must be between 1 and 31.')
     }
 
+    const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Bill record not found.')
 
@@ -749,6 +877,8 @@ export const updateBill = mutation({
       amount: args.amount,
       dueDay: args.dueDay,
       cadence: args.cadence,
+      customInterval: cadenceDetails.customInterval,
+      customUnit: cadenceDetails.customUnit,
       autopay: args.autopay,
       notes: args.notes?.trim() || undefined,
     })

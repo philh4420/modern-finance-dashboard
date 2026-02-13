@@ -13,7 +13,8 @@ import './App.css'
 
 type TabKey = 'dashboard' | 'income' | 'bills' | 'cards' | 'purchases' | 'accounts' | 'goals'
 
-type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'one_time'
+type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
+type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 type AccountType = 'checking' | 'savings' | 'investment' | 'cash' | 'debt'
 type GoalPriority = 'low' | 'medium' | 'high'
 type InsightSeverity = 'good' | 'warning' | 'critical'
@@ -54,7 +55,15 @@ const cadenceOptions: Array<{ value: Cadence; label: string }> = [
   { value: 'monthly', label: 'Monthly' },
   { value: 'quarterly', label: 'Quarterly' },
   { value: 'yearly', label: 'Yearly' },
+  { value: 'custom', label: 'Custom' },
   { value: 'one_time', label: 'One Time' },
+]
+
+const customCadenceUnitOptions: Array<{ value: CustomCadenceUnit; label: string }> = [
+  { value: 'days', label: 'Days' },
+  { value: 'weeks', label: 'Weeks' },
+  { value: 'months', label: 'Months' },
+  { value: 'years', label: 'Years' },
 ]
 
 const accountTypeOptions: Array<{ value: AccountType; label: string }> = [
@@ -174,6 +183,14 @@ const parseIntInput = (value: string, label: string) => {
   return parsed
 }
 
+const parseCustomInterval = (value: string) => {
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error('Custom frequency interval must be at least 1.')
+  }
+  return parsed
+}
+
 const toIsoToday = () => new Date().toISOString().slice(0, 10)
 
 const dateLabel = new Intl.DateTimeFormat('en-US', {
@@ -182,7 +199,23 @@ const dateLabel = new Intl.DateTimeFormat('en-US', {
   year: 'numeric',
 })
 
-const cadenceLabel = (cadence: Cadence) => cadenceOptions.find((option) => option.value === cadence)?.label ?? cadence
+const isCustomCadence = (cadence: Cadence) => cadence === 'custom'
+
+const customCadenceLabel = (customInterval?: number, customUnit?: CustomCadenceUnit) => {
+  if (!customInterval || !customUnit) {
+    return 'Custom'
+  }
+
+  const unit = customInterval === 1 ? customUnit.slice(0, -1) : customUnit
+  return `Every ${customInterval} ${unit}`
+}
+
+const cadenceLabel = (cadence: Cadence, customInterval?: number, customUnit?: CustomCadenceUnit) => {
+  if (cadence === 'custom') {
+    return customCadenceLabel(customInterval, customUnit)
+  }
+  return cadenceOptions.find((option) => option.value === cadence)?.label ?? cadence
+}
 
 const accountTypeLabel = (value: AccountType) =>
   accountTypeOptions.find((option) => option.value === value)?.label ?? value
@@ -245,6 +278,8 @@ function App() {
     source: '',
     amount: '',
     cadence: 'monthly' as Cadence,
+    customInterval: '',
+    customUnit: 'weeks' as CustomCadenceUnit,
     receivedDay: '',
     notes: '',
   })
@@ -254,6 +289,8 @@ function App() {
     amount: '',
     dueDay: '',
     cadence: 'monthly' as Cadence,
+    customInterval: '',
+    customUnit: 'weeks' as CustomCadenceUnit,
     autopay: true,
     notes: '',
   })
@@ -294,6 +331,8 @@ function App() {
     source: '',
     amount: '',
     cadence: 'monthly' as Cadence,
+    customInterval: '',
+    customUnit: 'weeks' as CustomCadenceUnit,
     receivedDay: '',
     notes: '',
   })
@@ -304,6 +343,8 @@ function App() {
     amount: '',
     dueDay: '',
     cadence: 'monthly' as Cadence,
+    customInterval: '',
+    customUnit: 'weeks' as CustomCadenceUnit,
     autopay: false,
     notes: '',
   })
@@ -582,10 +623,16 @@ function App() {
     clearError()
 
     try {
+      const customInterval = isCustomCadence(incomeForm.cadence)
+        ? parseCustomInterval(incomeForm.customInterval)
+        : undefined
+
       await addIncome({
         source: incomeForm.source,
         amount: parseFloatInput(incomeForm.amount, 'Income amount'),
         cadence: incomeForm.cadence,
+        customInterval,
+        customUnit: isCustomCadence(incomeForm.cadence) ? incomeForm.customUnit : undefined,
         receivedDay: incomeForm.receivedDay ? parseIntInput(incomeForm.receivedDay, 'Received day') : undefined,
         notes: incomeForm.notes || undefined,
       })
@@ -594,6 +641,8 @@ function App() {
         source: '',
         amount: '',
         cadence: 'monthly',
+        customInterval: '',
+        customUnit: 'weeks',
         receivedDay: '',
         notes: '',
       })
@@ -607,11 +656,15 @@ function App() {
     clearError()
 
     try {
+      const customInterval = isCustomCadence(billForm.cadence) ? parseCustomInterval(billForm.customInterval) : undefined
+
       await addBill({
         name: billForm.name,
         amount: parseFloatInput(billForm.amount, 'Bill amount'),
         dueDay: parseIntInput(billForm.dueDay, 'Due day'),
         cadence: billForm.cadence,
+        customInterval,
+        customUnit: isCustomCadence(billForm.cadence) ? billForm.customUnit : undefined,
         autopay: billForm.autopay,
         notes: billForm.notes || undefined,
       })
@@ -621,6 +674,8 @@ function App() {
         amount: '',
         dueDay: '',
         cadence: 'monthly',
+        customInterval: '',
+        customUnit: 'weeks',
         autopay: true,
         notes: '',
       })
@@ -807,6 +862,8 @@ function App() {
       source: entry.source,
       amount: String(entry.amount),
       cadence: entry.cadence,
+      customInterval: entry.customInterval ? String(entry.customInterval) : '',
+      customUnit: entry.customUnit ?? 'weeks',
       receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
       notes: entry.notes ?? '',
     })
@@ -817,11 +874,17 @@ function App() {
 
     clearError()
     try {
+      const customInterval = isCustomCadence(incomeEditDraft.cadence)
+        ? parseCustomInterval(incomeEditDraft.customInterval)
+        : undefined
+
       await updateIncome({
         id: incomeEditId,
         source: incomeEditDraft.source,
         amount: parseFloatInput(incomeEditDraft.amount, 'Income amount'),
         cadence: incomeEditDraft.cadence,
+        customInterval,
+        customUnit: isCustomCadence(incomeEditDraft.cadence) ? incomeEditDraft.customUnit : undefined,
         receivedDay: incomeEditDraft.receivedDay
           ? parseIntInput(incomeEditDraft.receivedDay, 'Received day')
           : undefined,
@@ -840,6 +903,8 @@ function App() {
       amount: String(entry.amount),
       dueDay: String(entry.dueDay),
       cadence: entry.cadence,
+      customInterval: entry.customInterval ? String(entry.customInterval) : '',
+      customUnit: entry.customUnit ?? 'weeks',
       autopay: entry.autopay,
       notes: entry.notes ?? '',
     })
@@ -850,12 +915,16 @@ function App() {
 
     clearError()
     try {
+      const customInterval = isCustomCadence(billEditDraft.cadence) ? parseCustomInterval(billEditDraft.customInterval) : undefined
+
       await updateBill({
         id: billEditId,
         name: billEditDraft.name,
         amount: parseFloatInput(billEditDraft.amount, 'Bill amount'),
         dueDay: parseIntInput(billEditDraft.dueDay, 'Due day'),
         cadence: billEditDraft.cadence,
+        customInterval,
+        customUnit: isCustomCadence(billEditDraft.cadence) ? billEditDraft.customUnit : undefined,
         autopay: billEditDraft.autopay,
         notes: billEditDraft.notes || undefined,
       })
@@ -1197,7 +1266,8 @@ function App() {
                           <p>{event.label}</p>
                           <small>
                             {dateLabel.format(new Date(`${event.date}T00:00:00`))} • {event.daysAway} day
-                            {event.daysAway === 1 ? '' : 's'} • {cadenceLabel(event.cadence)}
+                            {event.daysAway === 1 ? '' : 's'} •{' '}
+                            {cadenceLabel(event.cadence, event.customInterval, event.customUnit)}
                           </small>
                         </div>
                         <strong className={event.type === 'income' ? 'amount-positive' : 'amount-negative'}>
@@ -1335,7 +1405,13 @@ function App() {
                 <select
                   id="income-cadence"
                   value={incomeForm.cadence}
-                  onChange={(event) => setIncomeForm((prev) => ({ ...prev, cadence: event.target.value as Cadence }))}
+                  onChange={(event) =>
+                    setIncomeForm((prev) => ({
+                      ...prev,
+                      cadence: event.target.value as Cadence,
+                      customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                    }))
+                  }
                 >
                   {cadenceOptions.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -1343,6 +1419,44 @@ function App() {
                     </option>
                   ))}
                 </select>
+
+                {isCustomCadence(incomeForm.cadence) ? (
+                  <>
+                    <label htmlFor="income-custom-interval">Custom Repeat Every</label>
+                    <div className="inline-cadence-controls">
+                      <input
+                        id="income-custom-interval"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={incomeForm.customInterval}
+                        onChange={(event) =>
+                          setIncomeForm((prev) => ({
+                            ...prev,
+                            customInterval: event.target.value,
+                          }))
+                        }
+                        required
+                      />
+                      <select
+                        id="income-custom-unit"
+                        value={incomeForm.customUnit}
+                        onChange={(event) =>
+                          setIncomeForm((prev) => ({
+                            ...prev,
+                            customUnit: event.target.value as CustomCadenceUnit,
+                          }))
+                        }
+                      >
+                        {customCadenceUnitOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : null}
 
                 <label htmlFor="income-day">Received Day (optional)</label>
                 <input
@@ -1435,24 +1549,60 @@ function App() {
                             </td>
                             <td>
                               {isEditing ? (
-                                <select
-                                  className="inline-select"
-                                  value={incomeEditDraft.cadence}
-                                  onChange={(event) =>
-                                    setIncomeEditDraft((prev) => ({
-                                      ...prev,
-                                      cadence: event.target.value as Cadence,
-                                    }))
-                                  }
-                                >
-                                  {cadenceOptions.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
+                                <div className="inline-cadence-controls">
+                                  <select
+                                    className="inline-select"
+                                    value={incomeEditDraft.cadence}
+                                    onChange={(event) =>
+                                      setIncomeEditDraft((prev) => ({
+                                        ...prev,
+                                        cadence: event.target.value as Cadence,
+                                        customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                                      }))
+                                    }
+                                  >
+                                    {cadenceOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {isCustomCadence(incomeEditDraft.cadence) ? (
+                                    <>
+                                      <input
+                                        className="inline-input inline-cadence-number"
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        value={incomeEditDraft.customInterval}
+                                        onChange={(event) =>
+                                          setIncomeEditDraft((prev) => ({
+                                            ...prev,
+                                            customInterval: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                      <select
+                                        className="inline-select inline-cadence-unit"
+                                        value={incomeEditDraft.customUnit}
+                                        onChange={(event) =>
+                                          setIncomeEditDraft((prev) => ({
+                                            ...prev,
+                                            customUnit: event.target.value as CustomCadenceUnit,
+                                          }))
+                                        }
+                                      >
+                                        {customCadenceUnitOptions.map((option) => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </>
+                                  ) : null}
+                                </div>
                               ) : (
-                                cadenceLabel(entry.cadence)
+                                cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)
                               )}
                             </td>
                             <td>
@@ -1566,7 +1716,13 @@ function App() {
                 <select
                   id="bill-cadence"
                   value={billForm.cadence}
-                  onChange={(event) => setBillForm((prev) => ({ ...prev, cadence: event.target.value as Cadence }))}
+                  onChange={(event) =>
+                    setBillForm((prev) => ({
+                      ...prev,
+                      cadence: event.target.value as Cadence,
+                      customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                    }))
+                  }
                 >
                   {cadenceOptions.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -1574,6 +1730,44 @@ function App() {
                     </option>
                   ))}
                 </select>
+
+                {isCustomCadence(billForm.cadence) ? (
+                  <>
+                    <label htmlFor="bill-custom-interval">Custom Repeat Every</label>
+                    <div className="inline-cadence-controls">
+                      <input
+                        id="bill-custom-interval"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={billForm.customInterval}
+                        onChange={(event) =>
+                          setBillForm((prev) => ({
+                            ...prev,
+                            customInterval: event.target.value,
+                          }))
+                        }
+                        required
+                      />
+                      <select
+                        id="bill-custom-unit"
+                        value={billForm.customUnit}
+                        onChange={(event) =>
+                          setBillForm((prev) => ({
+                            ...prev,
+                            customUnit: event.target.value as CustomCadenceUnit,
+                          }))
+                        }
+                      >
+                        {customCadenceUnitOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : null}
 
                 <label className="checkbox-row" htmlFor="bill-autopay">
                   <input
@@ -1686,24 +1880,60 @@ function App() {
                             </td>
                             <td>
                               {isEditing ? (
-                                <select
-                                  className="inline-select"
-                                  value={billEditDraft.cadence}
-                                  onChange={(event) =>
-                                    setBillEditDraft((prev) => ({
-                                      ...prev,
-                                      cadence: event.target.value as Cadence,
-                                    }))
-                                  }
-                                >
-                                  {cadenceOptions.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
+                                <div className="inline-cadence-controls">
+                                  <select
+                                    className="inline-select"
+                                    value={billEditDraft.cadence}
+                                    onChange={(event) =>
+                                      setBillEditDraft((prev) => ({
+                                        ...prev,
+                                        cadence: event.target.value as Cadence,
+                                        customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                                      }))
+                                    }
+                                  >
+                                    {cadenceOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {isCustomCadence(billEditDraft.cadence) ? (
+                                    <>
+                                      <input
+                                        className="inline-input inline-cadence-number"
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        value={billEditDraft.customInterval}
+                                        onChange={(event) =>
+                                          setBillEditDraft((prev) => ({
+                                            ...prev,
+                                            customInterval: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                      <select
+                                        className="inline-select inline-cadence-unit"
+                                        value={billEditDraft.customUnit}
+                                        onChange={(event) =>
+                                          setBillEditDraft((prev) => ({
+                                            ...prev,
+                                            customUnit: event.target.value as CustomCadenceUnit,
+                                          }))
+                                        }
+                                      >
+                                        {customCadenceUnitOptions.map((option) => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </>
+                                  ) : null}
+                                </div>
                               ) : (
-                                cadenceLabel(entry.cadence)
+                                cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)
                               )}
                             </td>
                             <td>

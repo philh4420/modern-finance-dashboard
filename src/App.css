@@ -564,6 +564,21 @@ h2 {
   font: inherit;
 }
 
+.inline-cadence-controls {
+  display: grid;
+  gap: 0.42rem;
+  grid-template-columns: minmax(0, 5.5rem) minmax(0, 1fr);
+  align-items: center;
+}
+
+tbody .inline-cadence-controls {
+  grid-template-columns: minmax(0, 8.4rem) minmax(0, 4.8rem) minmax(0, 6.2rem);
+}
+
+.inline-cadence-number {
+  text-align: right;
+}
+
 .entry-form textarea {
   resize: vertical;
 }
