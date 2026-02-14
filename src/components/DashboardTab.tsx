@@ -8,13 +8,17 @@ import type {
   GoalWithMetrics,
   Insight,
   InsightSeverity,
+  KpiSnapshot,
   LedgerEntry,
   MonthCloseSnapshotEntry,
   MonthlyCycleRunEntry,
+  PrivacyData,
   Summary,
   TopCategory,
   UpcomingCashEvent,
 } from './financeTypes'
+
+type CspMode = 'unknown' | 'none' | 'report-only' | 'enforced'
 
 type DashboardTabProps = {
   dashboardCards: DashboardCard[]
@@ -37,6 +41,10 @@ type DashboardTabProps = {
     accounts: number
     goals: number
   }
+  kpis: KpiSnapshot | null
+  privacyData: PrivacyData | null
+  retentionEnabled: boolean
+  cspMode: CspMode
   formatMoney: (value: number) => string
   formatPercent: (value: number) => string
   cadenceLabel: (cadence: Cadence, customInterval?: number, customUnit?: CustomCadenceUnit) => string
@@ -58,6 +66,10 @@ export function DashboardTab({
   financeAuditEvents,
   ledgerEntries,
   counts,
+  kpis,
+  privacyData,
+  retentionEnabled,
+  cspMode,
   formatMoney,
   formatPercent,
   cadenceLabel,
@@ -65,6 +77,34 @@ export function DashboardTab({
   dateLabel,
   cycleDateLabel,
 }: DashboardTabProps) {
+  const latestCycleRun = monthlyCycleRuns.reduce<MonthlyCycleRunEntry | null>((acc, run) => {
+    if (!acc) return run
+    return run.ranAt > acc.ranAt ? run : acc
+  }, null)
+
+  const latestExport = privacyData?.latestExport ?? null
+  const reconciliationRate =
+    kpis?.reconciliationCompletionRate ??
+    (summary.postedPurchases > 0 ? summary.reconciledPurchases / summary.postedPurchases : 1)
+
+  const cspLabel = (() => {
+    switch (cspMode) {
+      case 'enforced':
+        return 'Enforced'
+      case 'report-only':
+        return 'Report-only'
+      case 'none':
+        return 'Not detected'
+      default:
+        return 'Unknown'
+    }
+  })()
+
+  const formatKpi = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return 'n/a'
+    return formatPercent(value)
+  }
+
   return (
     <>
       <section className="metric-grid" aria-label="Finance intelligence metrics">
@@ -78,6 +118,80 @@ export function DashboardTab({
       </section>
 
       <section className="content-grid" aria-label="Finance intelligence panels">
+        <article className="panel panel-trust-kpis">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Trust Layer</p>
+              <h2>Trust KPIs</h2>
+            </div>
+            <p className="panel-value">
+              {kpis ? `Updated ${cycleDateLabel.format(new Date(kpis.updatedAt))}` : 'Awaiting data'}
+            </p>
+          </header>
+          <div className="trust-kpi-grid">
+            <div className="trust-kpi-tile">
+              <p>Accuracy</p>
+              <strong>{kpis ? formatKpi(kpis.accuracyRate) : 'n/a'}</strong>
+              <small>{kpis ? `${kpis.counts.missingCategory} missing categories` : 'Add purchases to score'}</small>
+            </div>
+            <div className="trust-kpi-tile">
+              <p>Sync failure</p>
+              <strong>{kpis ? formatKpi(kpis.syncFailureRate) : 'n/a'}</strong>
+              <small>{kpis?.syncFailureRate === null ? 'Diagnostics disabled or no flushes' : 'Offline queue flushes'}</small>
+            </div>
+            <div className="trust-kpi-tile">
+              <p>Cycle success</p>
+              <strong>{kpis ? formatKpi(kpis.cycleSuccessRate) : 'n/a'}</strong>
+              <small>{latestCycleRun ? `Last run ${latestCycleRun.cycleKey}` : 'No cycles yet'}</small>
+            </div>
+            <div className="trust-kpi-tile">
+              <p>Reconciliation</p>
+              <strong>{kpis ? formatKpi(kpis.reconciliationCompletionRate) : 'n/a'}</strong>
+              <small>
+                {summary.reconciledPurchases} / {summary.postedPurchases} reconciled
+              </small>
+            </div>
+          </div>
+        </article>
+
+        <article className="panel panel-launch">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Release</p>
+              <h2>Launch Readiness</h2>
+            </div>
+          </header>
+          <ul className="launch-readiness">
+            <li>
+              <span>CSP</span>
+              <strong>{cspLabel}</strong>
+            </li>
+            <li>
+              <span>Retention</span>
+              <strong>{retentionEnabled ? 'Enabled' : 'Off'}</strong>
+            </li>
+            <li>
+              <span>Last export</span>
+              <strong>
+                {latestExport ? `${latestExport.status} (${cycleDateLabel.format(new Date(latestExport.createdAt))})` : 'None'}
+              </strong>
+            </li>
+            <li>
+              <span>Last cycle</span>
+              <strong>
+                {latestCycleRun
+                  ? `${latestCycleRun.status} ${latestCycleRun.cycleKey} (${cycleDateLabel.format(new Date(latestCycleRun.ranAt))})`
+                  : 'None'}
+              </strong>
+            </li>
+            <li>
+              <span>Reconciliation</span>
+              <strong>{formatPercent(reconciliationRate)}</strong>
+            </li>
+          </ul>
+          <p className="subnote">For production CSP enforcement, see docs in `docs/DEPLOYMENT.md`.</p>
+        </article>
+
         <article className="panel panel-health">
           <header className="panel-header">
             <div>

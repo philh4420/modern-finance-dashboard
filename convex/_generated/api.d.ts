@@ -8,9 +8,14 @@
  * @module
  */
 
+import type * as crons from "../crons.js";
 import type * as finance from "../finance.js";
 import type * as financeMath from "../financeMath.js";
+import type * as http from "../http.js";
+import type * as lib_authz from "../lib/authz.js";
+import type * as ops from "../ops.js";
 import type * as phase2 from "../phase2.js";
+import type * as privacy from "../privacy.js";
 
 import type {
   ApiFromModules,
@@ -19,9 +24,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  crons: typeof crons;
   finance: typeof finance;
   financeMath: typeof financeMath;
+  http: typeof http;
+  "lib/authz": typeof lib_authz;
+  ops: typeof ops;
   phase2: typeof phase2;
+  privacy: typeof privacy;
 }>;
 
 /**

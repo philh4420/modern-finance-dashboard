@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { mutation, query, type MutationCtx, type QueryCtx } from './_generated/server'
 import type { Doc } from './_generated/dataModel'
+import { requireIdentity as requireAuthIdentity } from './lib/authz'
 
 const cadenceValidator = v.union(
   v.literal('weekly'),
@@ -85,13 +86,8 @@ const defaultSummary = {
   reconciledPurchases: 0,
 }
 
-const requireIdentity = async (ctx: QueryCtx | MutationCtx) => {
-  const identity = await ctx.auth.getUserIdentity()
-  if (!identity) {
-    throw new Error('You must be signed in to manage finance data.')
-  }
-  return identity
-}
+const requireIdentity = async (ctx: QueryCtx | MutationCtx) =>
+  requireAuthIdentity(ctx, 'You must be signed in to manage finance data.')
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
@@ -158,8 +154,23 @@ const finiteOrZero = (value: number | undefined | null) =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0
 
 const validateRequiredText = (value: string, fieldName: string) => {
-  if (value.trim().length === 0) {
+  const trimmed = value.trim()
+  if (trimmed.length === 0) {
     throw new Error(`${fieldName} is required.`)
+  }
+
+  if (trimmed.length > 140) {
+    throw new Error(`${fieldName} must be 140 characters or less.`)
+  }
+}
+
+const validateOptionalText = (value: string | undefined | null, fieldName: string, maxLength: number) => {
+  if (value === undefined || value === null) {
+    return
+  }
+  const trimmed = value.trim()
+  if (trimmed.length > maxLength) {
+    throw new Error(`${fieldName} must be ${maxLength} characters or less.`)
   }
 }
 
@@ -1544,6 +1555,7 @@ export const addIncome = mutation({
 
     validateRequiredText(args.source, 'Income source')
     validatePositive(args.amount, 'Income amount')
+    validateOptionalText(args.notes, 'Notes', 2000)
 
     if (args.receivedDay !== undefined && (args.receivedDay < 1 || args.receivedDay > 31)) {
       throw new Error('Received day must be between 1 and 31.')
@@ -1593,6 +1605,7 @@ export const updateIncome = mutation({
 
     validateRequiredText(args.source, 'Income source')
     validatePositive(args.amount, 'Income amount')
+    validateOptionalText(args.notes, 'Notes', 2000)
 
     if (args.receivedDay !== undefined && (args.receivedDay < 1 || args.receivedDay > 31)) {
       throw new Error('Received day must be between 1 and 31.')
@@ -1673,6 +1686,7 @@ export const addBill = mutation({
 
     validateRequiredText(args.name, 'Bill name')
     validatePositive(args.amount, 'Bill amount')
+    validateOptionalText(args.notes, 'Notes', 2000)
 
     if (args.dueDay < 1 || args.dueDay > 31) {
       throw new Error('Due day must be between 1 and 31.')
@@ -1725,6 +1739,7 @@ export const updateBill = mutation({
 
     validateRequiredText(args.name, 'Bill name')
     validatePositive(args.amount, 'Bill amount')
+    validateOptionalText(args.notes, 'Notes', 2000)
 
     if (args.dueDay < 1 || args.dueDay > 31) {
       throw new Error('Due day must be between 1 and 31.')
@@ -1812,6 +1827,7 @@ export const addLoan = mutation({
     validateRequiredText(args.name, 'Loan name')
     validateNonNegative(args.balance, 'Loan balance')
     validatePositive(args.minimumPayment, 'Loan minimum payment')
+    validateOptionalText(args.notes, 'Notes', 2000)
 
     if (args.subscriptionCost !== undefined) {
       validateNonNegative(args.subscriptionCost, 'Loan subscription cost')
@@ -1879,6 +1895,7 @@ export const updateLoan = mutation({
     validateRequiredText(args.name, 'Loan name')
     validateNonNegative(args.balance, 'Loan balance')
     validatePositive(args.minimumPayment, 'Loan minimum payment')
+    validateOptionalText(args.notes, 'Notes', 2000)
 
     if (args.subscriptionCost !== undefined) {
       validateNonNegative(args.subscriptionCost, 'Loan subscription cost')
@@ -2031,18 +2048,63 @@ export const runMonthlyCycle = mutation({
       }
     }
 
-    const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now, cycleKey)
-    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now, cycleKey)
+    try {
+      const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now, cycleKey)
+      const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now, cycleKey)
 
-    const shouldLog = source === 'manual' || cardResult.updatedCards > 0 || loanResult.updatedLoans > 0
-    let auditLogId: string | null = null
+      const shouldLog = source === 'manual' || cardResult.updatedCards > 0 || loanResult.updatedLoans > 0
+      let auditLogId: string | null = null
 
-    if (shouldLog) {
-      const id = await ctx.db.insert('cycleAuditLogs', {
+      if (shouldLog) {
+        const id = await ctx.db.insert('cycleAuditLogs', {
+          userId: identity.subject,
+          source,
+          cycleKey,
+          idempotencyKey,
+          ranAt: now.getTime(),
+          updatedCards: cardResult.updatedCards,
+          updatedLoans: loanResult.updatedLoans,
+          cardCyclesApplied: cardResult.cyclesApplied,
+          loanCyclesApplied: loanResult.cyclesApplied,
+          cardInterestAccrued: cardResult.interestAccrued,
+          cardPaymentsApplied: cardResult.paymentsApplied,
+          cardSpendAdded: cardResult.spendAdded,
+          loanInterestAccrued: loanResult.interestAccrued,
+          loanPaymentsApplied: loanResult.paymentsApplied,
+          createdAt: Date.now(),
+        })
+        auditLogId = String(id)
+      }
+
+      const summarySnapshot = await computeMonthCloseSnapshotSummary(ctx, identity.subject, now)
+      const existingSnapshot = await ctx.db
+        .query('monthCloseSnapshots')
+        .withIndex('by_userId_cycleKey', (q) => q.eq('userId', identity.subject).eq('cycleKey', cycleKey))
+        .first()
+
+      if (existingSnapshot) {
+        await ctx.db.patch(existingSnapshot._id, {
+          ranAt: now.getTime(),
+          summary: summarySnapshot,
+        })
+      } else {
+        await ctx.db.insert('monthCloseSnapshots', {
+          userId: identity.subject,
+          cycleKey,
+          ranAt: now.getTime(),
+          summary: summarySnapshot,
+          createdAt: Date.now(),
+        })
+      }
+
+      const monthlyCycleRunId = await ctx.db.insert('monthlyCycleRuns', {
         userId: identity.subject,
-        source,
         cycleKey,
+        source,
+        status: 'completed',
         idempotencyKey,
+        auditLogId: auditLogId ?? undefined,
+        failureReason: undefined,
         ranAt: now.getTime(),
         updatedCards: cardResult.updatedCards,
         updatedLoans: loanResult.updatedLoans,
@@ -2055,83 +2117,78 @@ export const runMonthlyCycle = mutation({
         loanPaymentsApplied: loanResult.paymentsApplied,
         createdAt: Date.now(),
       })
-      auditLogId = String(id)
-    }
 
-    const summarySnapshot = await computeMonthCloseSnapshotSummary(ctx, identity.subject, now)
-    const existingSnapshot = await ctx.db
-      .query('monthCloseSnapshots')
-      .withIndex('by_userId_cycleKey', (q) => q.eq('userId', identity.subject).eq('cycleKey', cycleKey))
-      .first()
-
-    if (existingSnapshot) {
-      await ctx.db.patch(existingSnapshot._id, {
-        ranAt: now.getTime(),
-        summary: summarySnapshot,
-      })
-    } else {
-      await ctx.db.insert('monthCloseSnapshots', {
+      await recordFinanceAuditEvent(ctx, {
         userId: identity.subject,
-        cycleKey,
-        ranAt: now.getTime(),
-        summary: summarySnapshot,
-        createdAt: Date.now(),
+        entityType: 'monthly_cycle',
+        entityId: cycleKey,
+        action: 'run_completed',
+        metadata: {
+          source,
+          idempotencyKey,
+          updatedCards: cardResult.updatedCards,
+          updatedLoans: loanResult.updatedLoans,
+          cardCyclesApplied: cardResult.cyclesApplied,
+          loanCyclesApplied: loanResult.cyclesApplied,
+        },
       })
-    }
 
-    const monthlyCycleRunId = await ctx.db.insert('monthlyCycleRuns', {
-      userId: identity.subject,
-      cycleKey,
-      source,
-      status: 'completed',
-      idempotencyKey,
-      auditLogId: auditLogId ?? undefined,
-      ranAt: now.getTime(),
-      updatedCards: cardResult.updatedCards,
-      updatedLoans: loanResult.updatedLoans,
-      cardCyclesApplied: cardResult.cyclesApplied,
-      loanCyclesApplied: loanResult.cyclesApplied,
-      cardInterestAccrued: cardResult.interestAccrued,
-      cardPaymentsApplied: cardResult.paymentsApplied,
-      cardSpendAdded: cardResult.spendAdded,
-      loanInterestAccrued: loanResult.interestAccrued,
-      loanPaymentsApplied: loanResult.paymentsApplied,
-      createdAt: Date.now(),
-    })
-
-    await recordFinanceAuditEvent(ctx, {
-      userId: identity.subject,
-      entityType: 'monthly_cycle',
-      entityId: cycleKey,
-      action: 'run_completed',
-      metadata: {
+      return {
         source,
-        idempotencyKey,
+        cycleKey,
+        idempotencyKey: idempotencyKey ?? null,
+        auditLogId,
+        monthlyCycleRunId: String(monthlyCycleRunId),
         updatedCards: cardResult.updatedCards,
         updatedLoans: loanResult.updatedLoans,
+        cyclesApplied: cardResult.cyclesApplied + loanResult.cyclesApplied,
         cardCyclesApplied: cardResult.cyclesApplied,
         loanCyclesApplied: loanResult.cyclesApplied,
-      },
-    })
+        interestAccrued: roundCurrency(cardResult.interestAccrued + loanResult.interestAccrued),
+        paymentsApplied: roundCurrency(cardResult.paymentsApplied + loanResult.paymentsApplied),
+        spendAdded: cardResult.spendAdded,
+        cardInterestAccrued: cardResult.interestAccrued,
+        cardPaymentsApplied: cardResult.paymentsApplied,
+        loanInterestAccrued: loanResult.interestAccrued,
+        loanPaymentsApplied: loanResult.paymentsApplied,
+      }
+    } catch (error) {
+      const failureReason = error instanceof Error ? error.message : String(error)
 
-    return {
-      source,
-      cycleKey,
-      idempotencyKey: idempotencyKey ?? null,
-      auditLogId,
-      monthlyCycleRunId: String(monthlyCycleRunId),
-      updatedCards: cardResult.updatedCards,
-      updatedLoans: loanResult.updatedLoans,
-      cyclesApplied: cardResult.cyclesApplied + loanResult.cyclesApplied,
-      cardCyclesApplied: cardResult.cyclesApplied,
-      loanCyclesApplied: loanResult.cyclesApplied,
-      interestAccrued: roundCurrency(cardResult.interestAccrued + loanResult.interestAccrued),
-      paymentsApplied: roundCurrency(cardResult.paymentsApplied + loanResult.paymentsApplied),
-      spendAdded: cardResult.spendAdded,
-      cardInterestAccrued: cardResult.interestAccrued,
-      cardPaymentsApplied: cardResult.paymentsApplied,
-      loanInterestAccrued: loanResult.interestAccrued,
-      loanPaymentsApplied: loanResult.paymentsApplied,
+      await ctx.db.insert('monthlyCycleRuns', {
+        userId: identity.subject,
+        cycleKey,
+        source,
+        status: 'failed',
+        idempotencyKey: undefined,
+        auditLogId: undefined,
+        failureReason: failureReason.slice(0, 280),
+        ranAt: now.getTime(),
+        updatedCards: 0,
+        updatedLoans: 0,
+        cardCyclesApplied: 0,
+        loanCyclesApplied: 0,
+        cardInterestAccrued: 0,
+        cardPaymentsApplied: 0,
+        cardSpendAdded: 0,
+        loanInterestAccrued: 0,
+        loanPaymentsApplied: 0,
+        createdAt: Date.now(),
+      })
+
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'monthly_cycle',
+        entityId: cycleKey,
+        action: 'run_failed',
+        metadata: {
+          source,
+          idempotencyKey,
+          failureReason,
+        },
+      })
+
+      throw error instanceof Error ? error : new Error(failureReason)
     }
   },
 })
@@ -2285,6 +2342,7 @@ export const addPurchase = mutation({
 
     validateRequiredText(args.item, 'Purchase item')
     validatePositive(args.amount, 'Purchase amount')
+    validateOptionalText(args.notes, 'Notes', 2000)
     validateIsoDate(args.purchaseDate, 'Purchase date')
     if (args.statementMonth) {
       validateStatementMonth(args.statementMonth, 'Statement month')
@@ -2363,6 +2421,7 @@ export const updatePurchase = mutation({
 
     validateRequiredText(args.item, 'Purchase item')
     validatePositive(args.amount, 'Purchase amount')
+    validateOptionalText(args.notes, 'Notes', 2000)
     validateIsoDate(args.purchaseDate, 'Purchase date')
     if (args.statementMonth) {
       validateStatementMonth(args.statementMonth, 'Statement month')

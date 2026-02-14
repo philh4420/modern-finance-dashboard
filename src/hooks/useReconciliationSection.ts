@@ -16,6 +16,14 @@ type ReconcileFilter = {
 
 type UseReconciliationSectionArgs = {
   purchases: PurchaseEntry[]
+  userId: string | null | undefined
+  onQueueMetric?: (metric: {
+    event: string
+    queuedCount: number
+    conflictCount: number
+    flushAttempted: number
+    flushSucceeded: number
+  }) => void | Promise<void>
 } & MutationHandlers
 
 const defaultFilter: ReconcileFilter = {
@@ -27,7 +35,7 @@ const defaultFilter: ReconcileFilter = {
   sortDir: 'desc',
 }
 
-export const useReconciliationSection = ({ purchases, clearError, handleMutationError }: UseReconciliationSectionArgs) => {
+export const useReconciliationSection = ({ purchases, userId, onQueueMetric, clearError, handleMutationError }: UseReconciliationSectionArgs) => {
   const bulkUpdatePurchaseReconciliation = useMutation(api.phase2.bulkUpdatePurchaseReconciliation)
   const bulkUpdatePurchaseCategory = useMutation(api.phase2.bulkUpdatePurchaseCategory)
   const bulkDeletePurchases = useMutation(api.phase2.bulkDeletePurchases)
@@ -49,6 +57,8 @@ export const useReconciliationSection = ({ purchases, clearError, handleMutation
         await bulkDeletePurchases(args as Parameters<typeof bulkDeletePurchases>[0])
       },
     },
+    userId,
+    onMetric: onQueueMetric,
   })
 
   const categories = useMemo(
@@ -191,4 +201,3 @@ export const useReconciliationSection = ({ purchases, clearError, handleMutation
     queue,
   }
 }
-

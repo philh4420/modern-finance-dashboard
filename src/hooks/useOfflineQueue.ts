@@ -17,6 +17,14 @@ type OfflineExecutorMap = Record<string, (args: unknown) => Promise<unknown>>
 type UseOfflineQueueArgs = {
   storageKey: string
   executors: OfflineExecutorMap
+  userId: string | null | undefined
+  onMetric?: (metric: {
+    event: string
+    queuedCount: number
+    conflictCount: number
+    flushAttempted: number
+    flushSucceeded: number
+  }) => void | Promise<void>
 }
 
 const parseStoredQueue = (value: string | null): OfflineQueueEntry[] => {
@@ -52,12 +60,18 @@ const isConflictError = (error: unknown) => {
   )
 }
 
-export const useOfflineQueue = ({ storageKey, executors }: UseOfflineQueueArgs) => {
+export const useOfflineQueue = ({ storageKey, executors, userId, onMetric }: UseOfflineQueueArgs) => {
+  const scopedStorageKey = useMemo(() => (userId ? `${storageKey}:${userId}` : null), [storageKey, userId])
+  const previousKeyRef = useRef<string | null>(null)
+
   const [entries, setEntries] = useState<OfflineQueueEntry[]>(() => {
     if (typeof window === 'undefined') {
       return []
     }
-    return parseStoredQueue(window.localStorage.getItem(storageKey))
+    if (!scopedStorageKey) {
+      return []
+    }
+    return parseStoredQueue(window.localStorage.getItem(scopedStorageKey))
   })
   const [isFlushing, setIsFlushing] = useState(false)
   const executorsRef = useRef<OfflineExecutorMap>(executors)
@@ -70,8 +84,32 @@ export const useOfflineQueue = ({ storageKey, executors }: UseOfflineQueueArgs) 
     if (typeof window === 'undefined') {
       return
     }
-    window.localStorage.setItem(storageKey, JSON.stringify(entries))
-  }, [entries, storageKey])
+    if (!scopedStorageKey) {
+      return
+    }
+    window.localStorage.setItem(scopedStorageKey, JSON.stringify(entries))
+  }, [entries, scopedStorageKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const previous = previousKeyRef.current
+    if (previous && !scopedStorageKey) {
+      // Clear prior user's queue on sign-out.
+      window.localStorage.removeItem(previous)
+    }
+
+    previousKeyRef.current = scopedStorageKey
+
+    if (!scopedStorageKey) {
+      setEntries([])
+      return
+    }
+
+    setEntries(parseStoredQueue(window.localStorage.getItem(scopedStorageKey)))
+  }, [scopedStorageKey])
 
   const enqueue = useCallback((key: string, args: unknown, status: OfflineQueueStatus = 'queued', lastError?: string) => {
     setEntries((previous) => [
@@ -94,6 +132,9 @@ export const useOfflineQueue = ({ storageKey, executors }: UseOfflineQueueArgs) 
     }
 
     setIsFlushing(true)
+    let attempted = 0
+    let succeeded = 0
+    let conflicts = 0
     try {
       const snapshot = [...entries]
       for (const entry of snapshot) {
@@ -101,8 +142,10 @@ export const useOfflineQueue = ({ storageKey, executors }: UseOfflineQueueArgs) 
           continue
         }
 
+        attempted += 1
         const executor = executorsRef.current[entry.key]
         if (!executor) {
+          conflicts += 1
           setEntries((previous) =>
             previous.map((current) =>
               current.id === entry.id
@@ -115,9 +158,13 @@ export const useOfflineQueue = ({ storageKey, executors }: UseOfflineQueueArgs) 
 
         try {
           await executor(entry.args)
+          succeeded += 1
           setEntries((previous) => previous.filter((current) => current.id !== entry.id))
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
+          if (isConflictError(error)) {
+            conflicts += 1
+          }
           setEntries((previous) =>
             previous.map((current) =>
               current.id === entry.id
@@ -132,10 +179,19 @@ export const useOfflineQueue = ({ storageKey, executors }: UseOfflineQueueArgs) 
           )
         }
       }
+      if (attempted > 0 && onMetric) {
+        await onMetric({
+          event: 'offline_queue_flush',
+          queuedCount: snapshot.filter((entry) => entry.status === 'queued').length,
+          conflictCount: conflicts,
+          flushAttempted: attempted,
+          flushSucceeded: succeeded,
+        })
+      }
     } finally {
       setIsFlushing(false)
     }
-  }, [entries, isFlushing])
+  }, [entries, isFlushing, onMetric])
 
   useEffect(() => {
     const onOnline = () => {
@@ -202,4 +258,3 @@ export const useOfflineQueue = ({ storageKey, executors }: UseOfflineQueueArgs) 
     clearConflicts,
   }
 }
-

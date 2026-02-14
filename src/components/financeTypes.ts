@@ -9,6 +9,7 @@ export type TabKey =
   | 'purchases'
   | 'reconcile'
   | 'planning'
+  | 'settings'
   | 'accounts'
   | 'goals'
 
@@ -69,6 +70,55 @@ export type LedgerEntry = Doc<'ledgerEntries'>
 export type TransactionRuleEntry = Doc<'transactionRules'>
 export type EnvelopeBudgetEntry = Doc<'envelopeBudgets'>
 export type PurchaseSplitEntry = Doc<'purchaseSplits'>
+export type ConsentLogEntry = Doc<'consentLogs'>
+export type UserExportEntry = Doc<'userExports'>
+export type DeletionJobEntry = Doc<'deletionJobs'>
+export type RetentionPolicyEntry = Doc<'retentionPolicies'>
+export type ClientOpsMetricEntry = Doc<'clientOpsMetrics'>
+
+export type RetentionPolicyKey =
+  | 'exports'
+  | 'client_ops_metrics'
+  | 'cycle_audit_ledger'
+  | 'consent_logs'
+  | 'deletion_jobs'
+
+export type ConsentSettingsView = {
+  diagnosticsEnabled: boolean
+  analyticsEnabled: boolean
+  updatedAt: number
+}
+
+export type PrivacyData = {
+  consentSettings: ConsentSettingsView
+  consentLogs: ConsentLogEntry[]
+  retentionPolicies: RetentionPolicyEntry[]
+  latestExport: UserExportEntry | null
+  latestDeletionJob: DeletionJobEntry | null
+}
+
+export type KpiSnapshot = {
+  windowDays: number
+  updatedAt: number
+  accuracyRate: number
+  syncFailureRate: number | null
+  cycleSuccessRate: number
+  reconciliationCompletionRate: number
+  counts: {
+    purchases: number
+    pending: number
+    missingCategory: number
+    duplicates: number
+    anomalies: number
+    splitMismatches: number
+  }
+}
+
+export type RetentionPolicyRow = {
+  policyKey: RetentionPolicyKey
+  retentionDays: number
+  enabled: boolean
+}
 
 export type IncomeForm = {
   source: string

@@ -362,6 +362,309 @@ h2 {
   grid-column: span 5;
 }
 
+.panel-trust-kpis {
+  grid-column: span 7;
+  background:
+    radial-gradient(120% 160% at 0% 0%, color-mix(in oklab, var(--tone-savings) 18%, transparent), transparent 62%),
+    linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--surface-card) 92%, white 8%),
+      color-mix(in oklab, var(--surface-card) 97%, var(--tone-finance) 3%)
+    );
+}
+
+.panel-launch {
+  grid-column: span 5;
+}
+
+.trust-kpi-grid {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+
+.trust-kpi-tile {
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.85rem 0.85rem 0.75rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.trust-kpi-tile p {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.trust-kpi-tile strong {
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+}
+
+.trust-kpi-tile small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.launch-readiness {
+  list-style: none;
+  padding: 0;
+  margin: 0.85rem 0 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.launch-readiness li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid color-mix(in oklab, var(--stroke) 70%, transparent);
+}
+
+.launch-readiness li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.launch-readiness span {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.launch-readiness strong {
+  font-weight: 750;
+  text-align: right;
+}
+
+.settings-subtitle {
+  margin: 0.35rem 0 0;
+  font-size: 1.04rem;
+  letter-spacing: -0.01em;
+}
+
+.print-only {
+  display: none;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: color-mix(in oklab, black 16%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.modal {
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  border-radius: 1.25rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 85%, transparent);
+  background: var(--surface);
+  box-shadow:
+    0 34px 78px -56px color-mix(in oklab, black 40%, transparent),
+    0 18px 38px -26px color-mix(in oklab, var(--tone-finance) 30%, transparent);
+  padding: 1.05rem;
+}
+
+.modal__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.modal__body {
+  margin-top: 0.85rem;
+}
+
+.modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.modal-grid label {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 650;
+  font-size: 0.85rem;
+}
+
+.modal input {
+  border-radius: 0.95rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 82%, white 18%);
+  padding: 0.62rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.92rem;
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  color: var(--text-main);
+}
+
+.modal__footer {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.print-report {
+  padding: 1.4rem 0;
+  color: oklch(22% 0.03 245);
+  background: white;
+}
+
+.print-cover {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  border-bottom: 1px solid color-mix(in oklab, black 14%, transparent);
+  padding-bottom: 1rem;
+}
+
+.print-kicker {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 750;
+  font-size: 0.72rem;
+}
+
+.print-title {
+  margin: 0.45rem 0 0;
+  font-size: 2rem;
+  letter-spacing: -0.03em;
+}
+
+.print-meta {
+  margin: 0.6rem 0 0;
+  color: color-mix(in oklab, black 55%, transparent);
+  font-size: 0.92rem;
+}
+
+.print-badge {
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, black 12%, transparent);
+  padding: 0.85rem 1rem;
+  text-align: right;
+  min-width: 12rem;
+}
+
+.print-badge strong {
+  display: block;
+  font-size: 1.35rem;
+}
+
+.print-badge span {
+  color: color-mix(in oklab, black 55%, transparent);
+  font-size: 0.86rem;
+}
+
+.print-section {
+  margin-top: 1.25rem;
+}
+
+.print-summary-grid {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.print-summary-card {
+  border-radius: 0.95rem;
+  border: 1px solid color-mix(in oklab, black 12%, transparent);
+  padding: 0.85rem 0.9rem;
+}
+
+.print-summary-card p {
+  margin: 0;
+  color: color-mix(in oklab, black 55%, transparent);
+  font-size: 0.85rem;
+}
+
+.print-summary-card strong {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 1.25rem;
+}
+
+.print-summary-card small {
+  display: block;
+  margin-top: 0.35rem;
+  color: color-mix(in oklab, black 55%, transparent);
+}
+
+.print-kpi-grid {
+  margin-top: 0.95rem;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.print-kpi {
+  border-radius: 0.95rem;
+  border: 1px solid color-mix(in oklab, black 12%, transparent);
+  padding: 0.8rem 0.9rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.print-kpi p {
+  margin: 0;
+  color: color-mix(in oklab, black 55%, transparent);
+  font-size: 0.85rem;
+}
+
+.print-kpi strong {
+  font-size: 1.2rem;
+}
+
+.print-kpi small {
+  color: color-mix(in oklab, black 55%, transparent);
+  font-size: 0.85rem;
+}
+
+.print-subnote {
+  margin: 0.9rem 0 0;
+  color: color-mix(in oklab, black 55%, transparent);
+}
+
+.print-table-wrap {
+  margin-top: 0.85rem;
+}
+
+.print-month-group {
+  margin-top: 1rem;
+}
+
+.print-month-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.8rem;
+}
+
+.print-month-head h3 {
+  margin: 0;
+  font-size: 1.12rem;
+}
+
+.print-month-total {
+  margin: 0;
+  font-weight: 760;
+}
+
 .panel-header {
   display: flex;
   justify-content: space-between;
@@ -778,6 +1081,8 @@ tbody td {
   }
 
   .panel-health,
+  .panel-trust-kpis,
+  .panel-launch,
   .panel-insights,
   .panel-cash-events,
   .panel-categories,
@@ -841,6 +1146,10 @@ tbody td {
   .goal-actions {
     grid-template-columns: 1fr;
   }
+
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 620px) {
@@ -850,5 +1159,58 @@ tbody td {
 
   .metric-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .dashboard {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-report {
+    padding: 0 !important;
+  }
+
+  .print-section + .print-section {
+    break-before: page;
+  }
+
+  table {
+    min-width: 0 !important;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr,
+  .print-summary-card,
+  .print-kpi,
+  .print-month-group {
+    break-inside: avoid;
+  }
+
+  .modal-backdrop,
+  .pwa-update-toast {
+    display: none !important;
   }
 }

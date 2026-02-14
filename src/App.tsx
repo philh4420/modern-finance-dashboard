@@ -5,6 +5,7 @@ import {
   SignInButton,
   SignUpButton,
   UserButton,
+  useAuth,
 } from '@clerk/clerk-react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../convex/_generated/api'
@@ -13,6 +14,9 @@ import { BillsTab } from './components/BillsTab'
 import { CardsTab } from './components/CardsTab'
 import { DashboardTab } from './components/DashboardTab'
 import { PlanningTab } from './components/PlanningTab'
+import { PrintReport } from './components/PrintReport'
+import { PrintReportModal, type PrintReportConfig } from './components/PrintReportModal'
+import { SettingsTab } from './components/SettingsTab'
 import type { DashboardCard, TabKey } from './components/financeTypes'
 import { GoalsTab } from './components/GoalsTab'
 import { IncomeTab } from './components/IncomeTab'
@@ -31,6 +35,7 @@ import { useMutationFeedback } from './hooks/useMutationFeedback'
 import { usePlanningSection } from './hooks/usePlanningSection'
 import { usePurchasesSection } from './hooks/usePurchasesSection'
 import { useReconciliationSection } from './hooks/useReconciliationSection'
+import { useSettingsSection } from './hooks/useSettingsSection'
 import {
   accountTypeOptions,
   cadenceOptions,
@@ -41,6 +46,7 @@ import {
   goalPriorityOptions,
   tabs,
 } from './lib/financeConstants'
+import { initDiagnostics, setDiagnosticsConsent } from './lib/diagnostics'
 import {
   accountTypeLabel,
   cadenceLabel,
@@ -50,17 +56,26 @@ import {
 } from './lib/financeHelpers'
 import './App.css'
 
+type CspMode = 'unknown' | 'none' | 'report-only' | 'enforced'
+
 function App() {
+  const { userId } = useAuth()
   const financeState = useQuery(api.finance.getFinanceData)
   const phase2MonthKey = useMemo(() => new Date().toISOString().slice(0, 7), [])
   const phase2State = useQuery(api.phase2.getPhase2Data, { month: phase2MonthKey })
+  const privacyState = useQuery(api.privacy.getPrivacyData)
+  const kpisState = useQuery(api.ops.getKpis, { windowDays: 30 })
   const cleanupLegacySeedData = useMutation(api.finance.cleanupLegacySeedData)
   const runMonthlyCycle = useMutation(api.finance.runMonthlyCycle)
+  const logClientOpsMetric = useMutation(api.ops.logClientOpsMetric)
 
   const cleanupTriggered = useRef(false)
   const monthlyCycleTriggered = useRef(false)
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
   const [isRunningMonthlyCycle, setIsRunningMonthlyCycle] = useState(false)
+  const [printModalOpen, setPrintModalOpen] = useState(false)
+  const [printConfig, setPrintConfig] = useState<PrintReportConfig | null>(null)
+  const [cspMode, setCspMode] = useState<CspMode>('unknown')
   const { errorMessage, clearError, handleMutationError } = useMutationFeedback()
 
   useEffect(() => {
@@ -80,6 +95,48 @@ function App() {
       void runMonthlyCycle({ source: 'automatic' })
     }
   }, [cleanupLegacySeedData, financeState?.isAuthenticated, runMonthlyCycle])
+
+  useEffect(() => {
+    const enabled = Boolean(privacyState?.consentSettings?.diagnosticsEnabled)
+    setDiagnosticsConsent(enabled)
+    if (!enabled) return
+
+    const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined
+    if (!dsn) {
+      return
+    }
+
+    initDiagnostics({ dsn, environment: import.meta.env.MODE })
+  }, [privacyState?.consentSettings?.diagnosticsEnabled])
+
+  useEffect(() => {
+    if (!financeState?.isAuthenticated) {
+      setCspMode('unknown')
+      return
+    }
+
+    let cancelled = false
+
+    const detect = async () => {
+      try {
+        const response = await fetch(`${window.location.origin}/`, { cache: 'no-store' })
+        const enforced = response.headers.get('content-security-policy')
+        const reportOnly = response.headers.get('content-security-policy-report-only')
+        if (cancelled) return
+        if (enforced) setCspMode('enforced')
+        else if (reportOnly) setCspMode('report-only')
+        else setCspMode('none')
+      } catch {
+        if (cancelled) return
+        setCspMode('unknown')
+      }
+    }
+
+    void detect()
+    return () => {
+      cancelled = true
+    }
+  }, [financeState?.isAuthenticated])
 
   const preference = financeState?.data.preference ?? defaultPreference
 
@@ -155,7 +212,10 @@ function App() {
     handleMutationError,
   })
 
-  const connectionNote = financeState === undefined || phase2State === undefined ? 'Connecting to Convex...' : 'Convex synced'
+  const connectionNote =
+    financeState === undefined || phase2State === undefined || privacyState === undefined || kpisState === undefined
+      ? 'Connecting to Convex...'
+      : 'Convex synced'
 
   const phase2Data =
     phase2State ?? {
@@ -176,8 +236,27 @@ function App() {
       },
     }
 
+  const queueMetricHandler =
+    privacyState?.consentSettings?.diagnosticsEnabled
+      ? async (metric: {
+          event: string
+          queuedCount: number
+          conflictCount: number
+          flushAttempted: number
+          flushSucceeded: number
+        }) => {
+          try {
+            await logClientOpsMetric(metric)
+          } catch {
+            // Best-effort metrics.
+          }
+        }
+      : undefined
+
   const reconciliationSection = useReconciliationSection({
     purchases,
+    userId,
+    onQueueMetric: queueMetricHandler,
     clearError,
     handleMutationError,
   })
@@ -186,6 +265,13 @@ function App() {
     monthKey: phase2Data.monthKey,
     transactionRules: phase2Data.transactionRules,
     envelopeBudgets: phase2Data.envelopeBudgets,
+    userId,
+    onQueueMetric: queueMetricHandler,
+    clearError,
+    handleMutationError,
+  })
+
+  const settingsSection = useSettingsSection({
     clearError,
     handleMutationError,
   })
@@ -306,8 +392,34 @@ function App() {
     }
   }
 
+  const startPrint = (config: PrintReportConfig) => {
+    clearError()
+    setPrintModalOpen(false)
+    setPrintConfig(config)
+  }
+
+  useEffect(() => {
+    if (!printConfig) return
+
+    const onAfterPrint = () => {
+      setPrintConfig(null)
+    }
+
+    window.addEventListener('afterprint', onAfterPrint)
+
+    const timeout = window.setTimeout(() => {
+      window.print()
+    }, 250)
+
+    return () => {
+      window.removeEventListener('afterprint', onAfterPrint)
+      window.clearTimeout(timeout)
+    }
+  }, [printConfig])
+
   return (
     <main className="dashboard">
+      <div className="no-print">
       <header className="topbar">
         <div>
           <p className="eyebrow">Personal Finance Workspace 2026+</p>
@@ -330,6 +442,9 @@ function App() {
             </SignUpButton>
           </SignedOut>
           <SignedIn>
+            <button type="button" className="btn btn-secondary" onClick={() => setPrintModalOpen(true)}>
+              Print Report...
+            </button>
             <button
               type="button"
               className="btn btn-secondary"
@@ -453,20 +568,24 @@ function App() {
             monthCloseSnapshots={monthCloseSnapshots}
             financeAuditEvents={financeAuditEvents}
             ledgerEntries={ledgerEntries}
-            counts={{
-              incomes: incomes.length,
-              bills: bills.length,
-              cards: cards.length,
-              loans: loans.length,
-              purchases: purchases.length,
-              accounts: accounts.length,
-              goals: goals.length,
-            }}
-            formatMoney={formatSection.formatMoney}
-            formatPercent={formatSection.formatPercent}
-            cadenceLabel={cadenceLabel}
-            severityLabel={severityLabel}
-            dateLabel={dateLabel}
+	            counts={{
+	              incomes: incomes.length,
+	              bills: bills.length,
+	              cards: cards.length,
+	              loans: loans.length,
+	              purchases: purchases.length,
+	              accounts: accounts.length,
+	              goals: goals.length,
+	            }}
+	            kpis={kpisState ?? null}
+	            privacyData={privacyState ?? null}
+	            retentionEnabled={settingsSection.retentionPolicies.some((policy) => policy.enabled && policy.retentionDays > 0)}
+	            cspMode={cspMode}
+	            formatMoney={formatSection.formatMoney}
+	            formatPercent={formatSection.formatPercent}
+	            cadenceLabel={cadenceLabel}
+	            severityLabel={severityLabel}
+	            dateLabel={dateLabel}
             cycleDateLabel={cycleDateLabel}
           />
         ) : null}
@@ -669,10 +788,74 @@ function App() {
             dateLabel={dateLabel}
           />
         ) : null}
+
+        {activeTab === 'settings' ? (
+          <SettingsTab
+            consentSettings={
+              settingsSection.privacyData?.consentSettings ?? {
+                diagnosticsEnabled: false,
+                analyticsEnabled: false,
+                updatedAt: 0,
+              }
+            }
+            consentLogs={settingsSection.privacyData?.consentLogs ?? []}
+            latestExport={settingsSection.privacyData?.latestExport ?? null}
+            latestDeletionJob={settingsSection.privacyData?.latestDeletionJob ?? null}
+            retentionPolicies={settingsSection.retentionPolicies}
+            isExporting={settingsSection.isExporting}
+            onGenerateExport={settingsSection.onGenerateExport}
+            onDownloadLatestExport={settingsSection.onDownloadLatestExport}
+            deleteConfirmText={settingsSection.deleteConfirmText}
+            setDeleteConfirmText={settingsSection.setDeleteConfirmText}
+            isDeleting={settingsSection.isDeleting}
+            onRequestDeletion={settingsSection.onRequestDeletion}
+            isApplyingRetention={settingsSection.isApplyingRetention}
+            onRunRetentionNow={settingsSection.onRunRetentionNow}
+            onToggleConsent={settingsSection.onToggleConsent}
+            onUpsertRetention={settingsSection.onUpsertRetention}
+            cycleDateLabel={cycleDateLabel}
+          />
+        ) : null}
+
+        {printModalOpen ? (
+          <PrintReportModal
+            open
+            onClose={() => setPrintModalOpen(false)}
+            onStartPrint={startPrint}
+            locale={preference.locale}
+          />
+        ) : null}
       </SignedIn>
-      <PwaUpdateToast />
-    </main>
-  )
-}
+	      <PwaUpdateToast />
+      </div>
+
+      <SignedIn>
+        {printConfig ? (
+          <div className="print-only">
+            <PrintReport
+              config={printConfig}
+              preference={preference}
+              summary={summary}
+              kpis={kpisState ?? null}
+              monthCloseSnapshots={monthCloseSnapshots}
+              incomes={incomes}
+              bills={bills}
+              cards={cards}
+              loans={loans}
+              accounts={accounts}
+              goals={goals}
+              purchases={purchases}
+              cycleAuditLogs={cycleAuditLogs}
+              monthlyCycleRuns={monthlyCycleRuns}
+              financeAuditEvents={financeAuditEvents}
+              formatMoney={formatSection.formatMoney}
+              cycleDateLabel={cycleDateLabel}
+            />
+          </div>
+        ) : null}
+      </SignedIn>
+	    </main>
+	  )
+	}
 
 export default App

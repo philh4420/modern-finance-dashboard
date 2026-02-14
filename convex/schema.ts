@@ -111,7 +111,7 @@ const accountType = v.union(
 
 const goalPriority = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
 const cycleRunSource = v.union(v.literal('manual'), v.literal('automatic'))
-const cycleRunStatus = v.union(v.literal('completed'))
+const cycleRunStatus = v.union(v.literal('completed'), v.literal('failed'))
 const reconciliationStatus = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
 const ruleMatchType = v.union(v.literal('contains'), v.literal('exact'), v.literal('starts_with'))
 const ledgerLineType = v.union(v.literal('debit'), v.literal('credit'))
@@ -132,6 +132,11 @@ const cycleSummarySnapshot = v.object({
   netWorth: v.number(),
   runwayMonths: v.number(),
 })
+
+const consentType = v.union(v.literal('diagnostics'), v.literal('analytics'))
+
+const exportStatus = v.union(v.literal('processing'), v.literal('ready'), v.literal('failed'), v.literal('expired'))
+const deletionJobStatus = v.union(v.literal('running'), v.literal('completed'), v.literal('failed'))
 
 export default defineSchema({
   dashboardStates: defineTable({
@@ -268,6 +273,7 @@ export default defineSchema({
     status: cycleRunStatus,
     idempotencyKey: v.optional(v.string()),
     auditLogId: v.optional(v.string()),
+    failureReason: v.optional(v.string()),
     ranAt: v.number(),
     updatedCards: v.number(),
     updatedLoans: v.number(),
@@ -292,7 +298,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
-    .index('by_userId_cycleKey', ['userId', 'cycleKey']),
+    .index('by_userId_cycleKey', ['userId', 'cycleKey'])
+    .index('by_userId_ranAt', ['userId', 'ranAt']),
   accounts: defineTable({
     userId: v.string(),
     name: v.string(),
@@ -372,4 +379,62 @@ export default defineSchema({
     locale: v.string(),
     updatedAt: v.number(),
   }).index('by_userId', ['userId']),
+  consentSettings: defineTable({
+    userId: v.string(),
+    diagnosticsEnabled: v.boolean(),
+    analyticsEnabled: v.boolean(),
+    updatedAt: v.number(),
+  }).index('by_userId', ['userId']),
+  consentLogs: defineTable({
+    userId: v.string(),
+    consentType,
+    enabled: v.boolean(),
+    version: v.string(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
+  userExports: defineTable({
+    userId: v.string(),
+    storageId: v.optional(v.id('_storage')),
+    status: exportStatus,
+    byteSize: v.optional(v.number()),
+    failureReason: v.optional(v.string()),
+    formatVersion: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_status', ['userId', 'status']),
+  deletionJobs: defineTable({
+    userId: v.string(),
+    status: deletionJobStatus,
+    progressJson: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
+  retentionPolicies: defineTable({
+    userId: v.string(),
+    policyKey: v.string(),
+    retentionDays: v.number(),
+    enabled: v.boolean(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_policyKey', ['userId', 'policyKey']),
+  clientOpsMetrics: defineTable({
+    userId: v.string(),
+    event: v.string(),
+    queuedCount: v.optional(v.number()),
+    conflictCount: v.optional(v.number()),
+    flushAttempted: v.optional(v.number()),
+    flushSucceeded: v.optional(v.number()),
+    payloadJson: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
 })

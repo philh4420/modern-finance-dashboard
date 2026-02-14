@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
-import { mutation, query, type MutationCtx, type QueryCtx } from './_generated/server'
+import { mutation, query } from './_generated/server'
 import type { Doc } from './_generated/dataModel'
+import { requireIdentity } from './lib/authz'
 
 const ruleMatchTypeValidator = v.union(v.literal('contains'), v.literal('exact'), v.literal('starts_with'))
 const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
@@ -33,17 +34,14 @@ type BillRiskAlert = {
   autopay: boolean
 }
 
-const requireIdentity = async (ctx: QueryCtx | MutationCtx) => {
-  const identity = await ctx.auth.getUserIdentity()
-  if (!identity) {
-    throw new Error('You must be signed in.')
-  }
-  return identity
-}
-
 const validateRequiredText = (value: string, label: string) => {
-  if (value.trim().length === 0) {
+  const trimmed = value.trim()
+  if (trimmed.length === 0) {
     throw new Error(`${label} is required.`)
+  }
+
+  if (trimmed.length > 140) {
+    throw new Error(`${label} must be 140 characters or less.`)
   }
 }
 

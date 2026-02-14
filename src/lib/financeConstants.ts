@@ -16,6 +16,7 @@ export const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'purchases', label: 'Purchases' },
   { key: 'reconcile', label: 'Reconcile' },
   { key: 'planning', label: 'Planning' },
+  { key: 'settings', label: 'Settings' },
   { key: 'accounts', label: 'Accounts' },
   { key: 'goals', label: 'Goals' },
 ]

@@ -41,6 +41,14 @@ type UsePlanningSectionArgs = {
   monthKey: string
   transactionRules: TransactionRuleEntry[]
   envelopeBudgets: EnvelopeBudgetEntry[]
+  userId: string | null | undefined
+  onQueueMetric?: (metric: {
+    event: string
+    queuedCount: number
+    conflictCount: number
+    flushAttempted: number
+    flushSucceeded: number
+  }) => void | Promise<void>
 } & MutationHandlers
 
 const emptyRuleForm: RuleForm = {
@@ -71,6 +79,8 @@ export const usePlanningSection = ({
   monthKey,
   transactionRules,
   envelopeBudgets,
+  userId,
+  onQueueMetric,
   clearError,
   handleMutationError,
 }: UsePlanningSectionArgs) => {
@@ -109,6 +119,8 @@ export const usePlanningSection = ({
         await removeEnvelopeBudget(args as Parameters<typeof removeEnvelopeBudget>[0])
       },
     },
+    userId,
+    onMetric: onQueueMetric,
   })
 
   const sortedRules = useMemo(
@@ -247,4 +259,3 @@ export const usePlanningSection = ({
     queue,
   }
 }
-

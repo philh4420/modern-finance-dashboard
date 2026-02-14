@@ -15,7 +15,9 @@
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.60.0",
+    "@sentry/react": "^10.38.0",
     "convex": "^1.31.7",
+    "fflate": "^0.8.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
