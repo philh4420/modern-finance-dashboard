@@ -2,11 +2,15 @@ import type { CSSProperties } from 'react'
 import type {
   Cadence,
   CycleAuditLogEntry,
+  FinanceAuditEventEntry,
   CustomCadenceUnit,
   DashboardCard,
   GoalWithMetrics,
   Insight,
   InsightSeverity,
+  LedgerEntry,
+  MonthCloseSnapshotEntry,
+  MonthlyCycleRunEntry,
   Summary,
   TopCategory,
   UpcomingCashEvent,
@@ -20,6 +24,10 @@ type DashboardTabProps = {
   topCategories: TopCategory[]
   goalsWithMetrics: GoalWithMetrics[]
   cycleAuditLogs: CycleAuditLogEntry[]
+  monthlyCycleRuns: MonthlyCycleRunEntry[]
+  monthCloseSnapshots: MonthCloseSnapshotEntry[]
+  financeAuditEvents: FinanceAuditEventEntry[]
+  ledgerEntries: LedgerEntry[]
   counts: {
     incomes: number
     bills: number
@@ -45,6 +53,10 @@ export function DashboardTab({
   topCategories,
   goalsWithMetrics,
   cycleAuditLogs,
+  monthlyCycleRuns,
+  monthCloseSnapshots,
+  financeAuditEvents,
+  ledgerEntries,
   counts,
   formatMoney,
   formatPercent,
@@ -95,6 +107,12 @@ export function DashboardTab({
               <li>
                 <span>Goal Funding</span>
                 <strong>{formatPercent(summary.goalsFundedPercent / 100)}</strong>
+              </li>
+              <li>
+                <span>Reconciled Purchases</span>
+                <strong>
+                  {summary.reconciledPurchases} / {summary.postedPurchases}
+                </strong>
               </li>
             </ul>
           </div>
@@ -233,6 +251,113 @@ export function DashboardTab({
                     {formatMoney(entry.cardInterestAccrued)} card interest, {formatMoney(entry.loanInterestAccrued)} loan
                     interest, {formatMoney(entry.cardPaymentsApplied + entry.loanPaymentsApplied)} total payments
                   </small>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
+        <article className="panel panel-cycle-runs">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Cycle Control</p>
+              <h2>Deterministic Run Journal</h2>
+            </div>
+          </header>
+          {monthlyCycleRuns.length === 0 ? (
+            <p className="empty-state">No deterministic cycle runs yet.</p>
+          ) : (
+            <ul className="timeline-list">
+              {monthlyCycleRuns.slice(0, 8).map((run) => (
+                <li key={run._id}>
+                  <div>
+                    <p>
+                      {run.cycleKey} ({run.source})
+                    </p>
+                    <small>
+                      {run.updatedCards} cards + {run.updatedLoans} loans updated
+                    </small>
+                  </div>
+                  <strong>{cycleDateLabel.format(new Date(run.ranAt))}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
+        <article className="panel panel-month-close">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Month Close</p>
+              <h2>Snapshots</h2>
+            </div>
+          </header>
+          {monthCloseSnapshots.length === 0 ? (
+            <p className="empty-state">No month-close snapshots yet.</p>
+          ) : (
+            <ul className="timeline-list">
+              {monthCloseSnapshots.slice(0, 6).map((snapshot) => (
+                <li key={snapshot._id}>
+                  <div>
+                    <p>{snapshot.cycleKey}</p>
+                    <small>
+                      Net worth {formatMoney(snapshot.summary.netWorth)} • Commitments{' '}
+                      {formatMoney(snapshot.summary.monthlyCommitments)}
+                    </small>
+                  </div>
+                  <strong>{cycleDateLabel.format(new Date(snapshot.ranAt))}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
+        <article className="panel panel-ledger">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Ledger</p>
+              <h2>Recent Entries</h2>
+            </div>
+          </header>
+          {ledgerEntries.length === 0 ? (
+            <p className="empty-state">No ledger entries yet.</p>
+          ) : (
+            <ul className="timeline-list">
+              {ledgerEntries.slice(0, 10).map((entry) => (
+                <li key={entry._id}>
+                  <div>
+                    <p>{entry.description}</p>
+                    <small>
+                      {entry.entryType} • {entry.referenceType ?? 'system'}
+                    </small>
+                  </div>
+                  <strong>{cycleDateLabel.format(new Date(entry.occurredAt))}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
+        <article className="panel panel-audit-events">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Audit Trail</p>
+              <h2>Finance Change Events</h2>
+            </div>
+          </header>
+          {financeAuditEvents.length === 0 ? (
+            <p className="empty-state">No finance events recorded yet.</p>
+          ) : (
+            <ul className="timeline-list">
+              {financeAuditEvents.slice(0, 10).map((event) => (
+                <li key={event._id}>
+                  <div>
+                    <p>
+                      {event.entityType}: {event.action}
+                    </p>
+                    <small>{event.entityId}</small>
+                  </div>
+                  <strong>{cycleDateLabel.format(new Date(event.createdAt))}</strong>
                 </li>
               ))}
             </ul>

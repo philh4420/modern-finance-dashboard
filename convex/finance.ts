@@ -29,11 +29,22 @@ const accountTypeValidator = v.union(
 
 const goalPriorityValidator = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
 const cycleRunSourceValidator = v.union(v.literal('manual'), v.literal('automatic'))
+const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 type InsightSeverity = 'good' | 'warning' | 'critical'
 type CycleRunSource = 'manual' | 'automatic'
+type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
+type LedgerEntryType =
+  | 'purchase'
+  | 'purchase_reversal'
+  | 'cycle_card_spend'
+  | 'cycle_card_interest'
+  | 'cycle_card_payment'
+  | 'cycle_loan_interest'
+  | 'cycle_loan_payment'
+type LedgerLineType = 'debit' | 'credit'
 
 type IncomeDoc = Doc<'incomes'>
 type BillDoc = Doc<'bills'>
@@ -69,6 +80,9 @@ const defaultSummary = {
   runwayMonths: 0,
   healthScore: 0,
   goalsFundedPercent: 0,
+  pendingPurchases: 0,
+  postedPurchases: 0,
+  reconciledPurchases: 0,
 }
 
 const requireIdentity = async (ctx: QueryCtx | MutationCtx) => {
@@ -152,6 +166,74 @@ const validateRequiredText = (value: string, fieldName: string) => {
 const validateIsoDate = (value: string, fieldName: string) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error(`${fieldName} must use YYYY-MM-DD format.`)
+  }
+}
+
+const validateStatementMonth = (value: string, fieldName: string) => {
+  if (!/^\d{4}-\d{2}$/.test(value)) {
+    throw new Error(`${fieldName} must use YYYY-MM format.`)
+  }
+}
+
+const toCycleKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+
+const sanitizeLedgerToken = (value: string) => {
+  const normalized = value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+
+  return normalized.length > 0 ? normalized : 'UNSPECIFIED'
+}
+
+const stringifyForAudit = (value: unknown) => {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return undefined
+  }
+}
+
+const isGenericCategory = (value: string) => {
+  const normalized = value.trim().toLowerCase()
+  return normalized.length === 0 || normalized === 'uncategorized' || normalized === 'other' || normalized === 'misc'
+}
+
+const matchesPurchasePattern = (value: string, pattern: string, matchType: 'contains' | 'exact' | 'starts_with') => {
+  const normalizedValue = value.trim().toLowerCase()
+  const normalizedPattern = pattern.trim().toLowerCase()
+  if (normalizedPattern.length === 0) {
+    return false
+  }
+  if (matchType === 'exact') {
+    return normalizedValue === normalizedPattern
+  }
+  if (matchType === 'starts_with') {
+    return normalizedValue.startsWith(normalizedPattern)
+  }
+  return normalizedValue.includes(normalizedPattern)
+}
+
+const resolvePurchaseRuleOverrides = async (ctx: MutationCtx, userId: string, item: string) => {
+  const rules = await ctx.db
+    .query('transactionRules')
+    .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+    .collect()
+
+  const matchedRule = [...rules]
+    .filter((rule) => rule.active)
+    .sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt)
+    .find((rule) => matchesPurchasePattern(item, rule.merchantPattern, rule.matchType))
+
+  if (!matchedRule) {
+    return null
+  }
+
+  return {
+    category: matchedRule.category.trim(),
+    reconciliationStatus: matchedRule.reconciliationStatus,
+    ruleId: String(matchedRule._id),
   }
 }
 
@@ -387,7 +469,12 @@ type LoanCycleAggregate = {
   paymentsApplied: number
 }
 
-const runCardMonthlyCycleForUser = async (ctx: MutationCtx, userId: string, now: Date): Promise<CardCycleAggregate> => {
+const runCardMonthlyCycleForUser = async (
+  ctx: MutationCtx,
+  userId: string,
+  now: Date,
+  cycleKey: string,
+): Promise<CardCycleAggregate> => {
   const cards = await ctx.db
     .query('cards')
     .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
@@ -415,6 +502,94 @@ const runCardMonthlyCycleForUser = async (ctx: MutationCtx, userId: string, now:
       lastCycleAt: newCycleDate,
     })
 
+    const cardToken = sanitizeLedgerToken(card.name)
+    const liabilityAccount = `LIABILITY:CARD:${cardToken}`
+    const cashAccount = 'ASSET:CASH:UNASSIGNED'
+
+    if (summary.spendAdded > 0) {
+      await insertLedgerEntry(ctx, {
+        userId,
+        entryType: 'cycle_card_spend',
+        description: `Card monthly spend: ${card.name}`,
+        occurredAt: newCycleDate,
+        referenceType: 'card',
+        referenceId: String(card._id),
+        cycleKey,
+        lines: [
+          {
+            lineType: 'debit',
+            accountCode: `EXPENSE:CARD_SPEND:${cardToken}`,
+            amount: summary.spendAdded,
+          },
+          {
+            lineType: 'credit',
+            accountCode: liabilityAccount,
+            amount: summary.spendAdded,
+          },
+        ],
+      })
+    }
+
+    if (summary.interestAccrued > 0) {
+      await insertLedgerEntry(ctx, {
+        userId,
+        entryType: 'cycle_card_interest',
+        description: `Card monthly interest: ${card.name}`,
+        occurredAt: newCycleDate,
+        referenceType: 'card',
+        referenceId: String(card._id),
+        cycleKey,
+        lines: [
+          {
+            lineType: 'debit',
+            accountCode: `EXPENSE:CARD_INTEREST:${cardToken}`,
+            amount: summary.interestAccrued,
+          },
+          {
+            lineType: 'credit',
+            accountCode: liabilityAccount,
+            amount: summary.interestAccrued,
+          },
+        ],
+      })
+    }
+
+    if (summary.paymentsApplied > 0) {
+      await insertLedgerEntry(ctx, {
+        userId,
+        entryType: 'cycle_card_payment',
+        description: `Card monthly payment: ${card.name}`,
+        occurredAt: newCycleDate,
+        referenceType: 'card',
+        referenceId: String(card._id),
+        cycleKey,
+        lines: [
+          {
+            lineType: 'debit',
+            accountCode: liabilityAccount,
+            amount: summary.paymentsApplied,
+          },
+          {
+            lineType: 'credit',
+            accountCode: cashAccount,
+            amount: summary.paymentsApplied,
+          },
+        ],
+      })
+    }
+
+    await recordFinanceAuditEvent(ctx, {
+      userId,
+      entityType: 'card',
+      entityId: String(card._id),
+      action: 'monthly_cycle_applied',
+      metadata: {
+        cycleKey,
+        cyclesApplied: cycles,
+        summary,
+      },
+    })
+
     updatedCards += 1
     cyclesApplied += cycles
     interestAccrued += summary.interestAccrued
@@ -431,7 +606,12 @@ const runCardMonthlyCycleForUser = async (ctx: MutationCtx, userId: string, now:
   }
 }
 
-const runLoanMonthlyCycleForUser = async (ctx: MutationCtx, userId: string, now: Date): Promise<LoanCycleAggregate> => {
+const runLoanMonthlyCycleForUser = async (
+  ctx: MutationCtx,
+  userId: string,
+  now: Date,
+  cycleKey: string,
+): Promise<LoanCycleAggregate> => {
   const loans = await ctx.db
     .query('loans')
     .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
@@ -456,6 +636,70 @@ const runLoanMonthlyCycleForUser = async (ctx: MutationCtx, userId: string, now:
     await ctx.db.patch(loan._id, {
       balance: summary.balance,
       lastCycleAt: newCycleDate,
+    })
+
+    const loanToken = sanitizeLedgerToken(loan.name)
+    const liabilityAccount = `LIABILITY:LOAN:${loanToken}`
+    const cashAccount = 'ASSET:CASH:UNASSIGNED'
+
+    if (summary.interestAccrued > 0) {
+      await insertLedgerEntry(ctx, {
+        userId,
+        entryType: 'cycle_loan_interest',
+        description: `Loan monthly interest: ${loan.name}`,
+        occurredAt: newCycleDate,
+        referenceType: 'loan',
+        referenceId: String(loan._id),
+        cycleKey,
+        lines: [
+          {
+            lineType: 'debit',
+            accountCode: `EXPENSE:LOAN_INTEREST:${loanToken}`,
+            amount: summary.interestAccrued,
+          },
+          {
+            lineType: 'credit',
+            accountCode: liabilityAccount,
+            amount: summary.interestAccrued,
+          },
+        ],
+      })
+    }
+
+    if (summary.paymentsApplied > 0) {
+      await insertLedgerEntry(ctx, {
+        userId,
+        entryType: 'cycle_loan_payment',
+        description: `Loan monthly payment: ${loan.name}`,
+        occurredAt: newCycleDate,
+        referenceType: 'loan',
+        referenceId: String(loan._id),
+        cycleKey,
+        lines: [
+          {
+            lineType: 'debit',
+            accountCode: liabilityAccount,
+            amount: summary.paymentsApplied,
+          },
+          {
+            lineType: 'credit',
+            accountCode: cashAccount,
+            amount: summary.paymentsApplied,
+          },
+        ],
+      })
+    }
+
+    await recordFinanceAuditEvent(ctx, {
+      userId,
+      entityType: 'loan',
+      entityId: String(loan._id),
+      action: 'monthly_cycle_applied',
+      metadata: {
+        cycleKey,
+        cyclesApplied: cycles,
+        summary,
+      },
     })
 
     updatedLoans += 1
@@ -697,9 +941,266 @@ const getUserPreference = async (ctx: QueryCtx, userId: string) => {
   }
 }
 
-const ensureOwned = (record: { userId: string } | null, expectedUserId: string, missingError: string) => {
+function ensureOwned<T extends { userId: string }>(
+  record: T | null,
+  expectedUserId: string,
+  missingError: string,
+): asserts record is T {
   if (!record || record.userId !== expectedUserId) {
     throw new Error(missingError)
+  }
+}
+
+const isPurchasePosted = (status?: ReconciliationStatus) => {
+  if (!status) {
+    return true
+  }
+  return status !== 'pending'
+}
+
+const resolvePurchaseReconciliation = (args: {
+  purchaseDate: string
+  requestedStatus?: ReconciliationStatus
+  requestedStatementMonth?: string
+  existing?: Doc<'purchases'>
+  now: number
+}) => {
+  const status = args.requestedStatus ?? args.existing?.reconciliationStatus ?? 'posted'
+  const statementMonth = args.requestedStatementMonth ?? args.existing?.statementMonth ?? args.purchaseDate.slice(0, 7)
+  validateStatementMonth(statementMonth, 'Statement month')
+
+  if (status === 'pending') {
+    return {
+      reconciliationStatus: status,
+      statementMonth,
+      postedAt: undefined,
+      reconciledAt: undefined,
+    }
+  }
+
+  if (status === 'posted') {
+    return {
+      reconciliationStatus: status,
+      statementMonth,
+      postedAt: args.existing?.postedAt ?? args.now,
+      reconciledAt: undefined,
+    }
+  }
+
+  return {
+    reconciliationStatus: status,
+    statementMonth,
+    postedAt: args.existing?.postedAt ?? args.now,
+    reconciledAt: args.existing?.reconciledAt ?? args.now,
+  }
+}
+
+type LedgerLineDraft = {
+  lineType: LedgerLineType
+  accountCode: string
+  amount: number
+}
+
+const insertLedgerEntry = async (ctx: MutationCtx, args: {
+  userId: string
+  entryType: LedgerEntryType
+  description: string
+  occurredAt: number
+  referenceType?: string
+  referenceId?: string
+  cycleKey?: string
+  lines: LedgerLineDraft[]
+}) => {
+  if (args.lines.length < 2) {
+    throw new Error('Ledger entries require at least two lines.')
+  }
+
+  const debitTotal = args.lines
+    .filter((line) => line.lineType === 'debit')
+    .reduce((sum, line) => sum + line.amount, 0)
+  const creditTotal = args.lines
+    .filter((line) => line.lineType === 'credit')
+    .reduce((sum, line) => sum + line.amount, 0)
+
+  if (roundCurrency(debitTotal) !== roundCurrency(creditTotal)) {
+    throw new Error('Ledger entry is imbalanced.')
+  }
+
+  const entryId = await ctx.db.insert('ledgerEntries', {
+    userId: args.userId,
+    entryType: args.entryType,
+    description: args.description,
+    occurredAt: args.occurredAt,
+    referenceType: args.referenceType,
+    referenceId: args.referenceId,
+    cycleKey: args.cycleKey,
+    createdAt: Date.now(),
+  })
+
+  for (const line of args.lines) {
+    if (!Number.isFinite(line.amount) || line.amount <= 0) {
+      throw new Error('Ledger line amount must be greater than 0.')
+    }
+
+    await ctx.db.insert('ledgerLines', {
+      userId: args.userId,
+      entryId,
+      lineType: line.lineType,
+      accountCode: line.accountCode,
+      amount: roundCurrency(line.amount),
+      createdAt: Date.now(),
+    })
+  }
+}
+
+const recordFinanceAuditEvent = async (ctx: MutationCtx, args: {
+  userId: string
+  entityType: string
+  entityId: string
+  action: string
+  before?: unknown
+  after?: unknown
+  metadata?: unknown
+}) => {
+  await ctx.db.insert('financeAuditEvents', {
+    userId: args.userId,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    action: args.action,
+    beforeJson: args.before === undefined ? undefined : stringifyForAudit(args.before),
+    afterJson: args.after === undefined ? undefined : stringifyForAudit(args.after),
+    metadataJson: args.metadata === undefined ? undefined : stringifyForAudit(args.metadata),
+    createdAt: Date.now(),
+  })
+}
+
+const getPurchaseExpenseAccountCode = (category: string) => `EXPENSE:PURCHASE:${sanitizeLedgerToken(category)}`
+
+const recordPurchaseLedger = async (ctx: MutationCtx, args: {
+  userId: string
+  entryType: 'purchase' | 'purchase_reversal'
+  item: string
+  amount: number
+  category: string
+  purchaseDate: string
+  purchaseId: string
+}) => {
+  const amount = roundCurrency(Math.abs(args.amount))
+  if (amount <= 0) {
+    return
+  }
+
+  const occurredAt = new Date(`${args.purchaseDate}T00:00:00`).getTime()
+  const expenseAccount = getPurchaseExpenseAccountCode(args.category)
+  const cashAccount = 'ASSET:CASH:UNASSIGNED'
+  const isReversal = args.entryType === 'purchase_reversal'
+
+  await insertLedgerEntry(ctx, {
+    userId: args.userId,
+    entryType: args.entryType,
+    description: `${isReversal ? 'Reverse purchase' : 'Purchase'}: ${args.item}`,
+    occurredAt,
+    referenceType: 'purchase',
+    referenceId: args.purchaseId,
+    lines: [
+      {
+        lineType: isReversal ? 'credit' : 'debit',
+        accountCode: expenseAccount,
+        amount,
+      },
+      {
+        lineType: isReversal ? 'debit' : 'credit',
+        accountCode: cashAccount,
+        amount,
+      },
+    ],
+  })
+}
+
+const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string, now: Date) => {
+  const [incomes, bills, cards, loans, purchases, accounts] = await Promise.all([
+    ctx.db
+      .query('incomes')
+      .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+      .collect(),
+    ctx.db
+      .query('bills')
+      .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+      .collect(),
+    ctx.db
+      .query('cards')
+      .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+      .collect(),
+    ctx.db
+      .query('loans')
+      .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+      .collect(),
+    ctx.db
+      .query('purchases')
+      .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+      .collect(),
+    ctx.db
+      .query('accounts')
+      .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+      .collect(),
+  ])
+
+  const monthlyIncome = incomes.reduce(
+    (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
+    0,
+  )
+  const monthlyBills = bills.reduce(
+    (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
+    0,
+  )
+  const monthlyCardPayments = cards.reduce((sum, entry) => sum + finiteOrZero(entry.minimumPayment), 0)
+  const monthlyLoanBasePayments = loans.reduce(
+    (sum, entry) =>
+      sum + toMonthlyAmount(finiteOrZero(entry.minimumPayment), entry.cadence, entry.customInterval, entry.customUnit),
+    0,
+  )
+  const monthlyLoanSubscriptionCosts = loans.reduce((sum, entry) => sum + finiteOrZero(entry.subscriptionCost), 0)
+  const monthlyCommitments = monthlyBills + monthlyCardPayments + monthlyLoanBasePayments + monthlyLoanSubscriptionCosts
+
+  const cardUsedTotal = cards.reduce((sum, entry) => sum + finiteOrZero(entry.usedLimit), 0)
+  const totalLoanBalance = loans.reduce((sum, entry) => sum + finiteOrZero(entry.balance), 0)
+  const accountDebts = accounts.reduce((sum, entry) => {
+    if (entry.type === 'debt') {
+      return sum + Math.abs(entry.balance)
+    }
+    return entry.balance < 0 ? sum + Math.abs(entry.balance) : sum
+  }, 0)
+  const totalLiabilities = accountDebts + cardUsedTotal + totalLoanBalance
+
+  const totalAssets = accounts.reduce((sum, entry) => {
+    if (entry.type === 'debt') {
+      return sum
+    }
+    return sum + Math.max(entry.balance, 0)
+  }, 0)
+
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const purchasesThisMonth = purchases
+    .filter((entry) => entry.purchaseDate.startsWith(monthKey))
+    .reduce((sum, entry) => sum + entry.amount, 0)
+
+  const netWorth = totalAssets + monthlyIncome - totalLiabilities - monthlyCommitments - purchasesThisMonth
+  const liquidReserves = accounts.reduce((sum, entry) => {
+    if (!entry.liquid) {
+      return sum
+    }
+    return sum + Math.max(entry.balance, 0)
+  }, 0)
+  const runwayAvailablePool = Math.max(liquidReserves + totalAssets + monthlyIncome, 0)
+  const runwayMonthlyPressure = monthlyCommitments + totalLiabilities + purchasesThisMonth
+  const runwayMonths = runwayMonthlyPressure > 0 ? runwayAvailablePool / runwayMonthlyPressure : runwayAvailablePool > 0 ? 99 : 0
+
+  return {
+    monthlyIncome: roundCurrency(monthlyIncome),
+    monthlyCommitments: roundCurrency(monthlyCommitments),
+    totalLiabilities: roundCurrency(totalLiabilities),
+    netWorth: roundCurrency(netWorth),
+    runwayMonths: roundCurrency(runwayMonths),
   }
 }
 
@@ -722,6 +1223,10 @@ export const getFinanceData = query({
           accounts: [],
           goals: [],
           cycleAuditLogs: [],
+          monthlyCycleRuns: [],
+          monthCloseSnapshots: [],
+          financeAuditEvents: [],
+          ledgerEntries: [],
           topCategories: [],
           upcomingCashEvents: [],
           insights: [],
@@ -730,7 +1235,21 @@ export const getFinanceData = query({
       }
     }
 
-    const [preference, incomes, bills, cards, loans, purchases, accounts, goals, cycleAuditLogs] = await Promise.all([
+    const [
+      preference,
+      incomes,
+      bills,
+      cards,
+      loans,
+      purchases,
+      accounts,
+      goals,
+      cycleAuditLogs,
+      monthlyCycleRuns,
+      monthCloseSnapshots,
+      financeAuditEvents,
+      ledgerEntries,
+    ] = await Promise.all([
       getUserPreference(ctx, identity.subject),
       ctx.db
         .query('incomes')
@@ -772,6 +1291,26 @@ export const getFinanceData = query({
         .withIndex('by_userId_ranAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .take(20),
+      ctx.db
+        .query('monthlyCycleRuns')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(20),
+      ctx.db
+        .query('monthCloseSnapshots')
+        .withIndex('by_userId_cycleKey', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(12),
+      ctx.db
+        .query('financeAuditEvents')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(30),
+      ctx.db
+        .query('ledgerEntries')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(30),
     ])
 
     const monthlyIncome = incomes.reduce(
@@ -801,6 +1340,9 @@ export const getFinanceData = query({
     const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
     const monthPurchases = purchases.filter((entry) => entry.purchaseDate.startsWith(monthKey))
     const purchasesThisMonth = monthPurchases.reduce((sum, entry) => sum + entry.amount, 0)
+    const pendingPurchases = purchases.filter((entry) => entry.reconciliationStatus === 'pending').length
+    const reconciledPurchases = purchases.filter((entry) => entry.reconciliationStatus === 'reconciled').length
+    const postedPurchases = purchases.length - pendingPurchases
 
     const projectedMonthlyNet = monthlyIncome - monthlyCommitments - totalLoanBalance
     const savingsRatePercent = monthlyIncome > 0 ? (projectedMonthlyNet / monthlyIncome) * 100 : 0
@@ -884,6 +1426,10 @@ export const getFinanceData = query({
       ...accounts.map((entry) => entry.createdAt),
       ...goals.map((entry) => entry.createdAt),
       ...cycleAuditLogs.map((entry) => entry.createdAt),
+      ...monthlyCycleRuns.map((entry) => entry.createdAt),
+      ...monthCloseSnapshots.map((entry) => entry.createdAt),
+      ...financeAuditEvents.map((entry) => entry.createdAt),
+      ...ledgerEntries.map((entry) => entry.createdAt),
     ]
 
     const updatedAt = timestamps.length > 0 ? Math.max(...timestamps) : Date.now()
@@ -901,6 +1447,10 @@ export const getFinanceData = query({
         accounts,
         goals,
         cycleAuditLogs,
+        monthlyCycleRuns,
+        monthCloseSnapshots,
+        financeAuditEvents,
+        ledgerEntries,
         topCategories,
         upcomingCashEvents,
         insights,
@@ -928,6 +1478,9 @@ export const getFinanceData = query({
           runwayMonths,
           healthScore,
           goalsFundedPercent,
+          pendingPurchases,
+          postedPurchases,
+          reconciledPurchases,
         },
       },
     }
@@ -998,7 +1551,7 @@ export const addIncome = mutation({
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
-    await ctx.db.insert('incomes', {
+    const createdIncomeId = await ctx.db.insert('incomes', {
       userId: identity.subject,
       source: args.source.trim(),
       amount: args.amount,
@@ -1008,6 +1561,18 @@ export const addIncome = mutation({
       receivedDay: args.receivedDay,
       notes: args.notes?.trim() || undefined,
       createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'income',
+      entityId: String(createdIncomeId),
+      action: 'created',
+      after: {
+        source: args.source.trim(),
+        amount: args.amount,
+        cadence: args.cadence,
+      },
     })
   },
 })
@@ -1047,6 +1612,23 @@ export const updateIncome = mutation({
       receivedDay: args.receivedDay,
       notes: args.notes?.trim() || undefined,
     })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'income',
+      entityId: String(args.id),
+      action: 'updated',
+      before: {
+        source: existing.source,
+        amount: existing.amount,
+        cadence: existing.cadence,
+      },
+      after: {
+        source: args.source.trim(),
+        amount: args.amount,
+        cadence: args.cadence,
+      },
+    })
   },
 })
 
@@ -1060,6 +1642,18 @@ export const removeIncome = mutation({
     ensureOwned(existing, identity.subject, 'Income record not found.')
 
     await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'income',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        source: existing.source,
+        amount: existing.amount,
+        cadence: existing.cadence,
+      },
+    })
   },
 })
 
@@ -1086,7 +1680,7 @@ export const addBill = mutation({
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
-    await ctx.db.insert('bills', {
+    const createdBillId = await ctx.db.insert('bills', {
       userId: identity.subject,
       name: args.name.trim(),
       amount: args.amount,
@@ -1097,6 +1691,19 @@ export const addBill = mutation({
       autopay: args.autopay,
       notes: args.notes?.trim() || undefined,
       createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'bill',
+      entityId: String(createdBillId),
+      action: 'created',
+      after: {
+        name: args.name.trim(),
+        amount: args.amount,
+        dueDay: args.dueDay,
+        cadence: args.cadence,
+      },
     })
   },
 })
@@ -1138,6 +1745,25 @@ export const updateBill = mutation({
       autopay: args.autopay,
       notes: args.notes?.trim() || undefined,
     })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'bill',
+      entityId: String(args.id),
+      action: 'updated',
+      before: {
+        name: existing.name,
+        amount: existing.amount,
+        dueDay: existing.dueDay,
+        cadence: existing.cadence,
+      },
+      after: {
+        name: args.name.trim(),
+        amount: args.amount,
+        dueDay: args.dueDay,
+        cadence: args.cadence,
+      },
+    })
   },
 })
 
@@ -1151,6 +1777,19 @@ export const removeBill = mutation({
     ensureOwned(existing, identity.subject, 'Bill record not found.')
 
     await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'bill',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        name: existing.name,
+        amount: existing.amount,
+        dueDay: existing.dueDay,
+        cadence: existing.cadence,
+      },
+    })
   },
 })
 
@@ -1188,7 +1827,7 @@ export const addLoan = mutation({
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
-    await ctx.db.insert('loans', {
+    const createdLoanId = await ctx.db.insert('loans', {
       userId: identity.subject,
       name: args.name.trim(),
       balance: args.balance,
@@ -1202,6 +1841,20 @@ export const addLoan = mutation({
       notes: args.notes?.trim() || undefined,
       lastCycleAt: Date.now(),
       createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'loan',
+      entityId: String(createdLoanId),
+      action: 'created',
+      after: {
+        name: args.name.trim(),
+        balance: args.balance,
+        minimumPayment: args.minimumPayment,
+        subscriptionCost: args.subscriptionCost ?? 0,
+        interestRate: args.interestRate ?? 0,
+      },
     })
   },
 })
@@ -1256,6 +1909,27 @@ export const updateLoan = mutation({
       customUnit: cadenceDetails.customUnit,
       notes: args.notes?.trim() || undefined,
     })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'loan',
+      entityId: String(args.id),
+      action: 'updated',
+      before: {
+        name: existing.name,
+        balance: existing.balance,
+        minimumPayment: existing.minimumPayment,
+        subscriptionCost: existing.subscriptionCost ?? 0,
+        interestRate: existing.interestRate ?? 0,
+      },
+      after: {
+        name: args.name.trim(),
+        balance: args.balance,
+        minimumPayment: args.minimumPayment,
+        subscriptionCost: args.subscriptionCost ?? 0,
+        interestRate: args.interestRate ?? 0,
+      },
+    })
   },
 })
 
@@ -1269,6 +1943,18 @@ export const removeLoan = mutation({
     ensureOwned(existing, identity.subject, 'Loan record not found.')
 
     await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'loan',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        name: existing.name,
+        balance: existing.balance,
+        minimumPayment: existing.minimumPayment,
+      },
+    })
   },
 })
 
@@ -1279,7 +1965,7 @@ export const applyCardMonthlyCycle = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const now = new Date(args.now ?? Date.now())
-    const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now)
+    const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now, toCycleKey(now))
 
     return {
       ...cardResult,
@@ -1294,7 +1980,7 @@ export const applyLoanMonthlyCycle = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const now = new Date(args.now ?? Date.now())
-    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now)
+    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now, toCycleKey(now))
 
     return {
       ...loanResult,
@@ -1306,14 +1992,47 @@ export const runMonthlyCycle = mutation({
   args: {
     now: v.optional(v.number()),
     source: v.optional(cycleRunSourceValidator),
+    idempotencyKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const now = new Date(args.now ?? Date.now())
     const source: CycleRunSource = args.source ?? 'manual'
+    const cycleKey = toCycleKey(now)
+    const providedIdempotencyKey = args.idempotencyKey?.trim() || undefined
+    const idempotencyKey = providedIdempotencyKey ?? (source === 'automatic' ? `automatic:${cycleKey}` : undefined)
 
-    const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now)
-    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now)
+    if (idempotencyKey) {
+      const existingRun = await ctx.db
+        .query('monthlyCycleRuns')
+        .withIndex('by_userId_idempotencyKey', (q) => q.eq('userId', identity.subject).eq('idempotencyKey', idempotencyKey))
+        .first()
+
+      if (existingRun) {
+        return {
+          source: existingRun.source,
+          cycleKey: existingRun.cycleKey,
+          idempotencyKey: existingRun.idempotencyKey ?? null,
+          auditLogId: existingRun.auditLogId ?? null,
+          monthlyCycleRunId: String(existingRun._id),
+          updatedCards: existingRun.updatedCards,
+          updatedLoans: existingRun.updatedLoans,
+          cyclesApplied: existingRun.cardCyclesApplied + existingRun.loanCyclesApplied,
+          cardCyclesApplied: existingRun.cardCyclesApplied,
+          loanCyclesApplied: existingRun.loanCyclesApplied,
+          interestAccrued: roundCurrency(existingRun.cardInterestAccrued + existingRun.loanInterestAccrued),
+          paymentsApplied: roundCurrency(existingRun.cardPaymentsApplied + existingRun.loanPaymentsApplied),
+          spendAdded: existingRun.cardSpendAdded,
+          cardInterestAccrued: existingRun.cardInterestAccrued,
+          cardPaymentsApplied: existingRun.cardPaymentsApplied,
+          loanInterestAccrued: existingRun.loanInterestAccrued,
+          loanPaymentsApplied: existingRun.loanPaymentsApplied,
+        }
+      }
+    }
+
+    const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now, cycleKey)
+    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now, cycleKey)
 
     const shouldLog = source === 'manual' || cardResult.updatedCards > 0 || loanResult.updatedLoans > 0
     let auditLogId: string | null = null
@@ -1322,6 +2041,8 @@ export const runMonthlyCycle = mutation({
       const id = await ctx.db.insert('cycleAuditLogs', {
         userId: identity.subject,
         source,
+        cycleKey,
+        idempotencyKey,
         ranAt: now.getTime(),
         updatedCards: cardResult.updatedCards,
         updatedLoans: loanResult.updatedLoans,
@@ -1337,11 +2058,80 @@ export const runMonthlyCycle = mutation({
       auditLogId = String(id)
     }
 
+    const summarySnapshot = await computeMonthCloseSnapshotSummary(ctx, identity.subject, now)
+    const existingSnapshot = await ctx.db
+      .query('monthCloseSnapshots')
+      .withIndex('by_userId_cycleKey', (q) => q.eq('userId', identity.subject).eq('cycleKey', cycleKey))
+      .first()
+
+    if (existingSnapshot) {
+      await ctx.db.patch(existingSnapshot._id, {
+        ranAt: now.getTime(),
+        summary: summarySnapshot,
+      })
+    } else {
+      await ctx.db.insert('monthCloseSnapshots', {
+        userId: identity.subject,
+        cycleKey,
+        ranAt: now.getTime(),
+        summary: summarySnapshot,
+        createdAt: Date.now(),
+      })
+    }
+
+    const monthlyCycleRunId = await ctx.db.insert('monthlyCycleRuns', {
+      userId: identity.subject,
+      cycleKey,
+      source,
+      status: 'completed',
+      idempotencyKey,
+      auditLogId: auditLogId ?? undefined,
+      ranAt: now.getTime(),
+      updatedCards: cardResult.updatedCards,
+      updatedLoans: loanResult.updatedLoans,
+      cardCyclesApplied: cardResult.cyclesApplied,
+      loanCyclesApplied: loanResult.cyclesApplied,
+      cardInterestAccrued: cardResult.interestAccrued,
+      cardPaymentsApplied: cardResult.paymentsApplied,
+      cardSpendAdded: cardResult.spendAdded,
+      loanInterestAccrued: loanResult.interestAccrued,
+      loanPaymentsApplied: loanResult.paymentsApplied,
+      createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'monthly_cycle',
+      entityId: cycleKey,
+      action: 'run_completed',
+      metadata: {
+        source,
+        idempotencyKey,
+        updatedCards: cardResult.updatedCards,
+        updatedLoans: loanResult.updatedLoans,
+        cardCyclesApplied: cardResult.cyclesApplied,
+        loanCyclesApplied: loanResult.cyclesApplied,
+      },
+    })
+
     return {
       source,
+      cycleKey,
+      idempotencyKey: idempotencyKey ?? null,
       auditLogId,
-      ...cardResult,
-      ...loanResult,
+      monthlyCycleRunId: String(monthlyCycleRunId),
+      updatedCards: cardResult.updatedCards,
+      updatedLoans: loanResult.updatedLoans,
+      cyclesApplied: cardResult.cyclesApplied + loanResult.cyclesApplied,
+      cardCyclesApplied: cardResult.cyclesApplied,
+      loanCyclesApplied: loanResult.cyclesApplied,
+      interestAccrued: roundCurrency(cardResult.interestAccrued + loanResult.interestAccrued),
+      paymentsApplied: roundCurrency(cardResult.paymentsApplied + loanResult.paymentsApplied),
+      spendAdded: cardResult.spendAdded,
+      cardInterestAccrued: cardResult.interestAccrued,
+      cardPaymentsApplied: cardResult.paymentsApplied,
+      loanInterestAccrued: loanResult.interestAccrued,
+      loanPaymentsApplied: loanResult.paymentsApplied,
     }
   },
 })
@@ -1367,7 +2157,7 @@ export const addCard = mutation({
       validateNonNegative(args.interestRate, 'Card APR')
     }
 
-    await ctx.db.insert('cards', {
+    const createdCardId = await ctx.db.insert('cards', {
       userId: identity.subject,
       name: args.name.trim(),
       creditLimit: args.creditLimit,
@@ -1377,6 +2167,21 @@ export const addCard = mutation({
       interestRate: args.interestRate,
       lastCycleAt: Date.now(),
       createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'card',
+      entityId: String(createdCardId),
+      action: 'created',
+      after: {
+        name: args.name.trim(),
+        creditLimit: args.creditLimit,
+        usedLimit: args.usedLimit,
+        minimumPayment: args.minimumPayment,
+        spendPerMonth: args.spendPerMonth,
+        interestRate: args.interestRate ?? 0,
+      },
     })
   },
 })
@@ -1414,6 +2219,29 @@ export const updateCard = mutation({
       spendPerMonth: args.spendPerMonth,
       interestRate: args.interestRate,
     })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'card',
+      entityId: String(args.id),
+      action: 'updated',
+      before: {
+        name: existing.name,
+        creditLimit: existing.creditLimit,
+        usedLimit: existing.usedLimit,
+        minimumPayment: existing.minimumPayment,
+        spendPerMonth: existing.spendPerMonth,
+        interestRate: existing.interestRate ?? 0,
+      },
+      after: {
+        name: args.name.trim(),
+        creditLimit: args.creditLimit,
+        usedLimit: args.usedLimit,
+        minimumPayment: args.minimumPayment,
+        spendPerMonth: args.spendPerMonth,
+        interestRate: args.interestRate ?? 0,
+      },
+    })
   },
 })
 
@@ -1427,6 +2255,18 @@ export const removeCard = mutation({
     ensureOwned(existing, identity.subject, 'Card record not found.')
 
     await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'card',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        name: existing.name,
+        creditLimit: existing.creditLimit,
+        usedLimit: existing.usedLimit,
+      },
+    })
   },
 })
 
@@ -1436,24 +2276,73 @@ export const addPurchase = mutation({
     amount: v.number(),
     category: v.string(),
     purchaseDate: v.string(),
+    reconciliationStatus: v.optional(reconciliationStatusValidator),
+    statementMonth: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
 
     validateRequiredText(args.item, 'Purchase item')
-    validateRequiredText(args.category, 'Purchase category')
     validatePositive(args.amount, 'Purchase amount')
     validateIsoDate(args.purchaseDate, 'Purchase date')
+    if (args.statementMonth) {
+      validateStatementMonth(args.statementMonth, 'Statement month')
+    }
 
-    await ctx.db.insert('purchases', {
+    const ruleOverride = await resolvePurchaseRuleOverrides(ctx, identity.subject, args.item)
+    const resolvedCategory = isGenericCategory(args.category) && ruleOverride?.category ? ruleOverride.category : args.category.trim()
+    const requestedStatus = args.reconciliationStatus ?? ruleOverride?.reconciliationStatus
+    validateRequiredText(resolvedCategory, 'Purchase category')
+
+    const now = Date.now()
+    const reconciliation = resolvePurchaseReconciliation({
+      purchaseDate: args.purchaseDate,
+      requestedStatus,
+      requestedStatementMonth: args.statementMonth,
+      now,
+    })
+
+    const purchaseId = await ctx.db.insert('purchases', {
       userId: identity.subject,
       item: args.item.trim(),
       amount: args.amount,
-      category: args.category.trim(),
+      category: resolvedCategory,
       purchaseDate: args.purchaseDate,
+      reconciliationStatus: reconciliation.reconciliationStatus,
+      statementMonth: reconciliation.statementMonth,
+      postedAt: reconciliation.postedAt,
+      reconciledAt: reconciliation.reconciledAt,
       notes: args.notes?.trim() || undefined,
-      createdAt: Date.now(),
+      createdAt: now,
+    })
+
+    if (isPurchasePosted(reconciliation.reconciliationStatus)) {
+      await recordPurchaseLedger(ctx, {
+        userId: identity.subject,
+        entryType: 'purchase',
+        item: args.item.trim(),
+        amount: args.amount,
+        category: resolvedCategory,
+        purchaseDate: args.purchaseDate,
+        purchaseId: String(purchaseId),
+      })
+    }
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase',
+      entityId: String(purchaseId),
+      action: 'created',
+      after: {
+        item: args.item.trim(),
+        amount: args.amount,
+        category: resolvedCategory,
+        purchaseDate: args.purchaseDate,
+        reconciliationStatus: reconciliation.reconciliationStatus,
+        statementMonth: reconciliation.statementMonth,
+        ruleId: ruleOverride?.ruleId,
+      },
     })
   },
 })
@@ -1465,25 +2354,95 @@ export const updatePurchase = mutation({
     amount: v.number(),
     category: v.string(),
     purchaseDate: v.string(),
+    reconciliationStatus: v.optional(reconciliationStatusValidator),
+    statementMonth: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
 
     validateRequiredText(args.item, 'Purchase item')
-    validateRequiredText(args.category, 'Purchase category')
     validatePositive(args.amount, 'Purchase amount')
     validateIsoDate(args.purchaseDate, 'Purchase date')
+    if (args.statementMonth) {
+      validateStatementMonth(args.statementMonth, 'Statement month')
+    }
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Purchase record not found.')
 
+    const ruleOverride = await resolvePurchaseRuleOverrides(ctx, identity.subject, args.item)
+    const resolvedCategory = isGenericCategory(args.category) && ruleOverride?.category ? ruleOverride.category : args.category.trim()
+    const requestedStatus = args.reconciliationStatus ?? ruleOverride?.reconciliationStatus
+    validateRequiredText(resolvedCategory, 'Purchase category')
+
+    const now = Date.now()
+    const reconciliation = resolvePurchaseReconciliation({
+      purchaseDate: args.purchaseDate,
+      requestedStatus,
+      requestedStatementMonth: args.statementMonth,
+      existing,
+      now,
+    })
+
+    if (isPurchasePosted(existing.reconciliationStatus)) {
+      await recordPurchaseLedger(ctx, {
+        userId: identity.subject,
+        entryType: 'purchase_reversal',
+        item: existing.item,
+        amount: existing.amount,
+        category: existing.category,
+        purchaseDate: existing.purchaseDate,
+        purchaseId: String(existing._id),
+      })
+    }
+
     await ctx.db.patch(args.id, {
       item: args.item.trim(),
       amount: args.amount,
-      category: args.category.trim(),
+      category: resolvedCategory,
       purchaseDate: args.purchaseDate,
+      reconciliationStatus: reconciliation.reconciliationStatus,
+      statementMonth: reconciliation.statementMonth,
+      postedAt: reconciliation.postedAt,
+      reconciledAt: reconciliation.reconciledAt,
       notes: args.notes?.trim() || undefined,
+    })
+
+    if (isPurchasePosted(reconciliation.reconciliationStatus)) {
+      await recordPurchaseLedger(ctx, {
+        userId: identity.subject,
+        entryType: 'purchase',
+        item: args.item.trim(),
+        amount: args.amount,
+        category: resolvedCategory,
+        purchaseDate: args.purchaseDate,
+        purchaseId: String(args.id),
+      })
+    }
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase',
+      entityId: String(args.id),
+      action: 'updated',
+      before: {
+        item: existing.item,
+        amount: existing.amount,
+        category: existing.category,
+        purchaseDate: existing.purchaseDate,
+        reconciliationStatus: existing.reconciliationStatus ?? 'posted',
+        statementMonth: existing.statementMonth ?? existing.purchaseDate.slice(0, 7),
+      },
+      after: {
+        item: args.item.trim(),
+        amount: args.amount,
+        category: resolvedCategory,
+        purchaseDate: args.purchaseDate,
+        reconciliationStatus: reconciliation.reconciliationStatus,
+        statementMonth: reconciliation.statementMonth,
+        ruleId: ruleOverride?.ruleId,
+      },
     })
   },
 })
@@ -1497,7 +2456,107 @@ export const removePurchase = mutation({
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Purchase record not found.')
 
+    if (isPurchasePosted(existing.reconciliationStatus)) {
+      await recordPurchaseLedger(ctx, {
+        userId: identity.subject,
+        entryType: 'purchase_reversal',
+        item: existing.item,
+        amount: existing.amount,
+        category: existing.category,
+        purchaseDate: existing.purchaseDate,
+        purchaseId: String(existing._id),
+      })
+    }
+
     await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        item: existing.item,
+        amount: existing.amount,
+        category: existing.category,
+        purchaseDate: existing.purchaseDate,
+        reconciliationStatus: existing.reconciliationStatus ?? 'posted',
+        statementMonth: existing.statementMonth ?? existing.purchaseDate.slice(0, 7),
+      },
+    })
+  },
+})
+
+export const setPurchaseReconciliation = mutation({
+  args: {
+    id: v.id('purchases'),
+    reconciliationStatus: reconciliationStatusValidator,
+    statementMonth: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Purchase record not found.')
+
+    if (args.statementMonth) {
+      validateStatementMonth(args.statementMonth, 'Statement month')
+    }
+
+    const now = Date.now()
+    const next = resolvePurchaseReconciliation({
+      purchaseDate: existing.purchaseDate,
+      requestedStatus: args.reconciliationStatus,
+      requestedStatementMonth: args.statementMonth,
+      existing,
+      now,
+    })
+
+    const wasPosted = isPurchasePosted(existing.reconciliationStatus)
+    const willBePosted = isPurchasePosted(next.reconciliationStatus)
+
+    if (wasPosted && !willBePosted) {
+      await recordPurchaseLedger(ctx, {
+        userId: identity.subject,
+        entryType: 'purchase_reversal',
+        item: existing.item,
+        amount: existing.amount,
+        category: existing.category,
+        purchaseDate: existing.purchaseDate,
+        purchaseId: String(existing._id),
+      })
+    } else if (!wasPosted && willBePosted) {
+      await recordPurchaseLedger(ctx, {
+        userId: identity.subject,
+        entryType: 'purchase',
+        item: existing.item,
+        amount: existing.amount,
+        category: existing.category,
+        purchaseDate: existing.purchaseDate,
+        purchaseId: String(existing._id),
+      })
+    }
+
+    await ctx.db.patch(args.id, {
+      reconciliationStatus: next.reconciliationStatus,
+      statementMonth: next.statementMonth,
+      postedAt: next.postedAt,
+      reconciledAt: next.reconciledAt,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase',
+      entityId: String(existing._id),
+      action: 'reconciliation_updated',
+      before: {
+        reconciliationStatus: existing.reconciliationStatus ?? 'posted',
+        statementMonth: existing.statementMonth ?? existing.purchaseDate.slice(0, 7),
+      },
+      after: {
+        reconciliationStatus: next.reconciliationStatus,
+        statementMonth: next.statementMonth,
+      },
+    })
   },
 })
 
@@ -1514,13 +2573,26 @@ export const addAccount = mutation({
     validateRequiredText(args.name, 'Account name')
     validateFinite(args.balance, 'Account balance')
 
-    await ctx.db.insert('accounts', {
+    const createdAccountId = await ctx.db.insert('accounts', {
       userId: identity.subject,
       name: args.name.trim(),
       type: args.type,
       balance: args.balance,
       liquid: args.liquid,
       createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'account',
+      entityId: String(createdAccountId),
+      action: 'created',
+      after: {
+        name: args.name.trim(),
+        type: args.type,
+        balance: args.balance,
+        liquid: args.liquid,
+      },
     })
   },
 })
@@ -1548,6 +2620,25 @@ export const updateAccount = mutation({
       balance: args.balance,
       liquid: args.liquid,
     })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'account',
+      entityId: String(args.id),
+      action: 'updated',
+      before: {
+        name: existing.name,
+        type: existing.type,
+        balance: existing.balance,
+        liquid: existing.liquid,
+      },
+      after: {
+        name: args.name.trim(),
+        type: args.type,
+        balance: args.balance,
+        liquid: args.liquid,
+      },
+    })
   },
 })
 
@@ -1561,6 +2652,19 @@ export const removeAccount = mutation({
     ensureOwned(existing, identity.subject, 'Account record not found.')
 
     await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'account',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        name: existing.name,
+        type: existing.type,
+        balance: existing.balance,
+        liquid: existing.liquid,
+      },
+    })
   },
 })
 
@@ -1580,7 +2684,7 @@ export const addGoal = mutation({
     validateNonNegative(args.currentAmount, 'Current amount')
     validateIsoDate(args.targetDate, 'Target date')
 
-    await ctx.db.insert('goals', {
+    const createdGoalId = await ctx.db.insert('goals', {
       userId: identity.subject,
       title: args.title.trim(),
       targetAmount: args.targetAmount,
@@ -1588,6 +2692,20 @@ export const addGoal = mutation({
       targetDate: args.targetDate,
       priority: args.priority,
       createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'goal',
+      entityId: String(createdGoalId),
+      action: 'created',
+      after: {
+        title: args.title.trim(),
+        targetAmount: args.targetAmount,
+        currentAmount: args.currentAmount,
+        targetDate: args.targetDate,
+        priority: args.priority,
+      },
     })
   },
 })
@@ -1619,6 +2737,27 @@ export const updateGoal = mutation({
       targetDate: args.targetDate,
       priority: args.priority,
     })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'goal',
+      entityId: String(args.id),
+      action: 'updated',
+      before: {
+        title: existing.title,
+        targetAmount: existing.targetAmount,
+        currentAmount: existing.currentAmount,
+        targetDate: existing.targetDate,
+        priority: existing.priority,
+      },
+      after: {
+        title: args.title.trim(),
+        targetAmount: args.targetAmount,
+        currentAmount: args.currentAmount,
+        targetDate: args.targetDate,
+        priority: args.priority,
+      },
+    })
   },
 })
 
@@ -1634,8 +2773,23 @@ export const updateGoalProgress = mutation({
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Goal record not found.')
 
+    const beforeValue = existing.currentAmount
+
     await ctx.db.patch(args.id, {
       currentAmount: args.currentAmount,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'goal',
+      entityId: String(args.id),
+      action: 'progress_updated',
+      before: {
+        currentAmount: beforeValue,
+      },
+      after: {
+        currentAmount: args.currentAmount,
+      },
     })
   },
 })
@@ -1650,6 +2804,20 @@ export const removeGoal = mutation({
     ensureOwned(existing, identity.subject, 'Goal record not found.')
 
     await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'goal',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        title: existing.title,
+        targetAmount: existing.targetAmount,
+        currentAmount: existing.currentAmount,
+        targetDate: existing.targetDate,
+        priority: existing.priority,
+      },
+    })
   },
 })
 

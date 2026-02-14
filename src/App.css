@@ -187,7 +187,7 @@ h2 {
 
 .section-tabs {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(8.8rem, 1fr));
   gap: 0.55rem;
 }
 
@@ -339,6 +339,22 @@ h2 {
 }
 
 .panel-cycle-log {
+  grid-column: span 7;
+}
+
+.panel-cycle-runs {
+  grid-column: span 5;
+}
+
+.panel-month-close {
+  grid-column: span 6;
+}
+
+.panel-ledger {
+  grid-column: span 6;
+}
+
+.panel-audit-events {
   grid-column: span 7;
 }
 
@@ -704,7 +720,7 @@ tbody td {
 .filter-row {
   margin-top: 0.78rem;
   display: grid;
-  grid-template-columns: 1.4fr 1fr auto;
+  grid-template-columns: 1.4fr 1fr auto auto;
   gap: 0.5rem;
 }
 
@@ -767,6 +783,10 @@ tbody td {
   .panel-categories,
   .panel-goal-preview,
   .panel-cycle-log,
+  .panel-cycle-runs,
+  .panel-month-close,
+  .panel-ledger,
+  .panel-audit-events,
   .panel-snapshot,
   .panel-form,
   .panel-list {

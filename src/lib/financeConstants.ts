@@ -14,6 +14,8 @@ export const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'cards', label: 'Cards' },
   { key: 'loans', label: 'Loans' },
   { key: 'purchases', label: 'Purchases' },
+  { key: 'reconcile', label: 'Reconcile' },
+  { key: 'planning', label: 'Planning' },
   { key: 'accounts', label: 'Accounts' },
   { key: 'goals', label: 'Goals' },
 ]
@@ -78,6 +80,9 @@ export const emptySummary: Summary = {
   runwayMonths: 0,
   healthScore: 0,
   goalsFundedPercent: 0,
+  pendingPurchases: 0,
+  postedPurchases: 0,
+  reconciledPurchases: 0,
 }
 
 export const fallbackCurrencyOptions = [

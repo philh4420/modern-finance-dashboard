@@ -7,6 +7,7 @@ import type {
   PurchaseFilter,
   PurchaseForm,
   PurchaseId,
+  ReconciliationStatus,
 } from '../components/financeTypes'
 import { parseFloatInput, toIsoToday } from '../lib/financeHelpers'
 import type { MutationHandlers } from './useMutationFeedback'
@@ -20,6 +21,8 @@ const initialPurchaseForm: PurchaseForm = {
   amount: '',
   category: '',
   purchaseDate: toIsoToday(),
+  reconciliationStatus: 'posted',
+  statementMonth: new Date().toISOString().slice(0, 7),
   notes: '',
 }
 
@@ -28,6 +31,8 @@ const initialPurchaseEditDraft: PurchaseEditDraft = {
   amount: '',
   category: '',
   purchaseDate: toIsoToday(),
+  reconciliationStatus: 'posted',
+  statementMonth: new Date().toISOString().slice(0, 7),
   notes: '',
 }
 
@@ -35,12 +40,14 @@ const initialPurchaseFilter: PurchaseFilter = {
   query: '',
   category: 'all',
   month: new Date().toISOString().slice(0, 7),
+  reconciliationStatus: 'all',
 }
 
 export const usePurchasesSection = ({ purchases, clearError, handleMutationError }: UsePurchasesSectionArgs) => {
   const addPurchase = useMutation(api.finance.addPurchase)
   const updatePurchase = useMutation(api.finance.updatePurchase)
   const removePurchase = useMutation(api.finance.removePurchase)
+  const setPurchaseReconciliation = useMutation(api.finance.setPurchaseReconciliation)
 
   const [purchaseForm, setPurchaseForm] = useState<PurchaseForm>(initialPurchaseForm)
   const [purchaseEditId, setPurchaseEditId] = useState<PurchaseId | null>(null)
@@ -63,8 +70,11 @@ export const usePurchasesSection = ({ purchases, clearError, handleMutationError
 
       const matchesCategory = purchaseFilter.category === 'all' || entry.category === purchaseFilter.category
       const matchesMonth = purchaseFilter.month.length === 0 || entry.purchaseDate.startsWith(purchaseFilter.month)
+      const entryStatus = entry.reconciliationStatus ?? 'posted'
+      const matchesReconciliation =
+        purchaseFilter.reconciliationStatus === 'all' || entryStatus === purchaseFilter.reconciliationStatus
 
-      return matchesQuery && matchesCategory && matchesMonth
+      return matchesQuery && matchesCategory && matchesMonth && matchesReconciliation
     })
   }, [purchases, purchaseFilter])
 
@@ -81,6 +91,8 @@ export const usePurchasesSection = ({ purchases, clearError, handleMutationError
         amount: parseFloatInput(purchaseForm.amount, 'Purchase amount'),
         category: purchaseForm.category,
         purchaseDate: purchaseForm.purchaseDate,
+        reconciliationStatus: purchaseForm.reconciliationStatus,
+        statementMonth: purchaseForm.statementMonth,
         notes: purchaseForm.notes || undefined,
       })
 
@@ -109,6 +121,8 @@ export const usePurchasesSection = ({ purchases, clearError, handleMutationError
       amount: String(entry.amount),
       category: entry.category,
       purchaseDate: entry.purchaseDate,
+      reconciliationStatus: entry.reconciliationStatus ?? 'posted',
+      statementMonth: entry.statementMonth ?? entry.purchaseDate.slice(0, 7),
       notes: entry.notes ?? '',
     })
   }
@@ -124,9 +138,29 @@ export const usePurchasesSection = ({ purchases, clearError, handleMutationError
         amount: parseFloatInput(purchaseEditDraft.amount, 'Purchase amount'),
         category: purchaseEditDraft.category,
         purchaseDate: purchaseEditDraft.purchaseDate,
+        reconciliationStatus: purchaseEditDraft.reconciliationStatus,
+        statementMonth: purchaseEditDraft.statementMonth,
         notes: purchaseEditDraft.notes || undefined,
       })
       setPurchaseEditId(null)
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onSetPurchaseReconciliation = async (id: PurchaseId, reconciliationStatus: ReconciliationStatus) => {
+    clearError()
+    try {
+      const entry = purchases.find((purchase) => purchase._id === id)
+      if (!entry) {
+        return
+      }
+
+      await setPurchaseReconciliation({
+        id,
+        reconciliationStatus,
+        statementMonth: entry.statementMonth ?? entry.purchaseDate.slice(0, 7),
+      })
     } catch (error) {
       handleMutationError(error)
     }
@@ -149,6 +183,7 @@ export const usePurchasesSection = ({ purchases, clearError, handleMutationError
     onDeletePurchase,
     startPurchaseEdit,
     savePurchaseEdit,
+    onSetPurchaseReconciliation,
     purchases,
   }
 }

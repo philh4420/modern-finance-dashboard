@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   SignedIn,
   SignedOut,
@@ -12,12 +12,14 @@ import { AccountsTab } from './components/AccountsTab'
 import { BillsTab } from './components/BillsTab'
 import { CardsTab } from './components/CardsTab'
 import { DashboardTab } from './components/DashboardTab'
+import { PlanningTab } from './components/PlanningTab'
 import type { DashboardCard, TabKey } from './components/financeTypes'
 import { GoalsTab } from './components/GoalsTab'
 import { IncomeTab } from './components/IncomeTab'
 import { LoansTab } from './components/LoansTab'
 import { PwaUpdateToast } from './components/PwaUpdateToast'
 import { PurchasesTab } from './components/PurchasesTab'
+import { ReconcileTab } from './components/ReconcileTab'
 import { useAccountsSection } from './hooks/useAccountsSection'
 import { useBillsSection } from './hooks/useBillsSection'
 import { useCardsSection } from './hooks/useCardsSection'
@@ -26,7 +28,9 @@ import { useGoalsSection } from './hooks/useGoalsSection'
 import { useIncomeSection } from './hooks/useIncomeSection'
 import { useLoansSection } from './hooks/useLoansSection'
 import { useMutationFeedback } from './hooks/useMutationFeedback'
+import { usePlanningSection } from './hooks/usePlanningSection'
 import { usePurchasesSection } from './hooks/usePurchasesSection'
+import { useReconciliationSection } from './hooks/useReconciliationSection'
 import {
   accountTypeOptions,
   cadenceOptions,
@@ -48,6 +52,8 @@ import './App.css'
 
 function App() {
   const financeState = useQuery(api.finance.getFinanceData)
+  const phase2MonthKey = useMemo(() => new Date().toISOString().slice(0, 7), [])
+  const phase2State = useQuery(api.phase2.getPhase2Data, { month: phase2MonthKey })
   const cleanupLegacySeedData = useMutation(api.finance.cleanupLegacySeedData)
   const runMonthlyCycle = useMutation(api.finance.runMonthlyCycle)
 
@@ -85,6 +91,10 @@ function App() {
   const accounts = financeState?.data.accounts ?? []
   const goals = financeState?.data.goals ?? []
   const cycleAuditLogs = financeState?.data.cycleAuditLogs ?? []
+  const monthlyCycleRuns = financeState?.data.monthlyCycleRuns ?? []
+  const monthCloseSnapshots = financeState?.data.monthCloseSnapshots ?? []
+  const financeAuditEvents = financeState?.data.financeAuditEvents ?? []
+  const ledgerEntries = financeState?.data.ledgerEntries ?? []
 
   const topCategories = financeState?.data.topCategories ?? []
   const upcomingCashEvents = financeState?.data.upcomingCashEvents ?? []
@@ -145,7 +155,40 @@ function App() {
     handleMutationError,
   })
 
-  const connectionNote = financeState === undefined ? 'Connecting to Convex...' : 'Convex synced'
+  const connectionNote = financeState === undefined || phase2State === undefined ? 'Connecting to Convex...' : 'Convex synced'
+
+  const phase2Data =
+    phase2State ?? {
+      monthKey: phase2MonthKey,
+      transactionRules: [],
+      envelopeBudgets: [],
+      budgetPerformance: [],
+      recurringCandidates: [],
+      billRiskAlerts: [],
+      forecastWindows: [],
+      monthCloseChecklist: [],
+      dataQuality: {
+        duplicateCount: 0,
+        anomalyCount: 0,
+        missingCategoryCount: 0,
+        pendingReconciliationCount: 0,
+        splitMismatchCount: 0,
+      },
+    }
+
+  const reconciliationSection = useReconciliationSection({
+    purchases,
+    clearError,
+    handleMutationError,
+  })
+
+  const planningSection = usePlanningSection({
+    monthKey: phase2Data.monthKey,
+    transactionRules: phase2Data.transactionRules,
+    envelopeBudgets: phase2Data.envelopeBudgets,
+    clearError,
+    handleMutationError,
+  })
 
   const lastUpdated = new Intl.DateTimeFormat(preference.locale || 'en-US', {
     weekday: 'short',
@@ -229,6 +272,11 @@ function App() {
         purchases,
         accounts,
         goals,
+        cycleAuditLogs,
+        monthlyCycleRuns,
+        monthCloseSnapshots,
+        financeAuditEvents,
+        ledgerEntries,
       },
       insights,
       topCategories,
@@ -401,6 +449,10 @@ function App() {
             topCategories={topCategories}
             goalsWithMetrics={goalsSection.goalsWithMetrics}
             cycleAuditLogs={cycleAuditLogs}
+            monthlyCycleRuns={monthlyCycleRuns}
+            monthCloseSnapshots={monthCloseSnapshots}
+            financeAuditEvents={financeAuditEvents}
+            ledgerEntries={ledgerEntries}
             counts={{
               incomes: incomes.length,
               bills: bills.length,
@@ -517,8 +569,64 @@ function App() {
             onDeletePurchase={purchasesSection.onDeletePurchase}
             savePurchaseEdit={purchasesSection.savePurchaseEdit}
             startPurchaseEdit={purchasesSection.startPurchaseEdit}
+            onSetPurchaseReconciliation={purchasesSection.onSetPurchaseReconciliation}
             formatMoney={formatSection.formatMoney}
             dateLabel={dateLabel}
+          />
+        ) : null}
+
+        {activeTab === 'reconcile' ? (
+          <ReconcileTab
+            filter={reconciliationSection.filter}
+            setFilter={reconciliationSection.setFilter}
+            categories={reconciliationSection.categories}
+            filteredPurchases={reconciliationSection.filteredPurchases}
+            selectedSet={reconciliationSection.selectedSet}
+            selectedCount={reconciliationSection.selectedCount}
+            selectedTotal={reconciliationSection.selectedTotal}
+            toggleSelected={reconciliationSection.toggleSelected}
+            toggleSelectVisible={reconciliationSection.toggleSelectVisible}
+            clearSelection={reconciliationSection.clearSelection}
+            bulkCategory={reconciliationSection.bulkCategory}
+            setBulkCategory={reconciliationSection.setBulkCategory}
+            runBulkStatus={reconciliationSection.runBulkStatus}
+            runBulkCategory={reconciliationSection.runBulkCategory}
+            runBulkDelete={reconciliationSection.runBulkDelete}
+            queue={reconciliationSection.queue}
+            formatMoney={formatSection.formatMoney}
+            dateLabel={dateLabel}
+          />
+        ) : null}
+
+        {activeTab === 'planning' ? (
+          <PlanningTab
+            monthKey={phase2Data.monthKey}
+            summary={summary}
+            ruleForm={planningSection.ruleForm}
+            setRuleForm={planningSection.setRuleForm}
+            ruleEditId={planningSection.ruleEditId}
+            setRuleEditId={planningSection.setRuleEditId}
+            sortedRules={planningSection.sortedRules}
+            submitRule={planningSection.submitRule}
+            startRuleEdit={planningSection.startRuleEdit}
+            removeRule={planningSection.removeRule}
+            budgetForm={planningSection.budgetForm}
+            setBudgetForm={planningSection.setBudgetForm}
+            budgetEditId={planningSection.budgetEditId}
+            setBudgetEditId={planningSection.setBudgetEditId}
+            sortedBudgets={planningSection.sortedBudgets}
+            submitBudget={planningSection.submitBudget}
+            startBudgetEdit={planningSection.startBudgetEdit}
+            removeBudget={planningSection.removeBudget}
+            whatIfInput={planningSection.whatIfInput}
+            setWhatIfInput={planningSection.setWhatIfInput}
+            budgetPerformance={phase2Data.budgetPerformance}
+            recurringCandidates={phase2Data.recurringCandidates}
+            billRiskAlerts={phase2Data.billRiskAlerts}
+            forecastWindows={phase2Data.forecastWindows}
+            monthCloseChecklist={phase2Data.monthCloseChecklist}
+            dataQuality={phase2Data.dataQuality}
+            formatMoney={formatSection.formatMoney}
           />
         ) : null}
 

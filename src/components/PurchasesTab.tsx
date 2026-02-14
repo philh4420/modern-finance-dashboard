@@ -10,6 +10,7 @@ type PurchaseFilter = {
   query: string
   category: string
   month: string
+  reconciliationStatus: 'all' | 'pending' | 'posted' | 'reconciled'
 }
 
 type PurchasesTabProps = {
@@ -29,6 +30,7 @@ type PurchasesTabProps = {
   onDeletePurchase: (id: PurchaseId) => Promise<void>
   savePurchaseEdit: () => Promise<void>
   startPurchaseEdit: (entry: PurchaseEntry) => void
+  onSetPurchaseReconciliation: (id: PurchaseId, status: 'pending' | 'posted' | 'reconciled') => Promise<void>
   formatMoney: (value: number) => string
   dateLabel: Intl.DateTimeFormat
 }
@@ -50,6 +52,7 @@ export function PurchasesTab({
   onDeletePurchase,
   savePurchaseEdit,
   startPurchaseEdit,
+  onSetPurchaseReconciliation,
   formatMoney,
   dateLabel,
 }: PurchasesTabProps) {
@@ -108,6 +111,31 @@ export function PurchasesTab({
             onChange={(event) => setPurchaseForm((prev) => ({ ...prev, notes: event.target.value }))}
           />
 
+          <label htmlFor="purchase-statement-month">Statement Month</label>
+          <input
+            id="purchase-statement-month"
+            type="month"
+            value={purchaseForm.statementMonth}
+            onChange={(event) => setPurchaseForm((prev) => ({ ...prev, statementMonth: event.target.value }))}
+            required
+          />
+
+          <label htmlFor="purchase-reconciliation-status">Reconciliation</label>
+          <select
+            id="purchase-reconciliation-status"
+            value={purchaseForm.reconciliationStatus}
+            onChange={(event) =>
+              setPurchaseForm((prev) => ({
+                ...prev,
+                reconciliationStatus: event.target.value as 'pending' | 'posted' | 'reconciled',
+              }))
+            }
+          >
+            <option value="pending">Pending</option>
+            <option value="posted">Posted</option>
+            <option value="reconciled">Reconciled</option>
+          </select>
+
           <button type="submit" className="btn btn-primary">
             Save Purchase
           </button>
@@ -161,6 +189,20 @@ export function PurchasesTab({
               }))
             }
           />
+          <select
+            value={purchaseFilter.reconciliationStatus}
+            onChange={(event) =>
+              setPurchaseFilter((prev) => ({
+                ...prev,
+                reconciliationStatus: event.target.value as 'all' | 'pending' | 'posted' | 'reconciled',
+              }))
+            }
+          >
+            <option value="all">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="posted">Posted</option>
+            <option value="reconciled">Reconciled</option>
+          </select>
         </div>
 
         <p className="subnote">
@@ -178,6 +220,8 @@ export function PurchasesTab({
                   <th scope="col">Item</th>
                   <th scope="col">Category</th>
                   <th scope="col">Date</th>
+                  <th scope="col">Statement</th>
+                  <th scope="col">Status</th>
                   <th scope="col">Amount</th>
                   <th scope="col">Notes</th>
                   <th scope="col">Action</th>
@@ -238,6 +282,43 @@ export function PurchasesTab({
                           dateLabel.format(new Date(`${entry.purchaseDate}T00:00:00`))
                         )}
                       </td>
+                      <td>
+                        {isEditing ? (
+                          <input
+                            className="inline-input"
+                            type="month"
+                            value={purchaseEditDraft.statementMonth}
+                            onChange={(event) =>
+                              setPurchaseEditDraft((prev) => ({
+                                ...prev,
+                                statementMonth: event.target.value,
+                              }))
+                            }
+                          />
+                        ) : (
+                          entry.statementMonth ?? entry.purchaseDate.slice(0, 7)
+                        )}
+                      </td>
+                      <td>
+                        {isEditing ? (
+                          <select
+                            className="inline-select"
+                            value={purchaseEditDraft.reconciliationStatus}
+                            onChange={(event) =>
+                              setPurchaseEditDraft((prev) => ({
+                                ...prev,
+                                reconciliationStatus: event.target.value as 'pending' | 'posted' | 'reconciled',
+                              }))
+                            }
+                          >
+                            <option value="pending">Pending</option>
+                            <option value="posted">Posted</option>
+                            <option value="reconciled">Reconciled</option>
+                          </select>
+                        ) : (
+                          entry.reconciliationStatus ?? 'posted'
+                        )}
+                      </td>
                       <td className="table-amount amount-negative">
                         {isEditing ? (
                           <input
@@ -289,6 +370,24 @@ export function PurchasesTab({
                               Edit
                             </button>
                           )}
+                          {!isEditing && (entry.reconciliationStatus ?? 'posted') !== 'reconciled' ? (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => void onSetPurchaseReconciliation(entry._id, 'reconciled')}
+                            >
+                              Reconcile
+                            </button>
+                          ) : null}
+                          {!isEditing && (entry.reconciliationStatus ?? 'posted') !== 'posted' ? (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => void onSetPurchaseReconciliation(entry._id, 'posted')}
+                            >
+                              Mark Posted
+                            </button>
+                          ) : null}
                           <button type="button" className="btn btn-ghost" onClick={() => void onDeletePurchase(entry._id)}>
                             Remove
                           </button>

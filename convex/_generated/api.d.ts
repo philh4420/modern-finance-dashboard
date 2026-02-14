@@ -9,6 +9,8 @@
  */
 
 import type * as finance from "../finance.js";
+import type * as financeMath from "../financeMath.js";
+import type * as phase2 from "../phase2.js";
 
 import type {
   ApiFromModules,
@@ -18,6 +20,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   finance: typeof finance;
+  financeMath: typeof financeMath;
+  phase2: typeof phase2;
 }>;
 
 /**

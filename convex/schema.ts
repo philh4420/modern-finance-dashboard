@@ -111,6 +111,27 @@ const accountType = v.union(
 
 const goalPriority = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
 const cycleRunSource = v.union(v.literal('manual'), v.literal('automatic'))
+const cycleRunStatus = v.union(v.literal('completed'))
+const reconciliationStatus = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
+const ruleMatchType = v.union(v.literal('contains'), v.literal('exact'), v.literal('starts_with'))
+const ledgerLineType = v.union(v.literal('debit'), v.literal('credit'))
+const ledgerEntryType = v.union(
+  v.literal('purchase'),
+  v.literal('purchase_reversal'),
+  v.literal('cycle_card_spend'),
+  v.literal('cycle_card_interest'),
+  v.literal('cycle_card_payment'),
+  v.literal('cycle_loan_interest'),
+  v.literal('cycle_loan_payment'),
+)
+
+const cycleSummarySnapshot = v.object({
+  monthlyIncome: v.number(),
+  monthlyCommitments: v.number(),
+  totalLiabilities: v.number(),
+  netWorth: v.number(),
+  runwayMonths: v.number(),
+})
 
 export default defineSchema({
   dashboardStates: defineTable({
@@ -195,11 +216,83 @@ export default defineSchema({
     amount: v.number(),
     category: v.string(),
     purchaseDate: v.string(),
+    reconciliationStatus: v.optional(reconciliationStatus),
+    statementMonth: v.optional(v.string()),
+    postedAt: v.optional(v.number()),
+    reconciledAt: v.optional(v.number()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  financeAuditEvents: defineTable({
+    userId: v.string(),
+    entityType: v.string(),
+    entityId: v.string(),
+    action: v.string(),
+    beforeJson: v.optional(v.string()),
+    afterJson: v.optional(v.string()),
+    metadataJson: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
+  ledgerEntries: defineTable({
+    userId: v.string(),
+    entryType: ledgerEntryType,
+    description: v.string(),
+    occurredAt: v.number(),
+    referenceType: v.optional(v.string()),
+    referenceId: v.optional(v.string()),
+    cycleKey: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_cycleKey', ['userId', 'cycleKey']),
+  ledgerLines: defineTable({
+    userId: v.string(),
+    entryId: v.id('ledgerEntries'),
+    lineType: ledgerLineType,
+    accountCode: v.string(),
+    amount: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_entryId', ['entryId']),
+  monthlyCycleRuns: defineTable({
+    userId: v.string(),
+    cycleKey: v.string(),
+    source: cycleRunSource,
+    status: cycleRunStatus,
+    idempotencyKey: v.optional(v.string()),
+    auditLogId: v.optional(v.string()),
+    ranAt: v.number(),
+    updatedCards: v.number(),
+    updatedLoans: v.number(),
+    cardCyclesApplied: v.number(),
+    loanCyclesApplied: v.number(),
+    cardInterestAccrued: v.number(),
+    cardPaymentsApplied: v.number(),
+    cardSpendAdded: v.number(),
+    loanInterestAccrued: v.number(),
+    loanPaymentsApplied: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_cycleKey', ['userId', 'cycleKey'])
+    .index('by_userId_idempotencyKey', ['userId', 'idempotencyKey']),
+  monthCloseSnapshots: defineTable({
+    userId: v.string(),
+    cycleKey: v.string(),
+    ranAt: v.number(),
+    summary: cycleSummarySnapshot,
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_cycleKey', ['userId', 'cycleKey']),
   accounts: defineTable({
     userId: v.string(),
     name: v.string(),
@@ -221,9 +314,44 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  transactionRules: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    matchType: ruleMatchType,
+    merchantPattern: v.string(),
+    category: v.string(),
+    reconciliationStatus: v.optional(reconciliationStatus),
+    priority: v.number(),
+    active: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
+  purchaseSplits: defineTable({
+    userId: v.string(),
+    purchaseId: v.id('purchases'),
+    category: v.string(),
+    amount: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_purchaseId', ['purchaseId']),
+  envelopeBudgets: defineTable({
+    userId: v.string(),
+    month: v.string(),
+    category: v.string(),
+    targetAmount: v.number(),
+    rolloverEnabled: v.boolean(),
+    carryoverAmount: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_month', ['userId', 'month']),
   cycleAuditLogs: defineTable({
     userId: v.string(),
     source: cycleRunSource,
+    cycleKey: v.optional(v.string()),
+    idempotencyKey: v.optional(v.string()),
     ranAt: v.number(),
     updatedCards: v.number(),
     updatedLoans: v.number(),

@@ -1,12 +1,24 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel'
 
-export type TabKey = 'dashboard' | 'income' | 'bills' | 'cards' | 'loans' | 'purchases' | 'accounts' | 'goals'
+export type TabKey =
+  | 'dashboard'
+  | 'income'
+  | 'bills'
+  | 'cards'
+  | 'loans'
+  | 'purchases'
+  | 'reconcile'
+  | 'planning'
+  | 'accounts'
+  | 'goals'
 
 export type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 export type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 export type AccountType = 'checking' | 'savings' | 'investment' | 'cash' | 'debt'
 export type GoalPriority = 'low' | 'medium' | 'high'
 export type InsightSeverity = 'good' | 'warning' | 'critical'
+export type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
+export type RuleMatchType = 'contains' | 'exact' | 'starts_with'
 
 export type FinancePreference = {
   currency: string
@@ -37,6 +49,9 @@ export type Summary = {
   runwayMonths: number
   healthScore: number
   goalsFundedPercent: number
+  pendingPurchases: number
+  postedPurchases: number
+  reconciledPurchases: number
 }
 
 export type IncomeEntry = Doc<'incomes'>
@@ -47,6 +62,13 @@ export type PurchaseEntry = Doc<'purchases'>
 export type AccountEntry = Doc<'accounts'>
 export type GoalEntry = Doc<'goals'>
 export type CycleAuditLogEntry = Doc<'cycleAuditLogs'>
+export type MonthlyCycleRunEntry = Doc<'monthlyCycleRuns'>
+export type MonthCloseSnapshotEntry = Doc<'monthCloseSnapshots'>
+export type FinanceAuditEventEntry = Doc<'financeAuditEvents'>
+export type LedgerEntry = Doc<'ledgerEntries'>
+export type TransactionRuleEntry = Doc<'transactionRules'>
+export type EnvelopeBudgetEntry = Doc<'envelopeBudgets'>
+export type PurchaseSplitEntry = Doc<'purchaseSplits'>
 
 export type IncomeForm = {
   source: string
@@ -96,6 +118,8 @@ export type PurchaseForm = {
   amount: string
   category: string
   purchaseDate: string
+  reconciliationStatus: ReconciliationStatus
+  statementMonth: string
   notes: string
 }
 
@@ -103,6 +127,7 @@ export type PurchaseFilter = {
   query: string
   category: string
   month: string
+  reconciliationStatus: 'all' | ReconciliationStatus
 }
 
 export type AccountForm = {
@@ -168,6 +193,75 @@ export type GoalWithMetrics = GoalEntry & {
   daysLeft: number
 }
 
+export type RecurringCandidate = {
+  id: string
+  label: string
+  category: string
+  count: number
+  averageAmount: number
+  averageIntervalDays: number
+  nextExpectedDate: string
+  confidence: number
+}
+
+export type BillRiskAlert = {
+  id: string
+  name: string
+  dueDate: string
+  amount: number
+  daysAway: number
+  expectedAvailable: number
+  risk: 'good' | 'warning' | 'critical'
+  autopay: boolean
+}
+
+export type ForecastWindow = {
+  days: 30 | 90 | 365
+  projectedNet: number
+  projectedCash: number
+  coverageMonths: number
+  risk: 'healthy' | 'warning' | 'critical'
+}
+
+export type BudgetPerformance = {
+  id: string
+  category: string
+  targetAmount: number
+  carryoverAmount: number
+  effectiveTarget: number
+  spent: number
+  variance: number
+  projectedMonthEnd: number
+  rolloverEnabled: boolean
+  suggestedRollover: number
+  status: 'on_track' | 'warning' | 'over'
+}
+
+export type MonthCloseChecklistItem = {
+  id: string
+  label: string
+  done: boolean
+  detail: string
+}
+
+export type Phase2Data = {
+  monthKey: string
+  transactionRules: TransactionRuleEntry[]
+  envelopeBudgets: EnvelopeBudgetEntry[]
+  budgetPerformance: BudgetPerformance[]
+  recurringCandidates: RecurringCandidate[]
+  billRiskAlerts: BillRiskAlert[]
+  forecastWindows: ForecastWindow[]
+  monthCloseChecklist: MonthCloseChecklistItem[]
+  dataQuality: {
+    duplicateCount: number
+    anomalyCount: number
+    missingCategoryCount: number
+    pendingReconciliationCount: number
+    splitMismatchCount: number
+  }
+}
+
 export type CadenceOption = {
   value: Cadence
   label: string
@@ -195,3 +289,5 @@ export type LoanId = Id<'loans'>
 export type PurchaseId = Id<'purchases'>
 export type AccountId = Id<'accounts'>
 export type GoalId = Id<'goals'>
+export type TransactionRuleId = Id<'transactionRules'>
+export type EnvelopeBudgetId = Id<'envelopeBudgets'>
