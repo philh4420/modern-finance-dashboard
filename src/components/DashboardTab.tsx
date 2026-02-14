@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import type {
   Cadence,
+  CycleAuditLogEntry,
   CustomCadenceUnit,
   DashboardCard,
   GoalWithMetrics,
@@ -18,6 +19,7 @@ type DashboardTabProps = {
   upcomingCashEvents: UpcomingCashEvent[]
   topCategories: TopCategory[]
   goalsWithMetrics: GoalWithMetrics[]
+  cycleAuditLogs: CycleAuditLogEntry[]
   counts: {
     incomes: number
     bills: number
@@ -32,6 +34,7 @@ type DashboardTabProps = {
   cadenceLabel: (cadence: Cadence, customInterval?: number, customUnit?: CustomCadenceUnit) => string
   severityLabel: (severity: InsightSeverity) => string
   dateLabel: Intl.DateTimeFormat
+  cycleDateLabel: Intl.DateTimeFormat
 }
 
 export function DashboardTab({
@@ -41,12 +44,14 @@ export function DashboardTab({
   upcomingCashEvents,
   topCategories,
   goalsWithMetrics,
+  cycleAuditLogs,
   counts,
   formatMoney,
   formatPercent,
   cadenceLabel,
   severityLabel,
   dateLabel,
+  cycleDateLabel,
 }: DashboardTabProps) {
   return (
     <>
@@ -197,6 +202,37 @@ export function DashboardTab({
                     <span className="bar-fill" style={{ '--bar-width': `${goal.progressPercent}%` } as CSSProperties} />
                   </div>
                   <small>{formatMoney(goal.remaining)} remaining</small>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
+        <article className="panel panel-cycle-log">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Cycle Engine</p>
+              <h2>Monthly Cycle Audit Log</h2>
+            </div>
+          </header>
+          {cycleAuditLogs.length === 0 ? (
+            <p className="empty-state">No cycle runs logged yet.</p>
+          ) : (
+            <ul className="cycle-log-list">
+              {cycleAuditLogs.map((entry) => (
+                <li key={entry._id}>
+                  <div className="cycle-log-row">
+                    <p>{entry.source === 'manual' ? 'Manual Run' : 'Automatic Sync'}</p>
+                    <strong>{cycleDateLabel.format(new Date(entry.ranAt))}</strong>
+                  </div>
+                  <small>
+                    {entry.updatedCards} cards ({entry.cardCyclesApplied} cycles), {entry.updatedLoans} loans (
+                    {entry.loanCyclesApplied} cycles)
+                  </small>
+                  <small>
+                    {formatMoney(entry.cardInterestAccrued)} card interest, {formatMoney(entry.loanInterestAccrued)} loan
+                    interest, {formatMoney(entry.cardPaymentsApplied + entry.loanPaymentsApplied)} total payments
+                  </small>
                 </li>
               ))}
             </ul>

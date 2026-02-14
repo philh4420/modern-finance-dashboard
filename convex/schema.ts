@@ -110,6 +110,7 @@ const accountType = v.union(
 )
 
 const goalPriority = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
+const cycleRunSource = v.union(v.literal('manual'), v.literal('automatic'))
 
 export default defineSchema({
   dashboardStates: defineTable({
@@ -165,6 +166,8 @@ export default defineSchema({
     usedLimit: v.number(),
     minimumPayment: v.number(),
     spendPerMonth: v.number(),
+    interestRate: v.optional(v.number()),
+    lastCycleAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
@@ -176,6 +179,7 @@ export default defineSchema({
     minimumPayment: v.number(),
     subscriptionCost: v.optional(v.number()),
     interestRate: v.optional(v.number()),
+    lastCycleAt: v.optional(v.number()),
     dueDay: v.number(),
     cadence,
     customInterval: v.optional(v.number()),
@@ -217,6 +221,23 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  cycleAuditLogs: defineTable({
+    userId: v.string(),
+    source: cycleRunSource,
+    ranAt: v.number(),
+    updatedCards: v.number(),
+    updatedLoans: v.number(),
+    cardCyclesApplied: v.number(),
+    loanCyclesApplied: v.number(),
+    cardInterestAccrued: v.number(),
+    cardPaymentsApplied: v.number(),
+    cardSpendAdded: v.number(),
+    loanInterestAccrued: v.number(),
+    loanPaymentsApplied: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_ranAt', ['userId', 'ranAt']),
   financePreferences: defineTable({
     userId: v.string(),
     currency: v.string(),

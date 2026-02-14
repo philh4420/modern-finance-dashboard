@@ -49,17 +49,31 @@ import './App.css'
 function App() {
   const financeState = useQuery(api.finance.getFinanceData)
   const cleanupLegacySeedData = useMutation(api.finance.cleanupLegacySeedData)
+  const runMonthlyCycle = useMutation(api.finance.runMonthlyCycle)
 
   const cleanupTriggered = useRef(false)
+  const monthlyCycleTriggered = useRef(false)
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
+  const [isRunningMonthlyCycle, setIsRunningMonthlyCycle] = useState(false)
   const { errorMessage, clearError, handleMutationError } = useMutationFeedback()
 
   useEffect(() => {
-    if (financeState?.isAuthenticated && !cleanupTriggered.current) {
+    if (!financeState?.isAuthenticated) {
+      cleanupTriggered.current = false
+      monthlyCycleTriggered.current = false
+      return
+    }
+
+    if (!cleanupTriggered.current) {
       cleanupTriggered.current = true
       void cleanupLegacySeedData({})
     }
-  }, [cleanupLegacySeedData, financeState?.isAuthenticated])
+
+    if (!monthlyCycleTriggered.current) {
+      monthlyCycleTriggered.current = true
+      void runMonthlyCycle({ source: 'automatic' })
+    }
+  }, [cleanupLegacySeedData, financeState?.isAuthenticated, runMonthlyCycle])
 
   const preference = financeState?.data.preference ?? defaultPreference
 
@@ -70,11 +84,18 @@ function App() {
   const purchases = financeState?.data.purchases ?? []
   const accounts = financeState?.data.accounts ?? []
   const goals = financeState?.data.goals ?? []
+  const cycleAuditLogs = financeState?.data.cycleAuditLogs ?? []
 
   const topCategories = financeState?.data.topCategories ?? []
   const upcomingCashEvents = financeState?.data.upcomingCashEvents ?? []
   const insights = financeState?.data.insights ?? []
   const summary = financeState?.data.summary ?? emptySummary
+  const monthlyLoanBasePayments = summary.monthlyLoanBasePayments ?? summary.monthlyLoanPayments
+  const monthlyLoanSubscriptionCosts = summary.monthlyLoanSubscriptionCosts ?? 0
+  const runwayAvailablePool =
+    summary.runwayAvailablePool ?? Math.max(summary.liquidReserves + summary.totalAssets + summary.monthlyIncome, 0)
+  const runwayMonthlyPressure =
+    summary.runwayMonthlyPressure ?? summary.monthlyCommitments + summary.totalLiabilities + summary.purchasesThisMonth
 
   const formatSection = useFinanceFormat({
     preference,
@@ -134,6 +155,13 @@ function App() {
     minute: '2-digit',
   }).format(financeState?.updatedAt ? new Date(financeState.updatedAt) : new Date())
 
+  const cycleDateLabel = new Intl.DateTimeFormat(preference.locale || 'en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+
   const dashboardCards: DashboardCard[] = [
     {
       id: 'health-score',
@@ -153,35 +181,35 @@ function App() {
       id: 'monthly-commitments',
       label: 'Monthly Commitments',
       value: formatSection.formatMoney(summary.monthlyCommitments),
-      note: `${formatSection.formatMoney(summary.monthlyBills)} bills • ${formatSection.formatMoney(summary.monthlyCardSpend)} cards • ${formatSection.formatMoney(summary.monthlyLoanPayments)} loans`,
+      note: `${formatSection.formatMoney(summary.monthlyBills)} bills • ${formatSection.formatMoney(summary.monthlyCardSpend)} card payments • ${formatSection.formatMoney(summary.monthlyLoanPayments)} loans`,
       trend: 'down',
     },
     {
       id: 'loan-balance',
       label: 'Loan Balance',
       value: formatSection.formatMoney(summary.totalLoanBalance),
-      note: `${formatSection.formatMoney(summary.monthlyLoanPayments)} in monthly loan obligations`,
+      note: `${formatSection.formatMoney(monthlyLoanBasePayments)} payments + ${formatSection.formatMoney(monthlyLoanSubscriptionCosts)} subscription`,
       trend: summary.totalLoanBalance > 0 ? 'down' : 'flat',
     },
     {
       id: 'projected-net',
       label: 'Projected Monthly Net',
       value: formatSection.formatMoney(summary.projectedMonthlyNet),
-      note: formatSection.formatPercent(summary.savingsRatePercent / 100),
+      note: `${formatSection.formatMoney(summary.monthlyIncome)} income - ${formatSection.formatMoney(summary.monthlyCommitments)} commitments - ${formatSection.formatMoney(summary.totalLoanBalance)} loan balance`,
       trend: summary.projectedMonthlyNet >= 0 ? 'up' : 'down',
     },
     {
       id: 'net-worth',
       label: 'Net Worth',
       value: formatSection.formatMoney(summary.netWorth),
-      note: `${formatSection.formatMoney(summary.totalAssets)} assets / ${formatSection.formatMoney(summary.totalLiabilities)} liabilities`,
+      note: `${formatSection.formatMoney(summary.totalAssets)} assets + ${formatSection.formatMoney(summary.monthlyIncome)} income - ${formatSection.formatMoney(summary.totalLiabilities)} liabilities - ${formatSection.formatMoney(summary.monthlyCommitments)} commitments - ${formatSection.formatMoney(summary.purchasesThisMonth)} purchases`,
       trend: summary.netWorth >= 0 ? 'up' : 'down',
     },
     {
       id: 'runway',
       label: 'Cash Runway',
       value: `${summary.runwayMonths.toFixed(1)} months`,
-      note: `${formatSection.formatMoney(summary.liquidReserves)} liquid reserves`,
+      note: `${formatSection.formatMoney(runwayAvailablePool)} available pool / ${formatSection.formatMoney(runwayMonthlyPressure)} monthly pressure`,
       trend: summary.runwayMonths >= 3 ? 'up' : summary.runwayMonths >= 1 ? 'flat' : 'down',
     },
   ]
@@ -218,6 +246,18 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
+  const runMonthlyCycleNow = async () => {
+    clearError()
+    setIsRunningMonthlyCycle(true)
+    try {
+      await runMonthlyCycle({ source: 'manual' })
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setIsRunningMonthlyCycle(false)
+    }
+  }
+
   return (
     <main className="dashboard">
       <header className="topbar">
@@ -242,6 +282,14 @@ function App() {
             </SignUpButton>
           </SignedOut>
           <SignedIn>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => void runMonthlyCycleNow()}
+              disabled={isRunningMonthlyCycle}
+            >
+              {isRunningMonthlyCycle ? 'Running Cycle...' : 'Run Monthly Cycle Now'}
+            </button>
             <button type="button" className="btn btn-secondary" onClick={downloadSnapshot}>
               Export Snapshot
             </button>
@@ -352,6 +400,7 @@ function App() {
             upcomingCashEvents={upcomingCashEvents}
             topCategories={topCategories}
             goalsWithMetrics={goalsSection.goalsWithMetrics}
+            cycleAuditLogs={cycleAuditLogs}
             counts={{
               incomes: incomes.length,
               bills: bills.length,
@@ -366,6 +415,7 @@ function App() {
             cadenceLabel={cadenceLabel}
             severityLabel={severityLabel}
             dateLabel={dateLabel}
+            cycleDateLabel={cycleDateLabel}
           />
         ) : null}
 

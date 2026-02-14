@@ -82,6 +82,16 @@ export function CardsTab({
             required
           />
 
+          <label htmlFor="card-apr">APR % (optional)</label>
+          <input
+            id="card-apr"
+            type="number"
+            min="0"
+            step="0.01"
+            value={cardForm.interestRate}
+            onChange={(event) => setCardForm((prev) => ({ ...prev, interestRate: event.target.value }))}
+          />
+
           <label htmlFor="card-spend">Spend Per Month</label>
           <input
             id="card-spend"
@@ -119,6 +129,7 @@ export function CardsTab({
                   <th scope="col">Limit</th>
                   <th scope="col">Used</th>
                   <th scope="col">Min Payment</th>
+                  <th scope="col">APR</th>
                   <th scope="col">Monthly Spend</th>
                   <th scope="col">Action</th>
                 </tr>
@@ -200,6 +211,27 @@ export function CardsTab({
                           />
                         ) : (
                           formatMoney(entry.minimumPayment)
+                        )}
+                      </td>
+                      <td>
+                        {isEditing ? (
+                          <input
+                            className="inline-input"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={cardEditDraft.interestRate}
+                            onChange={(event) =>
+                              setCardEditDraft((prev) => ({
+                                ...prev,
+                                interestRate: event.target.value,
+                              }))
+                            }
+                          />
+                        ) : entry.interestRate !== undefined ? (
+                          `${entry.interestRate.toFixed(2)}%`
+                        ) : (
+                          '-'
                         )}
                       </td>
                       <td>

@@ -88,7 +88,7 @@ export function LoansTab({
             required
           />
 
-          <label htmlFor="loan-subscription">Subscription Cost (optional)</label>
+          <label htmlFor="loan-subscription">Subscription Cost (monthly, optional)</label>
           <input
             id="loan-subscription"
             type="number"
@@ -209,7 +209,7 @@ export function LoansTab({
                   <th scope="col">Name</th>
                   <th scope="col">Balance</th>
                   <th scope="col">Min Payment</th>
-                  <th scope="col">Subscription</th>
+                  <th scope="col">Subscription / month</th>
                   <th scope="col">APR</th>
                   <th scope="col">Due Day</th>
                   <th scope="col">Frequency</th>

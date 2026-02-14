@@ -15,6 +15,7 @@ const initialCardForm: CardForm = {
   usedLimit: '',
   minimumPayment: '',
   spendPerMonth: '',
+  interestRate: '',
 }
 
 const initialCardEditDraft: CardEditDraft = {
@@ -23,6 +24,7 @@ const initialCardEditDraft: CardEditDraft = {
   usedLimit: '',
   minimumPayment: '',
   spendPerMonth: '',
+  interestRate: '',
 }
 
 export const useCardsSection = ({ cards, clearError, handleMutationError }: UseCardsSectionArgs) => {
@@ -45,6 +47,7 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
         usedLimit: parseFloatInput(cardForm.usedLimit, 'Used limit'),
         minimumPayment: parseFloatInput(cardForm.minimumPayment, 'Minimum payment'),
         spendPerMonth: parseFloatInput(cardForm.spendPerMonth, 'Spend per month'),
+        interestRate: cardForm.interestRate ? parseFloatInput(cardForm.interestRate, 'Card APR') : undefined,
       })
 
       setCardForm(initialCardForm)
@@ -73,6 +76,7 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
       usedLimit: String(entry.usedLimit),
       minimumPayment: String(entry.minimumPayment),
       spendPerMonth: String(entry.spendPerMonth),
+      interestRate: entry.interestRate !== undefined ? String(entry.interestRate) : '',
     })
   }
 
@@ -88,6 +92,7 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
         usedLimit: parseFloatInput(cardEditDraft.usedLimit, 'Used limit'),
         minimumPayment: parseFloatInput(cardEditDraft.minimumPayment, 'Minimum payment'),
         spendPerMonth: parseFloatInput(cardEditDraft.spendPerMonth, 'Spend per month'),
+        interestRate: cardEditDraft.interestRate ? parseFloatInput(cardEditDraft.interestRate, 'Card APR') : undefined,
       })
       setCardEditId(null)
     } catch (error) {

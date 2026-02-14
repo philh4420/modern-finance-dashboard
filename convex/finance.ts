@@ -28,13 +28,16 @@ const accountTypeValidator = v.union(
 )
 
 const goalPriorityValidator = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
+const cycleRunSourceValidator = v.union(v.literal('manual'), v.literal('automatic'))
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 type InsightSeverity = 'good' | 'warning' | 'critical'
+type CycleRunSource = 'manual' | 'automatic'
 
 type IncomeDoc = Doc<'incomes'>
 type BillDoc = Doc<'bills'>
+type CardDoc = Doc<'cards'>
 type LoanDoc = Doc<'loans'>
 
 const defaultPreference = {
@@ -47,7 +50,11 @@ const defaultSummary = {
   monthlyBills: 0,
   monthlyCardSpend: 0,
   monthlyLoanPayments: 0,
+  monthlyLoanBasePayments: 0,
+  monthlyLoanSubscriptionCosts: 0,
   monthlyCommitments: 0,
+  runwayAvailablePool: 0,
+  runwayMonthlyPressure: 0,
   cardLimitTotal: 0,
   cardUsedTotal: 0,
   totalLoanBalance: 0,
@@ -200,6 +207,7 @@ const validateCurrencyCode = (currency: string) => {
 }
 
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+const roundCurrency = (value: number) => Math.round(value * 100) / 100
 
 const monthsBetween = (from: Date, to: Date) =>
   (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
@@ -207,6 +215,26 @@ const monthsBetween = (from: Date, to: Date) =>
 const dateWithClampedDay = (year: number, month: number, day: number) => {
   const daysInMonth = new Date(year, month + 1, 0).getDate()
   return new Date(year, month, Math.min(day, daysInMonth))
+}
+
+const addCalendarMonthsKeepingDay = (date: Date, months: number) =>
+  dateWithClampedDay(date.getFullYear(), date.getMonth() + months, date.getDate())
+
+const countCompletedMonthlyCycles = (fromTimestamp: number, now: Date) => {
+  const today = startOfDay(now)
+  let marker = startOfDay(new Date(fromTimestamp))
+  let cycles = 0
+
+  for (let i = 0; i < 600; i += 1) {
+    const next = addCalendarMonthsKeepingDay(marker, 1)
+    if (next > today) {
+      break
+    }
+    marker = next
+    cycles += 1
+  }
+
+  return cycles
 }
 
 const nextDateByMonthCycle = (day: number, cycleMonths: number, anchorDate: Date, now: Date) => {
@@ -284,6 +312,164 @@ const nextDateForCadence = (
   const normalizedDay = clamp(dayOfMonth ?? anchorDate.getDate(), 1, 31)
 
   return nextDateByMonthCycle(normalizedDay, cycleMonths, anchorDate, today)
+}
+
+const applyCardMonthlyLifecycle = (card: CardDoc, cycles: number) => {
+  let balance = finiteOrZero(card.usedLimit)
+  const spendPerMonth = finiteOrZero(card.spendPerMonth)
+  const minimumPayment = finiteOrZero(card.minimumPayment)
+  const apr = finiteOrZero(card.interestRate)
+  const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
+  let interestAccrued = 0
+  let paymentsApplied = 0
+  let spendAdded = 0
+
+  for (let cycle = 0; cycle < cycles; cycle += 1) {
+    balance += spendPerMonth
+    spendAdded += spendPerMonth
+    const interest = balance * monthlyRate
+    balance += interest
+    interestAccrued += interest
+    const payment = Math.min(balance, minimumPayment)
+    balance -= payment
+    paymentsApplied += payment
+  }
+
+  return {
+    balance: roundCurrency(Math.max(balance, 0)),
+    interestAccrued: roundCurrency(interestAccrued),
+    paymentsApplied: roundCurrency(paymentsApplied),
+    spendAdded: roundCurrency(spendAdded),
+  }
+}
+
+const applyLoanMonthlyLifecycle = (loan: LoanDoc, cycles: number) => {
+  let balance = finiteOrZero(loan.balance)
+  const monthlyPayment = toMonthlyAmount(
+    finiteOrZero(loan.minimumPayment),
+    loan.cadence,
+    loan.customInterval,
+    loan.customUnit,
+  )
+  const apr = finiteOrZero(loan.interestRate)
+  const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
+  let interestAccrued = 0
+  let paymentsApplied = 0
+
+  for (let cycle = 0; cycle < cycles; cycle += 1) {
+    const interest = balance * monthlyRate
+    balance += interest
+    interestAccrued += interest
+    const payment = Math.min(balance, monthlyPayment)
+    balance -= payment
+    paymentsApplied += payment
+  }
+
+  return {
+    balance: roundCurrency(Math.max(balance, 0)),
+    interestAccrued: roundCurrency(interestAccrued),
+    paymentsApplied: roundCurrency(paymentsApplied),
+  }
+}
+
+type CardCycleAggregate = {
+  updatedCards: number
+  cyclesApplied: number
+  interestAccrued: number
+  paymentsApplied: number
+  spendAdded: number
+}
+
+type LoanCycleAggregate = {
+  updatedLoans: number
+  cyclesApplied: number
+  interestAccrued: number
+  paymentsApplied: number
+}
+
+const runCardMonthlyCycleForUser = async (ctx: MutationCtx, userId: string, now: Date): Promise<CardCycleAggregate> => {
+  const cards = await ctx.db
+    .query('cards')
+    .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+    .collect()
+
+  let updatedCards = 0
+  let cyclesApplied = 0
+  let interestAccrued = 0
+  let paymentsApplied = 0
+  let spendAdded = 0
+
+  for (const card of cards) {
+    const cycleAnchor = typeof card.lastCycleAt === 'number' ? card.lastCycleAt : card.createdAt
+    const cycles = countCompletedMonthlyCycles(cycleAnchor, now)
+
+    if (cycles <= 0) {
+      continue
+    }
+
+    const summary = applyCardMonthlyLifecycle(card, cycles)
+    const newCycleDate = addCalendarMonthsKeepingDay(startOfDay(new Date(cycleAnchor)), cycles).getTime()
+
+    await ctx.db.patch(card._id, {
+      usedLimit: summary.balance,
+      lastCycleAt: newCycleDate,
+    })
+
+    updatedCards += 1
+    cyclesApplied += cycles
+    interestAccrued += summary.interestAccrued
+    paymentsApplied += summary.paymentsApplied
+    spendAdded += summary.spendAdded
+  }
+
+  return {
+    updatedCards,
+    cyclesApplied,
+    interestAccrued: roundCurrency(interestAccrued),
+    paymentsApplied: roundCurrency(paymentsApplied),
+    spendAdded: roundCurrency(spendAdded),
+  }
+}
+
+const runLoanMonthlyCycleForUser = async (ctx: MutationCtx, userId: string, now: Date): Promise<LoanCycleAggregate> => {
+  const loans = await ctx.db
+    .query('loans')
+    .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
+    .collect()
+
+  let updatedLoans = 0
+  let cyclesApplied = 0
+  let interestAccrued = 0
+  let paymentsApplied = 0
+
+  for (const loan of loans) {
+    const cycleAnchor = typeof loan.lastCycleAt === 'number' ? loan.lastCycleAt : loan.createdAt
+    const cycles = countCompletedMonthlyCycles(cycleAnchor, now)
+
+    if (cycles <= 0) {
+      continue
+    }
+
+    const summary = applyLoanMonthlyLifecycle(loan, cycles)
+    const newCycleDate = addCalendarMonthsKeepingDay(startOfDay(new Date(cycleAnchor)), cycles).getTime()
+
+    await ctx.db.patch(loan._id, {
+      balance: summary.balance,
+      lastCycleAt: newCycleDate,
+    })
+
+    updatedLoans += 1
+    cyclesApplied += cycles
+    interestAccrued += summary.interestAccrued
+    paymentsApplied += summary.paymentsApplied
+  }
+
+  return {
+    updatedLoans,
+    cyclesApplied,
+    interestAccrued: roundCurrency(interestAccrued),
+    paymentsApplied: roundCurrency(paymentsApplied),
+  }
 }
 
 const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: LoanDoc[], now: Date) => {
@@ -535,6 +721,7 @@ export const getFinanceData = query({
           purchases: [],
           accounts: [],
           goals: [],
+          cycleAuditLogs: [],
           topCategories: [],
           upcomingCashEvents: [],
           insights: [],
@@ -543,7 +730,7 @@ export const getFinanceData = query({
       }
     }
 
-    const [preference, incomes, bills, cards, loans, purchases, accounts, goals] = await Promise.all([
+    const [preference, incomes, bills, cards, loans, purchases, accounts, goals, cycleAuditLogs] = await Promise.all([
       getUserPreference(ctx, identity.subject),
       ctx.db
         .query('incomes')
@@ -580,6 +767,11 @@ export const getFinanceData = query({
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .collect(),
+      ctx.db
+        .query('cycleAuditLogs')
+        .withIndex('by_userId_ranAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(20),
     ])
 
     const monthlyIncome = incomes.reduce(
@@ -590,14 +782,14 @@ export const getFinanceData = query({
       (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
       0,
     )
-    const monthlyLoanPayments = loans.reduce(
+    const monthlyLoanBasePayments = loans.reduce(
       (sum, entry) =>
-        sum +
-        toMonthlyAmount(finiteOrZero(entry.minimumPayment), entry.cadence, entry.customInterval, entry.customUnit) +
-        finiteOrZero(entry.subscriptionCost),
+        sum + toMonthlyAmount(finiteOrZero(entry.minimumPayment), entry.cadence, entry.customInterval, entry.customUnit),
       0,
     )
-    const monthlyCardSpend = cards.reduce((sum, entry) => sum + entry.spendPerMonth, 0)
+    const monthlyLoanSubscriptionCosts = loans.reduce((sum, entry) => sum + finiteOrZero(entry.subscriptionCost), 0)
+    const monthlyLoanPayments = monthlyLoanBasePayments + monthlyLoanSubscriptionCosts
+    const monthlyCardSpend = cards.reduce((sum, entry) => sum + finiteOrZero(entry.minimumPayment), 0)
     const monthlyCommitments = monthlyBills + monthlyCardSpend + monthlyLoanPayments
 
     const cardLimitTotal = cards.reduce((sum, entry) => sum + entry.creditLimit, 0)
@@ -610,7 +802,7 @@ export const getFinanceData = query({
     const monthPurchases = purchases.filter((entry) => entry.purchaseDate.startsWith(monthKey))
     const purchasesThisMonth = monthPurchases.reduce((sum, entry) => sum + entry.amount, 0)
 
-    const projectedMonthlyNet = monthlyIncome - monthlyCommitments
+    const projectedMonthlyNet = monthlyIncome - monthlyCommitments - totalLoanBalance
     const savingsRatePercent = monthlyIncome > 0 ? (projectedMonthlyNet / monthlyIncome) * 100 : 0
 
     const totalAssets = accounts.reduce((sum, entry) => {
@@ -628,7 +820,7 @@ export const getFinanceData = query({
     }, 0)
 
     const totalLiabilities = accountDebts + cardUsedTotal + totalLoanBalance
-    const netWorth = totalAssets - totalLiabilities
+    const netWorth = totalAssets + monthlyIncome - totalLiabilities - monthlyCommitments - purchasesThisMonth
 
     const liquidReserves = accounts.reduce((sum, entry) => {
       if (!entry.liquid) {
@@ -637,7 +829,9 @@ export const getFinanceData = query({
       return sum + Math.max(entry.balance, 0)
     }, 0)
 
-    const runwayMonths = monthlyCommitments > 0 ? liquidReserves / monthlyCommitments : liquidReserves > 0 ? 99 : 0
+    const runwayAvailablePool = Math.max(liquidReserves + totalAssets + monthlyIncome, 0)
+    const runwayMonthlyPressure = monthlyCommitments + totalLiabilities + purchasesThisMonth
+    const runwayMonths = runwayMonthlyPressure > 0 ? runwayAvailablePool / runwayMonthlyPressure : runwayAvailablePool > 0 ? 99 : 0
 
     const goalsFundedPercent =
       goals.length > 0
@@ -689,6 +883,7 @@ export const getFinanceData = query({
       ...purchases.map((entry) => entry.createdAt),
       ...accounts.map((entry) => entry.createdAt),
       ...goals.map((entry) => entry.createdAt),
+      ...cycleAuditLogs.map((entry) => entry.createdAt),
     ]
 
     const updatedAt = timestamps.length > 0 ? Math.max(...timestamps) : Date.now()
@@ -705,6 +900,7 @@ export const getFinanceData = query({
         purchases,
         accounts,
         goals,
+        cycleAuditLogs,
         topCategories,
         upcomingCashEvents,
         insights,
@@ -713,7 +909,11 @@ export const getFinanceData = query({
           monthlyBills,
           monthlyCardSpend,
           monthlyLoanPayments,
+          monthlyLoanBasePayments,
+          monthlyLoanSubscriptionCosts,
           monthlyCommitments,
+          runwayAvailablePool,
+          runwayMonthlyPressure,
           cardLimitTotal,
           cardUsedTotal,
           totalLoanBalance,
@@ -1000,6 +1200,7 @@ export const addLoan = mutation({
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
       notes: args.notes?.trim() || undefined,
+      lastCycleAt: Date.now(),
       createdAt: Date.now(),
     })
   },
@@ -1071,6 +1272,80 @@ export const removeLoan = mutation({
   },
 })
 
+export const applyCardMonthlyCycle = mutation({
+  args: {
+    now: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const now = new Date(args.now ?? Date.now())
+    const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now)
+
+    return {
+      ...cardResult,
+    }
+  },
+})
+
+export const applyLoanMonthlyCycle = mutation({
+  args: {
+    now: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const now = new Date(args.now ?? Date.now())
+    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now)
+
+    return {
+      ...loanResult,
+    }
+  },
+})
+
+export const runMonthlyCycle = mutation({
+  args: {
+    now: v.optional(v.number()),
+    source: v.optional(cycleRunSourceValidator),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const now = new Date(args.now ?? Date.now())
+    const source: CycleRunSource = args.source ?? 'manual'
+
+    const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now)
+    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now)
+
+    const shouldLog = source === 'manual' || cardResult.updatedCards > 0 || loanResult.updatedLoans > 0
+    let auditLogId: string | null = null
+
+    if (shouldLog) {
+      const id = await ctx.db.insert('cycleAuditLogs', {
+        userId: identity.subject,
+        source,
+        ranAt: now.getTime(),
+        updatedCards: cardResult.updatedCards,
+        updatedLoans: loanResult.updatedLoans,
+        cardCyclesApplied: cardResult.cyclesApplied,
+        loanCyclesApplied: loanResult.cyclesApplied,
+        cardInterestAccrued: cardResult.interestAccrued,
+        cardPaymentsApplied: cardResult.paymentsApplied,
+        cardSpendAdded: cardResult.spendAdded,
+        loanInterestAccrued: loanResult.interestAccrued,
+        loanPaymentsApplied: loanResult.paymentsApplied,
+        createdAt: Date.now(),
+      })
+      auditLogId = String(id)
+    }
+
+    return {
+      source,
+      auditLogId,
+      ...cardResult,
+      ...loanResult,
+    }
+  },
+})
+
 export const addCard = mutation({
   args: {
     name: v.string(),
@@ -1078,6 +1353,7 @@ export const addCard = mutation({
     usedLimit: v.number(),
     minimumPayment: v.number(),
     spendPerMonth: v.number(),
+    interestRate: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -1087,6 +1363,9 @@ export const addCard = mutation({
     validateNonNegative(args.usedLimit, 'Used limit')
     validateNonNegative(args.minimumPayment, 'Minimum payment')
     validateNonNegative(args.spendPerMonth, 'Spend per month')
+    if (args.interestRate !== undefined) {
+      validateNonNegative(args.interestRate, 'Card APR')
+    }
 
     await ctx.db.insert('cards', {
       userId: identity.subject,
@@ -1095,6 +1374,8 @@ export const addCard = mutation({
       usedLimit: args.usedLimit,
       minimumPayment: args.minimumPayment,
       spendPerMonth: args.spendPerMonth,
+      interestRate: args.interestRate,
+      lastCycleAt: Date.now(),
       createdAt: Date.now(),
     })
   },
@@ -1108,6 +1389,7 @@ export const updateCard = mutation({
     usedLimit: v.number(),
     minimumPayment: v.number(),
     spendPerMonth: v.number(),
+    interestRate: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -1117,6 +1399,9 @@ export const updateCard = mutation({
     validateNonNegative(args.usedLimit, 'Used limit')
     validateNonNegative(args.minimumPayment, 'Minimum payment')
     validateNonNegative(args.spendPerMonth, 'Spend per month')
+    if (args.interestRate !== undefined) {
+      validateNonNegative(args.interestRate, 'Card APR')
+    }
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Card record not found.')
@@ -1127,6 +1412,7 @@ export const updateCard = mutation({
       usedLimit: args.usedLimit,
       minimumPayment: args.minimumPayment,
       spendPerMonth: args.spendPerMonth,
+      interestRate: args.interestRate,
     })
   },
 })

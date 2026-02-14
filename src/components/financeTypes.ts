@@ -18,7 +18,11 @@ export type Summary = {
   monthlyBills: number
   monthlyCardSpend: number
   monthlyLoanPayments: number
+  monthlyLoanBasePayments: number
+  monthlyLoanSubscriptionCosts: number
   monthlyCommitments: number
+  runwayAvailablePool: number
+  runwayMonthlyPressure: number
   cardLimitTotal: number
   cardUsedTotal: number
   totalLoanBalance: number
@@ -42,6 +46,7 @@ export type LoanEntry = Doc<'loans'>
 export type PurchaseEntry = Doc<'purchases'>
 export type AccountEntry = Doc<'accounts'>
 export type GoalEntry = Doc<'goals'>
+export type CycleAuditLogEntry = Doc<'cycleAuditLogs'>
 
 export type IncomeForm = {
   source: string
@@ -70,6 +75,7 @@ export type CardForm = {
   usedLimit: string
   minimumPayment: string
   spendPerMonth: string
+  interestRate: string
 }
 
 export type LoanForm = {
