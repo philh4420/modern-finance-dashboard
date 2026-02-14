@@ -262,7 +262,7 @@ h2 {
 .metric-grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
 }
 
 .metric-card {
@@ -271,6 +271,31 @@ h2 {
   background: var(--surface-card);
   padding: 1rem;
   box-shadow: var(--shadow-soft);
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 170ms ease,
+    box-shadow 170ms ease,
+    border-color 170ms ease;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(140% 120% at 0% 0%, color-mix(in oklab, var(--tone-savings) 18%, transparent), transparent 58%),
+    radial-gradient(140% 120% at 100% 0%, color-mix(in oklab, var(--tone-finance) 16%, transparent), transparent 62%);
+  opacity: 0.55;
+}
+
+.metric-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--tone-finance) 28%, var(--stroke));
+  box-shadow:
+    0 24px 48px -34px color-mix(in oklab, black 34%, transparent),
+    0 18px 38px -24px color-mix(in oklab, var(--tone-finance) 34%, transparent);
 }
 
 .metric-label {
@@ -335,7 +360,7 @@ h2 {
 }
 
 .panel-goal-preview {
-  grid-column: span 7;
+  grid-column: span 6;
 }
 
 .panel-cycle-log {
@@ -351,11 +376,11 @@ h2 {
 }
 
 .panel-ledger {
-  grid-column: span 6;
+  grid-column: span 7;
 }
 
 .panel-audit-events {
-  grid-column: span 7;
+  grid-column: span 12;
 }
 
 .panel-snapshot {

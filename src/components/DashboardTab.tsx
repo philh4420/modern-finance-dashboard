@@ -313,6 +313,33 @@ export function DashboardTab({
           )}
         </article>
 
+        <article className="panel panel-month-close">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Month Close</p>
+              <h2>Snapshots</h2>
+            </div>
+          </header>
+          {monthCloseSnapshots.length === 0 ? (
+            <p className="empty-state">No month-close snapshots yet.</p>
+          ) : (
+            <ul className="timeline-list">
+              {monthCloseSnapshots.slice(0, 6).map((snapshot) => (
+                <li key={snapshot._id}>
+                  <div>
+                    <p>{snapshot.cycleKey}</p>
+                    <small>
+                      Net worth {formatMoney(snapshot.summary.netWorth)} • Commitments{' '}
+                      {formatMoney(snapshot.summary.monthlyCommitments)}
+                    </small>
+                  </div>
+                  <strong>{cycleDateLabel.format(new Date(snapshot.ranAt))}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
         <article className="panel panel-goal-preview">
           <header className="panel-header">
             <div>
@@ -334,37 +361,6 @@ export function DashboardTab({
                     <span className="bar-fill" style={{ '--bar-width': `${goal.progressPercent}%` } as CSSProperties} />
                   </div>
                   <small>{formatMoney(goal.remaining)} remaining</small>
-                </li>
-              ))}
-            </ul>
-          )}
-        </article>
-
-        <article className="panel panel-cycle-log">
-          <header className="panel-header">
-            <div>
-              <p className="panel-kicker">Cycle Engine</p>
-              <h2>Monthly Cycle Audit Log</h2>
-            </div>
-          </header>
-          {cycleAuditLogs.length === 0 ? (
-            <p className="empty-state">No cycle runs logged yet.</p>
-          ) : (
-            <ul className="cycle-log-list">
-              {cycleAuditLogs.map((entry) => (
-                <li key={entry._id}>
-                  <div className="cycle-log-row">
-                    <p>{entry.source === 'manual' ? 'Manual Run' : 'Automatic Sync'}</p>
-                    <strong>{cycleDateLabel.format(new Date(entry.ranAt))}</strong>
-                  </div>
-                  <small>
-                    {entry.updatedCards} cards ({entry.cardCyclesApplied} cycles), {entry.updatedLoans} loans (
-                    {entry.loanCyclesApplied} cycles)
-                  </small>
-                  <small>
-                    {formatMoney(entry.cardInterestAccrued)} card interest, {formatMoney(entry.loanInterestAccrued)} loan
-                    interest, {formatMoney(entry.cardPaymentsApplied + entry.loanPaymentsApplied)} total payments
-                  </small>
                 </li>
               ))}
             </ul>
@@ -399,27 +395,31 @@ export function DashboardTab({
           )}
         </article>
 
-        <article className="panel panel-month-close">
+        <article className="panel panel-cycle-log">
           <header className="panel-header">
             <div>
-              <p className="panel-kicker">Month Close</p>
-              <h2>Snapshots</h2>
+              <p className="panel-kicker">Cycle Engine</p>
+              <h2>Monthly Cycle Audit Log</h2>
             </div>
           </header>
-          {monthCloseSnapshots.length === 0 ? (
-            <p className="empty-state">No month-close snapshots yet.</p>
+          {cycleAuditLogs.length === 0 ? (
+            <p className="empty-state">No cycle runs logged yet.</p>
           ) : (
-            <ul className="timeline-list">
-              {monthCloseSnapshots.slice(0, 6).map((snapshot) => (
-                <li key={snapshot._id}>
-                  <div>
-                    <p>{snapshot.cycleKey}</p>
-                    <small>
-                      Net worth {formatMoney(snapshot.summary.netWorth)} • Commitments{' '}
-                      {formatMoney(snapshot.summary.monthlyCommitments)}
-                    </small>
+            <ul className="cycle-log-list">
+              {cycleAuditLogs.slice(0, 10).map((entry) => (
+                <li key={entry._id}>
+                  <div className="cycle-log-row">
+                    <p>{entry.source === 'manual' ? 'Manual Run' : 'Automatic Sync'}</p>
+                    <strong>{cycleDateLabel.format(new Date(entry.ranAt))}</strong>
                   </div>
-                  <strong>{cycleDateLabel.format(new Date(snapshot.ranAt))}</strong>
+                  <small>
+                    {entry.updatedCards} cards ({entry.cardCyclesApplied} cycles), {entry.updatedLoans} loans (
+                    {entry.loanCyclesApplied} cycles)
+                  </small>
+                  <small>
+                    {formatMoney(entry.cardInterestAccrued)} card interest, {formatMoney(entry.loanInterestAccrued)} loan
+                    interest, {formatMoney(entry.cardPaymentsApplied + entry.loanPaymentsApplied)} total payments
+                  </small>
                 </li>
               ))}
             </ul>
@@ -446,32 +446,6 @@ export function DashboardTab({
                     </small>
                   </div>
                   <strong>{cycleDateLabel.format(new Date(entry.occurredAt))}</strong>
-                </li>
-              ))}
-            </ul>
-          )}
-        </article>
-
-        <article className="panel panel-audit-events">
-          <header className="panel-header">
-            <div>
-              <p className="panel-kicker">Audit Trail</p>
-              <h2>Finance Change Events</h2>
-            </div>
-          </header>
-          {financeAuditEvents.length === 0 ? (
-            <p className="empty-state">No finance events recorded yet.</p>
-          ) : (
-            <ul className="timeline-list">
-              {financeAuditEvents.slice(0, 10).map((event) => (
-                <li key={event._id}>
-                  <div>
-                    <p>
-                      {event.entityType}: {event.action}
-                    </p>
-                    <small>{event.entityId}</small>
-                  </div>
-                  <strong>{cycleDateLabel.format(new Date(event.createdAt))}</strong>
                 </li>
               ))}
             </ul>
@@ -516,6 +490,33 @@ export function DashboardTab({
             </li>
           </ul>
         </article>
+
+        <article className="panel panel-audit-events">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Audit Trail</p>
+              <h2>Finance Change Events</h2>
+            </div>
+          </header>
+          {financeAuditEvents.length === 0 ? (
+            <p className="empty-state">No finance events recorded yet.</p>
+          ) : (
+            <ul className="timeline-list">
+              {financeAuditEvents.slice(0, 10).map((event) => (
+                <li key={event._id}>
+                  <div>
+                    <p>
+                      {event.entityType}: {event.action}
+                    </p>
+                    <small>{event.entityId}</small>
+                  </div>
+                  <strong>{cycleDateLabel.format(new Date(event.createdAt))}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
       </section>
     </>
   )
