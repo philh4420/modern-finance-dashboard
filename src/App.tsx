@@ -590,13 +590,14 @@ function App() {
           />
         ) : null}
 
-        {activeTab === 'income' ? (
-          <IncomeTab
-            incomes={incomes}
-            incomeForm={incomeSection.incomeForm}
-            setIncomeForm={incomeSection.setIncomeForm}
-            incomeEditId={incomeSection.incomeEditId}
-            setIncomeEditId={incomeSection.setIncomeEditId}
+	        {activeTab === 'income' ? (
+	          <IncomeTab
+	            incomes={incomes}
+	            monthlyIncome={summary.monthlyIncome}
+	            incomeForm={incomeSection.incomeForm}
+	            setIncomeForm={incomeSection.setIncomeForm}
+	            incomeEditId={incomeSection.incomeEditId}
+	            setIncomeEditId={incomeSection.setIncomeEditId}
             incomeEditDraft={incomeSection.incomeEditDraft}
             setIncomeEditDraft={incomeSection.setIncomeEditDraft}
             onAddIncome={incomeSection.onAddIncome}

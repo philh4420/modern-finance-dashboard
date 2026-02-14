@@ -1,4 +1,4 @@
-import type { Dispatch, FormEvent, SetStateAction } from 'react'
+import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type {
   Cadence,
   CustomCadenceUnit,
@@ -10,8 +10,11 @@ import type {
   CadenceOption,
 } from './financeTypes'
 
+type IncomeSortKey = 'source_asc' | 'amount_desc' | 'amount_asc' | 'cadence_asc' | 'day_asc'
+
 type IncomeTabProps = {
   incomes: IncomeEntry[]
+  monthlyIncome: number
   incomeForm: IncomeForm
   setIncomeForm: Dispatch<SetStateAction<IncomeForm>>
   incomeEditId: IncomeId | null
@@ -31,6 +34,7 @@ type IncomeTabProps = {
 
 export function IncomeTab({
   incomes,
+  monthlyIncome,
   incomeForm,
   setIncomeForm,
   incomeEditId,
@@ -47,113 +51,176 @@ export function IncomeTab({
   cadenceLabel,
   formatMoney,
 }: IncomeTabProps) {
+  const [search, setSearch] = useState('')
+  const [sortKey, setSortKey] = useState<IncomeSortKey>('source_asc')
+
+  const visibleIncomes = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    const filtered = query
+      ? incomes.filter((entry) => {
+          const notes = entry.notes ?? ''
+          return `${entry.source} ${notes}`.toLowerCase().includes(query)
+        })
+      : incomes.slice()
+
+    const sorted = [...filtered].sort((a, b) => {
+      switch (sortKey) {
+        case 'source_asc':
+          return a.source.localeCompare(b.source, undefined, { sensitivity: 'base' })
+        case 'amount_desc':
+          return b.amount - a.amount
+        case 'amount_asc':
+          return a.amount - b.amount
+        case 'cadence_asc':
+          return cadenceLabel(a.cadence, a.customInterval, a.customUnit).localeCompare(
+            cadenceLabel(b.cadence, b.customInterval, b.customUnit),
+            undefined,
+            { sensitivity: 'base' },
+          )
+        case 'day_asc':
+          return (a.receivedDay ?? 999) - (b.receivedDay ?? 999)
+        default:
+          return 0
+      }
+    })
+
+    return sorted
+  }, [cadenceLabel, incomes, search, sortKey])
+
   return (
     <section className="editor-grid" aria-label="Income management">
       <article className="panel panel-form">
         <header className="panel-header">
           <div>
             <p className="panel-kicker">Income</p>
-            <h2>Add Income Entry</h2>
+            <h2>Add income source</h2>
+            <p className="panel-value">
+              {incomes.length} source{incomes.length === 1 ? '' : 's'} · {formatMoney(monthlyIncome)} / month
+            </p>
           </div>
         </header>
-        <form className="entry-form" onSubmit={onAddIncome}>
-          <label htmlFor="income-source">Source</label>
-          <input
-            id="income-source"
-            value={incomeForm.source}
-            onChange={(event) => setIncomeForm((prev) => ({ ...prev, source: event.target.value }))}
-            required
-          />
+        <form className="entry-form entry-form--grid" onSubmit={onAddIncome} aria-describedby="income-form-hint">
+          <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="income-source">Source</label>
+              <input
+                id="income-source"
+                value={incomeForm.source}
+                onChange={(event) => setIncomeForm((prev) => ({ ...prev, source: event.target.value }))}
+                autoComplete="organization"
+                required
+              />
+            </div>
 
-          <label htmlFor="income-amount">Amount</label>
-          <input
-            id="income-amount"
-            type="number"
-            min="0.01"
-            step="0.01"
-            value={incomeForm.amount}
-            onChange={(event) => setIncomeForm((prev) => ({ ...prev, amount: event.target.value }))}
-            required
-          />
+            <div className="form-field">
+              <label htmlFor="income-amount">Amount</label>
+              <input
+                id="income-amount"
+                type="number"
+                inputMode="decimal"
+                min="0.01"
+                step="0.01"
+                value={incomeForm.amount}
+                onChange={(event) => setIncomeForm((prev) => ({ ...prev, amount: event.target.value }))}
+                required
+              />
+            </div>
 
-          <label htmlFor="income-cadence">Frequency</label>
-          <select
-            id="income-cadence"
-            value={incomeForm.cadence}
-            onChange={(event) =>
-              setIncomeForm((prev) => ({
-                ...prev,
-                cadence: event.target.value as Cadence,
-                customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
-              }))
-            }
-          >
-            {cadenceOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            <div className="form-field">
+              <label htmlFor="income-cadence">Frequency</label>
+              <select
+                id="income-cadence"
+                value={incomeForm.cadence}
+                onChange={(event) =>
+                  setIncomeForm((prev) => ({
+                    ...prev,
+                    cadence: event.target.value as Cadence,
+                    customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                  }))
+                }
+              >
+                {cadenceOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          {isCustomCadence(incomeForm.cadence) ? (
-            <>
-              <label htmlFor="income-custom-interval">Custom Repeat Every</label>
-              <div className="inline-cadence-controls">
-                <input
-                  id="income-custom-interval"
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={incomeForm.customInterval}
-                  onChange={(event) =>
-                    setIncomeForm((prev) => ({
-                      ...prev,
-                      customInterval: event.target.value,
-                    }))
-                  }
-                  required
-                />
-                <select
-                  id="income-custom-unit"
-                  value={incomeForm.customUnit}
-                  onChange={(event) =>
-                    setIncomeForm((prev) => ({
-                      ...prev,
-                      customUnit: event.target.value as CustomCadenceUnit,
-                    }))
-                  }
-                >
-                  {customCadenceUnitOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+            <div className="form-field">
+              <label htmlFor="income-day">Received day</label>
+              <input
+                id="income-day"
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="31"
+                placeholder="Optional"
+                value={incomeForm.receivedDay}
+                onChange={(event) => setIncomeForm((prev) => ({ ...prev, receivedDay: event.target.value }))}
+              />
+            </div>
+
+            {isCustomCadence(incomeForm.cadence) ? (
+              <div className="form-field form-field--span2">
+                <label htmlFor="income-custom-interval">Custom cadence</label>
+                <div className="inline-cadence-controls">
+                  <input
+                    id="income-custom-interval"
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    value={incomeForm.customInterval}
+                    onChange={(event) =>
+                      setIncomeForm((prev) => ({
+                        ...prev,
+                        customInterval: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                  <select
+                    id="income-custom-unit"
+                    value={incomeForm.customUnit}
+                    onChange={(event) =>
+                      setIncomeForm((prev) => ({
+                        ...prev,
+                        customUnit: event.target.value as CustomCadenceUnit,
+                      }))
+                    }
+                  >
+                    {customCadenceUnitOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </>
-          ) : null}
+            ) : null}
 
-          <label htmlFor="income-day">Received Day (optional)</label>
-          <input
-            id="income-day"
-            type="number"
-            min="1"
-            max="31"
-            value={incomeForm.receivedDay}
-            onChange={(event) => setIncomeForm((prev) => ({ ...prev, receivedDay: event.target.value }))}
-          />
+            <div className="form-field form-field--span2">
+              <label htmlFor="income-notes">Notes</label>
+              <textarea
+                id="income-notes"
+                rows={3}
+                placeholder="Optional"
+                value={incomeForm.notes}
+                onChange={(event) => setIncomeForm((prev) => ({ ...prev, notes: event.target.value }))}
+              />
+            </div>
+          </div>
 
-          <label htmlFor="income-notes">Notes (optional)</label>
-          <textarea
-            id="income-notes"
-            rows={3}
-            value={incomeForm.notes}
-            onChange={(event) => setIncomeForm((prev) => ({ ...prev, notes: event.target.value }))}
-          />
+          <p id="income-form-hint" className="form-hint">
+            Tip: use <strong>Custom</strong> for 4-week pay cycles and other unusual schedules.
+          </p>
 
-          <button type="submit" className="btn btn-primary">
-            Save Income
-          </button>
+          <div className="form-actions">
+            <button type="submit" className="btn btn-primary">
+              Add income
+            </button>
+          </div>
         </form>
       </article>
 
@@ -161,15 +228,50 @@ export function IncomeTab({
         <header className="panel-header">
           <div>
             <p className="panel-kicker">Income</p>
-            <h2>Current Entries</h2>
+            <h2>Current entries</h2>
+            <p className="panel-value">{formatMoney(monthlyIncome)} monthly estimate</p>
+          </div>
+          <div className="panel-actions">
+            <input
+              aria-label="Search income entries"
+              placeholder="Search sources or notes…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            <select
+              aria-label="Sort income entries"
+              value={sortKey}
+              onChange={(event) => setSortKey(event.target.value as IncomeSortKey)}
+            >
+              <option value="source_asc">Source (A-Z)</option>
+              <option value="amount_desc">Amount (high-low)</option>
+              <option value="amount_asc">Amount (low-high)</option>
+              <option value="cadence_asc">Frequency</option>
+              <option value="day_asc">Received day</option>
+            </select>
+            <button
+              type="button"
+              className="btn btn-ghost btn--sm"
+              onClick={() => {
+                setSearch('')
+                setSortKey('source_asc')
+              }}
+              disabled={search.length === 0 && sortKey === 'source_asc'}
+            >
+              Clear
+            </button>
           </div>
         </header>
 
         {incomes.length === 0 ? (
           <p className="empty-state">No income entries added yet.</p>
         ) : (
-          <div className="table-wrap">
-            <table>
+          <>
+            <p className="subnote">
+              Showing {visibleIncomes.length} of {incomes.length} source{incomes.length === 1 ? '' : 's'}.
+            </p>
+            <div className="table-wrap table-wrap--card">
+              <table className="data-table" data-testid="income-table">
               <caption className="sr-only">Income entries</caption>
               <thead>
                 <tr>
@@ -182,11 +284,11 @@ export function IncomeTab({
                 </tr>
               </thead>
               <tbody>
-                {incomes.map((entry) => {
+                {visibleIncomes.map((entry) => {
                   const isEditing = incomeEditId === entry._id
 
                   return (
-                    <tr key={entry._id}>
+                    <tr key={entry._id} className={isEditing ? 'table-row--editing' : undefined}>
                       <td>
                         {isEditing ? (
                           <input
@@ -277,7 +379,9 @@ export function IncomeTab({
                             ) : null}
                           </div>
                         ) : (
-                          cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)
+                          <span className="pill pill--cadence">
+                            {cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)}
+                          </span>
                         )}
                       </td>
                       <td>
@@ -296,7 +400,7 @@ export function IncomeTab({
                             }
                           />
                         ) : (
-                          entry.receivedDay ?? '-'
+                          <span className="pill pill--neutral">{entry.receivedDay ? `Day ${entry.receivedDay}` : '-'}</span>
                         )}
                       </td>
                       <td>
@@ -312,26 +416,44 @@ export function IncomeTab({
                             }
                           />
                         ) : (
-                          entry.notes ?? '-'
+                          <span className="cell-truncate" title={entry.notes ?? ''}>
+                            {entry.notes ?? '-'}
+                          </span>
                         )}
                       </td>
                       <td>
                         <div className="row-actions">
                           {isEditing ? (
                             <>
-                              <button type="button" className="btn btn-secondary" onClick={() => void saveIncomeEdit()}>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn--sm"
+                                onClick={() => void saveIncomeEdit()}
+                              >
                                 Save
                               </button>
-                              <button type="button" className="btn btn-ghost" onClick={() => setIncomeEditId(null)}>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn--sm"
+                                onClick={() => setIncomeEditId(null)}
+                              >
                                 Cancel
                               </button>
                             </>
                           ) : (
-                            <button type="button" className="btn btn-secondary" onClick={() => startIncomeEdit(entry)}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn--sm"
+                              onClick={() => startIncomeEdit(entry)}
+                            >
                               Edit
                             </button>
                           )}
-                          <button type="button" className="btn btn-ghost" onClick={() => void onDeleteIncome(entry._id)}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn--sm"
+                            onClick={() => void onDeleteIncome(entry._id)}
+                          >
                             Remove
                           </button>
                         </div>
@@ -341,7 +463,8 @@ export function IncomeTab({
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </article>
     </section>
