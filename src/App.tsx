@@ -612,13 +612,14 @@ function App() {
           />
         ) : null}
 
-        {activeTab === 'bills' ? (
-          <BillsTab
-            bills={bills}
-            billForm={billsSection.billForm}
-            setBillForm={billsSection.setBillForm}
-            billEditId={billsSection.billEditId}
-            setBillEditId={billsSection.setBillEditId}
+	        {activeTab === 'bills' ? (
+	          <BillsTab
+	            bills={bills}
+	            monthlyBills={summary.monthlyBills}
+	            billForm={billsSection.billForm}
+	            setBillForm={billsSection.setBillForm}
+	            billEditId={billsSection.billEditId}
+	            setBillEditId={billsSection.setBillEditId}
             billEditDraft={billsSection.billEditDraft}
             setBillEditDraft={billsSection.setBillEditDraft}
             onAddBill={billsSection.onAddBill}
@@ -633,30 +634,39 @@ function App() {
           />
         ) : null}
 
-        {activeTab === 'cards' ? (
-          <CardsTab
-            cards={cards}
-            cardForm={cardsSection.cardForm}
-            setCardForm={cardsSection.setCardForm}
-            cardEditId={cardsSection.cardEditId}
-            setCardEditId={cardsSection.setCardEditId}
-            cardEditDraft={cardsSection.cardEditDraft}
-            setCardEditDraft={cardsSection.setCardEditDraft}
-            onAddCard={cardsSection.onAddCard}
-            onDeleteCard={cardsSection.onDeleteCard}
-            saveCardEdit={cardsSection.saveCardEdit}
-            startCardEdit={cardsSection.startCardEdit}
-            formatMoney={formatSection.formatMoney}
-          />
-        ) : null}
+	        {activeTab === 'cards' ? (
+	          <CardsTab
+	            cards={cards}
+	            monthlyCardSpend={summary.monthlyCardSpend}
+	            cardLimitTotal={summary.cardLimitTotal}
+	            cardUsedTotal={summary.cardUsedTotal}
+	            cardUtilizationPercent={summary.cardUtilizationPercent}
+	            cardForm={cardsSection.cardForm}
+	            setCardForm={cardsSection.setCardForm}
+	            cardEditId={cardsSection.cardEditId}
+	            setCardEditId={cardsSection.setCardEditId}
+	            cardEditDraft={cardsSection.cardEditDraft}
+	            setCardEditDraft={cardsSection.setCardEditDraft}
+	            onAddCard={cardsSection.onAddCard}
+	            onDeleteCard={cardsSection.onDeleteCard}
+	            saveCardEdit={cardsSection.saveCardEdit}
+	            startCardEdit={cardsSection.startCardEdit}
+	            formatMoney={formatSection.formatMoney}
+	            formatPercent={formatSection.formatPercent}
+	          />
+	        ) : null}
 
-        {activeTab === 'loans' ? (
-          <LoansTab
-            loans={loans}
-            loanForm={loansSection.loanForm}
-            setLoanForm={loansSection.setLoanForm}
-            loanEditId={loansSection.loanEditId}
-            setLoanEditId={loansSection.setLoanEditId}
+	        {activeTab === 'loans' ? (
+	          <LoansTab
+	            loans={loans}
+	            monthlyLoanPayments={summary.monthlyLoanPayments}
+	            monthlyLoanBasePayments={summary.monthlyLoanBasePayments}
+	            monthlyLoanSubscriptionCosts={summary.monthlyLoanSubscriptionCosts}
+	            totalLoanBalance={summary.totalLoanBalance}
+	            loanForm={loansSection.loanForm}
+	            setLoanForm={loansSection.setLoanForm}
+	            loanEditId={loansSection.loanEditId}
+	            setLoanEditId={loansSection.setLoanEditId}
             loanEditDraft={loansSection.loanEditDraft}
             setLoanEditDraft={loansSection.setLoanEditDraft}
             onAddLoan={loansSection.onAddLoan}
@@ -672,20 +682,24 @@ function App() {
         ) : null}
 
         {activeTab === 'purchases' ? (
-          <PurchasesTab
-            purchaseForm={purchasesSection.purchaseForm}
-            setPurchaseForm={purchasesSection.setPurchaseForm}
-            purchaseFilter={purchasesSection.purchaseFilter}
-            setPurchaseFilter={purchasesSection.setPurchaseFilter}
-            purchaseCategories={purchasesSection.purchaseCategories}
-            filteredPurchases={purchasesSection.filteredPurchases}
-            filteredPurchaseTotal={purchasesSection.filteredPurchaseTotal}
-            filteredPurchaseAverage={purchasesSection.filteredPurchaseAverage}
-            purchaseEditId={purchasesSection.purchaseEditId}
-            setPurchaseEditId={purchasesSection.setPurchaseEditId}
-            purchaseEditDraft={purchasesSection.purchaseEditDraft}
-            setPurchaseEditDraft={purchasesSection.setPurchaseEditDraft}
-            onAddPurchase={purchasesSection.onAddPurchase}
+	          <PurchasesTab
+	            purchaseForm={purchasesSection.purchaseForm}
+	            setPurchaseForm={purchasesSection.setPurchaseForm}
+	            purchaseFilter={purchasesSection.purchaseFilter}
+	            setPurchaseFilter={purchasesSection.setPurchaseFilter}
+	            purchaseCategories={purchasesSection.purchaseCategories}
+	            filteredPurchases={purchasesSection.filteredPurchases}
+	            filteredPurchaseTotal={purchasesSection.filteredPurchaseTotal}
+	            filteredPurchaseAverage={purchasesSection.filteredPurchaseAverage}
+	            purchasesThisMonth={summary.purchasesThisMonth}
+	            pendingPurchases={summary.pendingPurchases}
+	            postedPurchases={summary.postedPurchases}
+	            reconciledPurchases={summary.reconciledPurchases}
+	            purchaseEditId={purchasesSection.purchaseEditId}
+	            setPurchaseEditId={purchasesSection.setPurchaseEditId}
+	            purchaseEditDraft={purchasesSection.purchaseEditDraft}
+	            setPurchaseEditDraft={purchasesSection.setPurchaseEditDraft}
+	            onAddPurchase={purchasesSection.onAddPurchase}
             onDeletePurchase={purchasesSection.onDeletePurchase}
             savePurchaseEdit={purchasesSection.savePurchaseEdit}
             startPurchaseEdit={purchasesSection.startPurchaseEdit}

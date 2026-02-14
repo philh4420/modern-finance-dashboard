@@ -105,6 +105,17 @@ h2 {
   box-shadow: 0 12px 28px -22px color-mix(in oklab, var(--tone-finance) 65%, transparent);
 }
 
+.btn-danger {
+  border-color: color-mix(in oklab, var(--tone-negative) 35%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-negative) 14%, white 86%);
+  color: color-mix(in oklab, var(--tone-negative) 70%, black 30%);
+  box-shadow: 0 14px 32px -26px color-mix(in oklab, var(--tone-negative) 35%, transparent);
+}
+
+.btn-danger:hover {
+  border-color: color-mix(in oklab, var(--tone-negative) 52%, var(--stroke));
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--text-main);
@@ -1018,6 +1029,40 @@ h2 {
   justify-content: flex-start;
 }
 
+.bulk-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.bulk-summary > div {
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 75%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.78rem 0.82rem;
+  display: grid;
+  gap: 0.25rem;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 42%, transparent);
+}
+
+.bulk-summary p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.bulk-summary strong {
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+}
+
+.bulk-summary small {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
 .entry-form label {
   font-size: 0.82rem;
   color: var(--text-muted);
@@ -1027,6 +1072,8 @@ h2 {
 .entry-form input,
 .entry-form select,
 .entry-form textarea,
+.panel-actions input,
+.panel-actions select,
 .filter-row input,
 .filter-row select,
 .goal-actions input,
@@ -1063,6 +1110,8 @@ tbody .inline-cadence-controls {
 .entry-form input:focus,
 .entry-form select:focus,
 .entry-form textarea:focus,
+.panel-actions input:focus,
+.panel-actions select:focus,
 .filter-row input:focus,
 .filter-row select:focus,
 .goal-actions input:focus,
@@ -1083,6 +1132,10 @@ tbody .inline-cadence-controls {
   width: auto;
 }
 
+input[type='checkbox'] {
+  accent-color: var(--tone-finance);
+}
+
 .table-wrap {
   margin-top: 0.85rem;
   overflow-x: auto;
@@ -1101,6 +1154,10 @@ tbody .inline-cadence-controls {
 
 .data-table {
   min-width: 34rem;
+}
+
+.data-table--wide {
+  min-width: 44rem;
 }
 
 table {
@@ -1138,6 +1195,10 @@ tbody td {
   background: color-mix(in oklab, var(--tone-savings) 12%, transparent);
 }
 
+.table-row--selected {
+  background: color-mix(in oklab, var(--tone-finance) 10%, transparent);
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -1160,6 +1221,24 @@ tbody td {
   color: color-mix(in oklab, var(--text-main) 84%, var(--text-muted));
 }
 
+.pill--good {
+  border-color: color-mix(in oklab, var(--tone-positive) 32%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-positive) 18%, white 82%);
+  color: color-mix(in oklab, var(--tone-positive) 70%, black 30%);
+}
+
+.pill--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 34%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-warning) 16%, white 84%);
+  color: color-mix(in oklab, var(--tone-warning) 70%, black 30%);
+}
+
+.pill--critical {
+  border-color: color-mix(in oklab, var(--tone-negative) 32%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-negative) 14%, white 86%);
+  color: color-mix(in oklab, var(--tone-negative) 72%, black 28%);
+}
+
 .cell-truncate {
   display: inline-block;
   max-width: 26ch;
@@ -1176,10 +1255,24 @@ tbody td {
 }
 
 .filter-row {
-  margin-top: 0.78rem;
+  margin-top: 0.85rem;
   display: grid;
-  grid-template-columns: 1.4fr 1fr auto auto;
-  gap: 0.5rem;
+  grid-template-columns:
+    minmax(0, 1.6fr)
+    minmax(0, 1fr)
+    minmax(0, 10rem)
+    minmax(0, 10rem)
+    minmax(0, 11rem)
+    auto;
+  gap: 0.55rem;
+  align-items: end;
+  padding: 0.65rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 82%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
+    0 20px 40px -44px color-mix(in oklab, black 45%, transparent);
 }
 
 .subnote {
@@ -1305,6 +1398,10 @@ tbody td {
   }
 
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bulk-summary {
     grid-template-columns: 1fr;
   }
 
