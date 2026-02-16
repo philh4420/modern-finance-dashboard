@@ -70,6 +70,11 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
     return null
   }
 
+  const formatMonth = (value: string) => {
+    if (!isValidMonthKey(value)) return 'n/a'
+    return monthLabel.format(new Date(`${value}-01T00:00:00`))
+  }
+
   const startPrint = () => {
     const message = validate()
     if (message) {
@@ -89,81 +94,107 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
-        className="modal"
+        className="modal modal--report"
         role="dialog"
         aria-modal="true"
-        aria-label="Print report"
+        aria-labelledby="print-report-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="modal__header">
+        <header className="modal__header modal__header--report">
           <div>
             <p className="panel-kicker">Report</p>
-            <h2>Print Report</h2>
+            <h2 id="print-report-title">Print Report</h2>
+            <p className="subnote">Choose month range and sections to include in the print view.</p>
           </div>
-          <button type="button" className="btn btn-ghost" onClick={onClose}>
+          <button type="button" className="btn btn-ghost btn--sm" onClick={onClose}>
             Close
           </button>
         </header>
 
-        <div className="modal__body">
-          <div className="modal-grid">
-            <label>
-              Start month
+        <div className="modal__body modal__body--report">
+          <div className="modal-grid modal-grid--report">
+            <label className="modal-field-card" htmlFor="print-start-month">
+              <span>Start month</span>
               <input
+                id="print-start-month"
                 type="month"
                 value={startMonthValue}
-                onChange={(event) => setStartMonthValue(event.target.value)}
+                onChange={(event) => {
+                  setStartMonthValue(event.target.value)
+                  if (error) setError(null)
+                }}
               />
-              <small className="subnote">Selected: {isValidMonthKey(startMonthValue) ? monthLabel.format(new Date(`${startMonthValue}-01T00:00:00`)) : 'n/a'}</small>
+              <small className="subnote">Selected: {formatMonth(startMonthValue)}</small>
             </label>
 
-            <label>
-              End month
+            <label className="modal-field-card" htmlFor="print-end-month">
+              <span>End month</span>
               <input
+                id="print-end-month"
                 type="month"
                 value={endMonthValue}
-                onChange={(event) => setEndMonthValue(event.target.value)}
+                onChange={(event) => {
+                  setEndMonthValue(event.target.value)
+                  if (error) setError(null)
+                }}
               />
-              <small className="subnote">Selected: {isValidMonthKey(endMonthValue) ? monthLabel.format(new Date(`${endMonthValue}-01T00:00:00`)) : 'n/a'}</small>
+              <small className="subnote">Selected: {formatMonth(endMonthValue)}</small>
             </label>
           </div>
 
-          <div className="entry-form" style={{ marginTop: '0.8rem' }}>
-            <label className="checkbox-row" htmlFor="print-purchases">
+          <div className="modal-range-summary" aria-label="Current selected range">
+            <span className="pill pill--neutral">{formatMonth(startMonthValue)}</span>
+            <span className="pill pill--neutral">to</span>
+            <span className="pill pill--neutral">{formatMonth(endMonthValue)}</span>
+          </div>
+
+          <fieldset className="modal-options" aria-label="Report sections">
+            <legend className="sr-only">Report sections</legend>
+
+            <label className={`modal-option-row ${includePurchases ? 'modal-option-row--active' : ''}`} htmlFor="print-purchases">
               <input
                 id="print-purchases"
                 type="checkbox"
                 checked={includePurchases}
                 onChange={(event) => setIncludePurchases(event.target.checked)}
               />
-              Include purchases (recommended)
+              <div>
+                <strong>Include purchases</strong>
+                <small>Recommended for complete spending totals.</small>
+              </div>
             </label>
 
-            <label className="checkbox-row" htmlFor="print-notes">
+            <label className={`modal-option-row ${includeNotes ? 'modal-option-row--active' : ''}`} htmlFor="print-notes">
               <input
                 id="print-notes"
                 type="checkbox"
                 checked={includeNotes}
                 onChange={(event) => setIncludeNotes(event.target.checked)}
               />
-              Include notes
+              <div>
+                <strong>Include notes</strong>
+                <small>Add free-text context from records.</small>
+              </div>
             </label>
 
-            <label className="checkbox-row" htmlFor="print-audit">
+            <label className={`modal-option-row ${includeAuditLogs ? 'modal-option-row--active' : ''}`} htmlFor="print-audit">
               <input
                 id="print-audit"
                 type="checkbox"
                 checked={includeAuditLogs}
                 onChange={(event) => setIncludeAuditLogs(event.target.checked)}
               />
-              Include audit logs
+              <div>
+                <strong>Include audit logs</strong>
+                <small>Add cycle and audit trail activity for the range.</small>
+              </div>
             </label>
-          </div>
+          </fieldset>
 
           {error ? <p className="error-banner">{error}</p> : null}
         </div>
 
-        <footer className="modal__footer">
+        <footer className="modal__footer modal__footer--report">
           <button type="button" className="btn btn-secondary" onClick={onClose}>
             Cancel
           </button>
