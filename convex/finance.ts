@@ -150,6 +150,12 @@ const validateFinite = (value: number, fieldName: string) => {
   }
 }
 
+const validateDayOfMonth = (value: number, fieldName: string) => {
+  if (!Number.isInteger(value) || value < 1 || value > 31) {
+    throw new Error(`${fieldName} must be an integer between 1 and 31.`)
+  }
+}
+
 const finiteOrZero = (value: number | undefined | null) =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0
 
@@ -409,6 +415,8 @@ const nextDateForCadence = (
 
 const applyCardMonthlyLifecycle = (card: CardDoc, cycles: number) => {
   let balance = finiteOrZero(card.usedLimit)
+  let statementBalance = finiteOrZero(card.statementBalance ?? card.usedLimit)
+  let pendingCharges = finiteOrZero(card.pendingCharges)
   const spendPerMonth = finiteOrZero(card.spendPerMonth)
   const minimumPayment = finiteOrZero(card.minimumPayment)
   const apr = finiteOrZero(card.interestRate)
@@ -416,20 +424,30 @@ const applyCardMonthlyLifecycle = (card: CardDoc, cycles: number) => {
   let interestAccrued = 0
   let paymentsApplied = 0
   let spendAdded = 0
+  let latestStatementBalance = statementBalance
 
   for (let cycle = 0; cycle < cycles; cycle += 1) {
-    balance += spendPerMonth
-    spendAdded += spendPerMonth
-    const interest = balance * monthlyRate
-    balance += interest
+    const interest = statementBalance * monthlyRate
     interestAccrued += interest
-    const payment = Math.min(balance, minimumPayment)
-    balance -= payment
+    const dueBalance = statementBalance + interest
+    latestStatementBalance = dueBalance
+    const payment = Math.min(dueBalance, minimumPayment)
+    const carriedAfterDue = dueBalance - payment
     paymentsApplied += payment
+
+    pendingCharges += spendPerMonth
+    spendAdded += spendPerMonth
+
+    statementBalance = carriedAfterDue + pendingCharges
+    balance = statementBalance
+    pendingCharges = 0
   }
 
   return {
     balance: roundCurrency(Math.max(balance, 0)),
+    statementBalance: roundCurrency(Math.max(statementBalance, 0)),
+    pendingCharges: roundCurrency(Math.max(pendingCharges, 0)),
+    dueBalance: roundCurrency(Math.max(latestStatementBalance, 0)),
     interestAccrued: roundCurrency(interestAccrued),
     paymentsApplied: roundCurrency(paymentsApplied),
     spendAdded: roundCurrency(spendAdded),
@@ -510,6 +528,8 @@ const runCardMonthlyCycleForUser = async (
 
     await ctx.db.patch(card._id, {
       usedLimit: summary.balance,
+      statementBalance: summary.statementBalance,
+      pendingCharges: summary.pendingCharges,
       lastCycleAt: newCycleDate,
     })
 
@@ -2198,9 +2218,13 @@ export const addCard = mutation({
     name: v.string(),
     creditLimit: v.number(),
     usedLimit: v.number(),
+    statementBalance: v.optional(v.number()),
+    pendingCharges: v.optional(v.number()),
     minimumPayment: v.number(),
     spendPerMonth: v.number(),
     interestRate: v.optional(v.number()),
+    statementDay: v.optional(v.number()),
+    dueDay: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -2208,20 +2232,41 @@ export const addCard = mutation({
     validateRequiredText(args.name, 'Card name')
     validatePositive(args.creditLimit, 'Credit limit')
     validateNonNegative(args.usedLimit, 'Used limit')
+    if (args.statementBalance !== undefined) {
+      validateNonNegative(args.statementBalance, 'Statement balance')
+    }
+    if (args.pendingCharges !== undefined) {
+      validateNonNegative(args.pendingCharges, 'Pending charges')
+    }
     validateNonNegative(args.minimumPayment, 'Minimum payment')
     validateNonNegative(args.spendPerMonth, 'Spend per month')
     if (args.interestRate !== undefined) {
       validateNonNegative(args.interestRate, 'Card APR')
     }
+    if (args.statementDay !== undefined) {
+      validateDayOfMonth(args.statementDay, 'Statement day')
+    }
+    if (args.dueDay !== undefined) {
+      validateDayOfMonth(args.dueDay, 'Due day')
+    }
+
+    const statementBalance = args.statementBalance ?? args.usedLimit
+    const pendingCharges = args.pendingCharges ?? Math.max(args.usedLimit - statementBalance, 0)
+    const statementDay = args.statementDay ?? 1
+    const dueDay = args.dueDay ?? 21
 
     const createdCardId = await ctx.db.insert('cards', {
       userId: identity.subject,
       name: args.name.trim(),
       creditLimit: args.creditLimit,
       usedLimit: args.usedLimit,
+      statementBalance,
+      pendingCharges,
       minimumPayment: args.minimumPayment,
       spendPerMonth: args.spendPerMonth,
       interestRate: args.interestRate,
+      statementDay,
+      dueDay,
       lastCycleAt: Date.now(),
       createdAt: Date.now(),
     })
@@ -2235,9 +2280,13 @@ export const addCard = mutation({
         name: args.name.trim(),
         creditLimit: args.creditLimit,
         usedLimit: args.usedLimit,
+        statementBalance,
+        pendingCharges,
         minimumPayment: args.minimumPayment,
         spendPerMonth: args.spendPerMonth,
         interestRate: args.interestRate ?? 0,
+        statementDay,
+        dueDay,
       },
     })
   },
@@ -2249,9 +2298,13 @@ export const updateCard = mutation({
     name: v.string(),
     creditLimit: v.number(),
     usedLimit: v.number(),
+    statementBalance: v.optional(v.number()),
+    pendingCharges: v.optional(v.number()),
     minimumPayment: v.number(),
     spendPerMonth: v.number(),
     interestRate: v.optional(v.number()),
+    statementDay: v.optional(v.number()),
+    dueDay: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -2259,22 +2312,43 @@ export const updateCard = mutation({
     validateRequiredText(args.name, 'Card name')
     validatePositive(args.creditLimit, 'Credit limit')
     validateNonNegative(args.usedLimit, 'Used limit')
+    if (args.statementBalance !== undefined) {
+      validateNonNegative(args.statementBalance, 'Statement balance')
+    }
+    if (args.pendingCharges !== undefined) {
+      validateNonNegative(args.pendingCharges, 'Pending charges')
+    }
     validateNonNegative(args.minimumPayment, 'Minimum payment')
     validateNonNegative(args.spendPerMonth, 'Spend per month')
     if (args.interestRate !== undefined) {
       validateNonNegative(args.interestRate, 'Card APR')
     }
+    if (args.statementDay !== undefined) {
+      validateDayOfMonth(args.statementDay, 'Statement day')
+    }
+    if (args.dueDay !== undefined) {
+      validateDayOfMonth(args.dueDay, 'Due day')
+    }
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Card record not found.')
+    const statementBalance = args.statementBalance ?? existing.statementBalance ?? args.usedLimit
+    const pendingCharges =
+      args.pendingCharges ?? existing.pendingCharges ?? Math.max(args.usedLimit - statementBalance, 0)
+    const statementDay = args.statementDay ?? existing.statementDay ?? 1
+    const dueDay = args.dueDay ?? existing.dueDay ?? 21
 
     await ctx.db.patch(args.id, {
       name: args.name.trim(),
       creditLimit: args.creditLimit,
       usedLimit: args.usedLimit,
+      statementBalance,
+      pendingCharges,
       minimumPayment: args.minimumPayment,
       spendPerMonth: args.spendPerMonth,
       interestRate: args.interestRate,
+      statementDay,
+      dueDay,
     })
 
     await recordFinanceAuditEvent(ctx, {
@@ -2286,17 +2360,25 @@ export const updateCard = mutation({
         name: existing.name,
         creditLimit: existing.creditLimit,
         usedLimit: existing.usedLimit,
+        statementBalance: existing.statementBalance ?? existing.usedLimit,
+        pendingCharges: existing.pendingCharges ?? Math.max(existing.usedLimit - (existing.statementBalance ?? existing.usedLimit), 0),
         minimumPayment: existing.minimumPayment,
         spendPerMonth: existing.spendPerMonth,
         interestRate: existing.interestRate ?? 0,
+        statementDay: existing.statementDay ?? 1,
+        dueDay: existing.dueDay ?? 21,
       },
       after: {
         name: args.name.trim(),
         creditLimit: args.creditLimit,
         usedLimit: args.usedLimit,
+        statementBalance,
+        pendingCharges,
         minimumPayment: args.minimumPayment,
         spendPerMonth: args.spendPerMonth,
         interestRate: args.interestRate ?? 0,
+        statementDay,
+        dueDay,
       },
     })
   },

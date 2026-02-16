@@ -145,9 +145,13 @@ export type CardForm = {
   name: string
   creditLimit: string
   usedLimit: string
+  statementBalance: string
+  pendingCharges: string
   minimumPayment: string
   spendPerMonth: string
   interestRate: string
+  statementDay: string
+  dueDay: string
 }
 
 export type LoanForm = {

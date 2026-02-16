@@ -190,9 +190,13 @@ export default defineSchema({
     name: v.string(),
     creditLimit: v.number(),
     usedLimit: v.number(),
+    statementBalance: v.optional(v.number()),
+    pendingCharges: v.optional(v.number()),
     minimumPayment: v.number(),
     spendPerMonth: v.number(),
     interestRate: v.optional(v.number()),
+    statementDay: v.optional(v.number()),
+    dueDay: v.optional(v.number()),
     lastCycleAt: v.optional(v.number()),
     createdAt: v.number(),
   })

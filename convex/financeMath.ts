@@ -3,6 +3,8 @@ export type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 
 export type CardCycleInput = {
   usedLimit?: number | null
+  statementBalance?: number | null
+  pendingCharges?: number | null
   spendPerMonth?: number | null
   minimumPayment?: number | null
   interestRate?: number | null
@@ -94,6 +96,8 @@ export const toMonthlyAmount = (
 
 export const applyCardMonthlyLifecycle = (card: CardCycleInput, cycles: number) => {
   let balance = finiteOrZero(card.usedLimit)
+  let statementBalance = finiteOrZero(card.statementBalance ?? card.usedLimit)
+  let pendingCharges = finiteOrZero(card.pendingCharges)
   const spendPerMonth = finiteOrZero(card.spendPerMonth)
   const minimumPayment = finiteOrZero(card.minimumPayment)
   const apr = finiteOrZero(card.interestRate)
@@ -101,20 +105,30 @@ export const applyCardMonthlyLifecycle = (card: CardCycleInput, cycles: number) 
   let interestAccrued = 0
   let paymentsApplied = 0
   let spendAdded = 0
+  let latestDueBalance = statementBalance
 
   for (let cycle = 0; cycle < cycles; cycle += 1) {
-    balance += spendPerMonth
-    spendAdded += spendPerMonth
-    const interest = balance * monthlyRate
-    balance += interest
+    const interest = statementBalance * monthlyRate
     interestAccrued += interest
-    const payment = Math.min(balance, minimumPayment)
-    balance -= payment
+    const dueBalance = statementBalance + interest
+    latestDueBalance = dueBalance
+    const payment = Math.min(dueBalance, minimumPayment)
+    const carriedAfterDue = dueBalance - payment
     paymentsApplied += payment
+
+    pendingCharges += spendPerMonth
+    spendAdded += spendPerMonth
+
+    statementBalance = carriedAfterDue + pendingCharges
+    balance = statementBalance
+    pendingCharges = 0
   }
 
   return {
     balance: roundCurrency(Math.max(balance, 0)),
+    statementBalance: roundCurrency(Math.max(statementBalance, 0)),
+    pendingCharges: roundCurrency(Math.max(pendingCharges, 0)),
+    dueBalance: roundCurrency(Math.max(latestDueBalance, 0)),
     interestAccrued: roundCurrency(interestAccrued),
     paymentsApplied: roundCurrency(paymentsApplied),
     spendAdded: roundCurrency(spendAdded),

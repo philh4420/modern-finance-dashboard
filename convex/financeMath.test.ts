@@ -34,8 +34,10 @@ describe('financeMath', () => {
       1,
     )
 
-    expect(result.balance).toBeCloseTo(1072, 2)
-    expect(result.interestAccrued).toBeCloseTo(22, 2)
+    expect(result.balance).toBeCloseTo(1070, 2)
+    expect(result.statementBalance).toBeCloseTo(1070, 2)
+    expect(result.dueBalance).toBeCloseTo(1020, 2)
+    expect(result.interestAccrued).toBeCloseTo(20, 2)
     expect(result.paymentsApplied).toBeCloseTo(50, 2)
     expect(result.spendAdded).toBeCloseTo(100, 2)
   })

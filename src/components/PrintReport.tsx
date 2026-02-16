@@ -373,10 +373,14 @@ export function PrintReport({
                 <tr>
                   <th scope="col">Name</th>
                   <th scope="col">Limit</th>
-                  <th scope="col">Used</th>
+                  <th scope="col">Current</th>
+                  <th scope="col">Statement</th>
+                  <th scope="col">Pending</th>
                   <th scope="col">Min Payment</th>
                   <th scope="col">Monthly Spend</th>
                   <th scope="col">APR</th>
+                  <th scope="col">Statement Day</th>
+                  <th scope="col">Due Day</th>
                 </tr>
               </thead>
               <tbody>
@@ -385,9 +389,13 @@ export function PrintReport({
                     <td>{card.name}</td>
                     <td className="table-amount">{formatMoney(card.creditLimit)}</td>
                     <td className="table-amount">{formatMoney(card.usedLimit)}</td>
+                    <td className="table-amount">{formatMoney(card.statementBalance ?? card.usedLimit)}</td>
+                    <td className="table-amount">{formatMoney(card.pendingCharges ?? 0)}</td>
                     <td className="table-amount">{formatMoney(card.minimumPayment)}</td>
                     <td className="table-amount">{formatMoney(card.spendPerMonth)}</td>
                     <td>{card.interestRate ? `${card.interestRate.toFixed(2)}%` : 'n/a'}</td>
+                    <td>Day {card.statementDay ?? 1}</td>
+                    <td>Day {card.dueDay ?? 21}</td>
                   </tr>
                 ))}
               </tbody>
