@@ -670,7 +670,7 @@ h2 {
 }
 
 .print-report {
-  padding: 1.4rem 0;
+  padding: 1rem 0;
   color: oklch(22% 0.03 245);
   background: white;
 }
@@ -679,9 +679,9 @@ h2 {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1rem;
+  gap: 0.8rem;
   border-bottom: 1px solid color-mix(in oklab, black 14%, transparent);
-  padding-bottom: 1rem;
+  padding-bottom: 0.75rem;
 }
 
 .print-kicker {
@@ -693,128 +693,178 @@ h2 {
 }
 
 .print-title {
-  margin: 0.45rem 0 0;
-  font-size: 2rem;
+  margin: 0.3rem 0 0;
+  font-size: 1.75rem;
   letter-spacing: -0.03em;
 }
 
 .print-meta {
-  margin: 0.6rem 0 0;
+  margin: 0.45rem 0 0;
   color: color-mix(in oklab, black 55%, transparent);
-  font-size: 0.92rem;
+  font-size: 0.86rem;
 }
 
 .print-badge {
-  border-radius: 1rem;
+  border-radius: 0.85rem;
   border: 1px solid color-mix(in oklab, black 12%, transparent);
-  padding: 0.85rem 1rem;
+  padding: 0.62rem 0.78rem;
   text-align: right;
   min-width: 12rem;
 }
 
 .print-badge strong {
   display: block;
-  font-size: 1.35rem;
+  font-size: 1.15rem;
 }
 
 .print-badge span {
   color: color-mix(in oklab, black 55%, transparent);
-  font-size: 0.86rem;
+  font-size: 0.8rem;
 }
 
 .print-section {
-  margin-top: 1.25rem;
+  margin-top: 0.78rem;
+}
+
+.print-section h2 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.print-subhead {
+  margin: 0.65rem 0 0.35rem;
+  font-size: 0.88rem;
+  letter-spacing: -0.01em;
+}
+
+.print-core-grid {
+  margin-top: 0.78rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.7rem;
 }
 
 .print-summary-grid {
-  margin-top: 0.9rem;
+  margin-top: 0.55rem;
   display: grid;
-  gap: 0.75rem;
+  gap: 0.55rem;
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
 }
 
 .print-summary-card {
-  border-radius: 0.95rem;
+  border-radius: 0.7rem;
   border: 1px solid color-mix(in oklab, black 12%, transparent);
-  padding: 0.85rem 0.9rem;
+  padding: 0.56rem 0.62rem;
 }
 
 .print-summary-card p {
   margin: 0;
   color: color-mix(in oklab, black 55%, transparent);
-  font-size: 0.85rem;
+  font-size: 0.76rem;
 }
 
 .print-summary-card strong {
   display: block;
-  margin-top: 0.35rem;
-  font-size: 1.25rem;
+  margin-top: 0.22rem;
+  font-size: 1.06rem;
 }
 
 .print-summary-card small {
   display: block;
-  margin-top: 0.35rem;
+  margin-top: 0.2rem;
   color: color-mix(in oklab, black 55%, transparent);
+  font-size: 0.74rem;
 }
 
 .print-kpi-grid {
-  margin-top: 0.95rem;
+  margin-top: 0.55rem;
   display: grid;
-  gap: 0.75rem;
+  gap: 0.55rem;
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
 }
 
 .print-kpi {
-  border-radius: 0.95rem;
+  border-radius: 0.7rem;
   border: 1px solid color-mix(in oklab, black 12%, transparent);
-  padding: 0.8rem 0.9rem;
+  padding: 0.52rem 0.62rem;
   display: grid;
-  gap: 0.25rem;
+  gap: 0.18rem;
 }
 
 .print-kpi p {
   margin: 0;
   color: color-mix(in oklab, black 55%, transparent);
-  font-size: 0.85rem;
+  font-size: 0.75rem;
 }
 
 .print-kpi strong {
-  font-size: 1.2rem;
+  font-size: 1.03rem;
 }
 
 .print-kpi small {
   color: color-mix(in oklab, black 55%, transparent);
-  font-size: 0.85rem;
+  font-size: 0.74rem;
 }
 
 .print-subnote {
-  margin: 0.9rem 0 0;
+  margin: 0.45rem 0 0;
   color: color-mix(in oklab, black 55%, transparent);
+  font-size: 0.77rem;
 }
 
 .print-table-wrap {
-  margin-top: 0.85rem;
+  margin-top: 0.4rem;
+  border-radius: 0.55rem;
+  border: 1px solid color-mix(in oklab, black 12%, transparent);
+  overflow: hidden;
 }
 
 .print-month-group {
-  margin-top: 1rem;
+  margin-top: 0.6rem;
 }
 
 .print-month-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 0.8rem;
+  gap: 0.55rem;
 }
 
 .print-month-head h3 {
   margin: 0;
-  font-size: 1.12rem;
+  font-size: 0.9rem;
 }
 
 .print-month-total {
   margin: 0;
   font-weight: 760;
+  font-size: 0.82rem;
+}
+
+.print-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.print-table thead th {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.64rem;
+  color: color-mix(in oklab, black 58%, transparent);
+  padding: 0.32rem 0.44rem;
+  background: color-mix(in oklab, black 4%, white 96%);
+}
+
+.print-table tbody td {
+  padding: 0.3rem 0.44rem;
+  font-size: 0.74rem;
+  vertical-align: top;
+  border-top: 1px solid color-mix(in oklab, black 10%, transparent);
+}
+
+.print-table tbody tr:nth-child(odd) {
+  background: color-mix(in oklab, black 2%, white 98%);
 }
 
 .panel-header {
@@ -1525,12 +1575,14 @@ tbody td {
 
 @media print {
   @page {
-    margin: 12mm;
+    margin: 8mm;
   }
 
   body {
     background: white !important;
     color: black !important;
+    font-size: 10.2pt;
+    line-height: 1.25;
   }
 
   .no-print {
@@ -1551,12 +1603,131 @@ tbody td {
     padding: 0 !important;
   }
 
-  .print-section + .print-section {
-    break-before: page;
+  .print-cover {
+    margin-bottom: 0.2rem;
   }
 
-  table {
+  .print-title {
+    font-size: 15pt;
+  }
+
+  .print-meta {
+    font-size: 7.9pt;
+    margin-top: 0.2rem;
+  }
+
+  .print-badge {
+    min-width: 8rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.45rem;
+  }
+
+  .print-badge strong {
+    font-size: 10.5pt;
+  }
+
+  .print-badge span {
+    font-size: 7.2pt;
+  }
+
+  .print-section {
+    margin-top: 0.36rem;
+    break-inside: auto;
+  }
+
+  .print-section h2 {
+    font-size: 9.8pt;
+    margin: 0;
+    break-after: avoid;
+  }
+
+  .print-subhead {
+    margin-top: 0.35rem;
+    margin-bottom: 0.18rem;
+    font-size: 8.7pt;
+    break-after: avoid;
+  }
+
+  .print-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.22rem;
+    margin-top: 0.22rem;
+  }
+
+  .print-kpi-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.22rem;
+    margin-top: 0.22rem;
+  }
+
+  .print-summary-card,
+  .print-kpi {
+    border-radius: 0.35rem;
+    padding: 0.22rem 0.3rem;
+  }
+
+  .print-summary-card p,
+  .print-kpi p {
+    font-size: 7.1pt;
+  }
+
+  .print-summary-card strong,
+  .print-kpi strong {
+    font-size: 9.1pt;
+    margin-top: 0.08rem;
+  }
+
+  .print-summary-card small,
+  .print-kpi small,
+  .print-subnote {
+    font-size: 6.9pt;
+    margin-top: 0.1rem;
+  }
+
+  .print-core-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.3rem;
+    margin-top: 0.34rem;
+  }
+
+  .print-core-grid .print-section {
+    margin-top: 0;
+  }
+
+  .print-table-wrap {
+    margin-top: 0.18rem;
+    border-radius: 0.3rem;
+  }
+
+  .print-table {
     min-width: 0 !important;
+  }
+
+  .print-table thead th {
+    font-size: 6.6pt;
+    padding: 1.2mm 1.3mm;
+  }
+
+  .print-table tbody td {
+    font-size: 7.1pt;
+    padding: 1.05mm 1.3mm;
+  }
+
+  .print-month-group {
+    margin-top: 0.3rem;
+    break-inside: auto;
+  }
+
+  .print-month-head h3 {
+    font-size: 8.3pt;
+  }
+
+  .print-month-total {
+    font-size: 7.6pt;
+  }
+
+  .print-section--major {
+    margin-top: 0.5rem;
   }
 
   thead {
@@ -1565,8 +1736,7 @@ tbody td {
 
   tr,
   .print-summary-card,
-  .print-kpi,
-  .print-month-group {
+  .print-kpi {
     break-inside: avoid;
   }
 

@@ -201,7 +201,7 @@ export function PrintReport({
         </div>
       </header>
 
-      <section className="print-section">
+      <section className="print-section print-section--summary">
         <h2>Summary</h2>
         <div className="print-summary-grid">
           <div className="print-summary-card">
@@ -262,13 +262,13 @@ export function PrintReport({
         ) : null}
       </section>
 
-      <section className="print-section">
+      <section className="print-section print-section--compact">
         <h2>Month Close Snapshots</h2>
         {snapshotsInRange.length === 0 ? (
           <p className="print-subnote">No month-close snapshots recorded in this range yet. Run monthly cycle to generate snapshots.</p>
         ) : (
           <div className="print-table-wrap">
-            <table>
+            <table className="print-table">
               <thead>
                 <tr>
                   <th scope="col">Month</th>
@@ -296,13 +296,14 @@ export function PrintReport({
         )}
       </section>
 
-      <section className="print-section">
+      <div className="print-core-grid">
+        <section className="print-section print-section--compact">
         <h2>Income</h2>
         {incomes.length === 0 ? (
           <p className="print-subnote">No income entries.</p>
         ) : (
           <div className="print-table-wrap">
-            <table>
+            <table className="print-table">
               <thead>
                 <tr>
                   <th scope="col">Source</th>
@@ -326,15 +327,15 @@ export function PrintReport({
             </table>
           </div>
         )}
-      </section>
+        </section>
 
-      <section className="print-section">
+        <section className="print-section print-section--compact">
         <h2>Bills</h2>
         {bills.length === 0 ? (
           <p className="print-subnote">No bill entries.</p>
         ) : (
           <div className="print-table-wrap">
-            <table>
+            <table className="print-table">
               <thead>
                 <tr>
                   <th scope="col">Name</th>
@@ -360,15 +361,15 @@ export function PrintReport({
             </table>
           </div>
         )}
-      </section>
+        </section>
 
-      <section className="print-section">
+        <section className="print-section print-section--compact">
         <h2>Cards</h2>
         {cards.length === 0 ? (
           <p className="print-subnote">No card entries.</p>
         ) : (
           <div className="print-table-wrap">
-            <table>
+            <table className="print-table">
               <thead>
                 <tr>
                   <th scope="col">Name</th>
@@ -394,15 +395,15 @@ export function PrintReport({
             </table>
           </div>
         )}
-      </section>
+        </section>
 
-      <section className="print-section">
+        <section className="print-section print-section--compact">
         <h2>Loans</h2>
         {loans.length === 0 ? (
           <p className="print-subnote">No loan entries.</p>
         ) : (
           <div className="print-table-wrap">
-            <table>
+            <table className="print-table">
               <thead>
                 <tr>
                   <th scope="col">Name</th>
@@ -432,15 +433,15 @@ export function PrintReport({
             </table>
           </div>
         )}
-      </section>
+        </section>
 
-      <section className="print-section">
+        <section className="print-section print-section--compact">
         <h2>Accounts</h2>
         {accounts.length === 0 ? (
           <p className="print-subnote">No account entries.</p>
         ) : (
           <div className="print-table-wrap">
-            <table>
+            <table className="print-table">
               <thead>
                 <tr>
                   <th scope="col">Name</th>
@@ -462,15 +463,15 @@ export function PrintReport({
             </table>
           </div>
         )}
-      </section>
+        </section>
 
-      <section className="print-section">
+        <section className="print-section print-section--compact">
         <h2>Goals</h2>
         {goals.length === 0 ? (
           <p className="print-subnote">No goal entries.</p>
         ) : (
           <div className="print-table-wrap">
-            <table>
+            <table className="print-table">
               <thead>
                 <tr>
                   <th scope="col">Title</th>
@@ -494,10 +495,11 @@ export function PrintReport({
             </table>
           </div>
         )}
-      </section>
+        </section>
+      </div>
 
       {config.includePurchases ? (
-        <section className="print-section">
+        <section className="print-section print-section--major">
           <h2>Purchases</h2>
           {purchasesInRange.length === 0 ? (
             <p className="print-subnote">No purchases in this range.</p>
@@ -513,7 +515,7 @@ export function PrintReport({
                       <p className="print-month-total">{formatMoney(monthTotal)}</p>
                     </div>
                     <div className="print-table-wrap">
-                      <table>
+                      <table className="print-table">
                         <thead>
                           <tr>
                             <th scope="col">Date</th>
@@ -550,15 +552,15 @@ export function PrintReport({
       ) : null}
 
       {filteredAuditLogs ? (
-        <section className="print-section">
+        <section className="print-section print-section--major">
           <h2>Audit Logs</h2>
 
-          <h3>Monthly Cycle Runs</h3>
+          <h3 className="print-subhead">Monthly Cycle Runs</h3>
           {filteredAuditLogs.monthlyCycleRuns.length === 0 ? (
             <p className="print-subnote">No cycle runs in range.</p>
           ) : (
             <div className="print-table-wrap">
-              <table>
+              <table className="print-table">
                 <thead>
                   <tr>
                     <th scope="col">Cycle Key</th>
@@ -585,12 +587,12 @@ export function PrintReport({
             </div>
           )}
 
-          <h3>Cycle Audit Logs</h3>
+          <h3 className="print-subhead">Cycle Audit Logs</h3>
           {filteredAuditLogs.cycleAuditLogs.length === 0 ? (
             <p className="print-subnote">No cycle audit logs in range.</p>
           ) : (
             <div className="print-table-wrap">
-              <table>
+              <table className="print-table">
                 <thead>
                   <tr>
                     <th scope="col">Cycle Key</th>
@@ -619,12 +621,12 @@ export function PrintReport({
             </div>
           )}
 
-          <h3>Finance Audit Events</h3>
+          <h3 className="print-subhead">Finance Audit Events</h3>
           {filteredAuditLogs.financeAuditEvents.length === 0 ? (
             <p className="print-subnote">No finance audit events in range.</p>
           ) : (
             <div className="print-table-wrap">
-              <table>
+              <table className="print-table">
                 <thead>
                   <tr>
                     <th scope="col">Entity</th>
