@@ -1575,14 +1575,17 @@ tbody td {
 
 @media print {
   @page {
-    margin: 8mm;
+    size: A4 portrait;
+    margin: 12mm;
   }
 
   body {
     background: white !important;
     color: black !important;
-    font-size: 10.2pt;
-    line-height: 1.25;
+    font-size: 10.5pt;
+    line-height: 1.3;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .no-print {
@@ -1594,108 +1597,118 @@ tbody td {
   }
 
   .dashboard {
-    width: 100% !important;
+    width: auto !important;
+    max-width: none !important;
     margin: 0 !important;
-    padding: 0 !important;
+    padding: 4mm !important;
+    box-sizing: border-box !important;
   }
 
   .print-report {
-    padding: 0 !important;
+    padding: 2.5mm !important;
   }
 
   .print-cover {
-    margin-bottom: 0.2rem;
+    margin-bottom: 0.45rem;
   }
 
   .print-title {
-    font-size: 15pt;
+    font-size: 16pt;
   }
 
   .print-meta {
-    font-size: 7.9pt;
-    margin-top: 0.2rem;
+    font-size: 8.2pt;
+    margin-top: 0.26rem;
   }
 
   .print-badge {
-    min-width: 8rem;
-    padding: 0.35rem 0.5rem;
+    min-width: 9.2rem;
+    padding: 0.45rem 0.6rem;
     border-radius: 0.45rem;
   }
 
   .print-badge strong {
-    font-size: 10.5pt;
+    font-size: 11pt;
   }
 
   .print-badge span {
-    font-size: 7.2pt;
+    font-size: 7.4pt;
   }
 
   .print-section {
-    margin-top: 0.36rem;
+    margin-top: 0.5rem;
     break-inside: auto;
   }
 
   .print-section h2 {
-    font-size: 9.8pt;
+    font-size: 10.2pt;
     margin: 0;
     break-after: avoid;
   }
 
   .print-subhead {
-    margin-top: 0.35rem;
-    margin-bottom: 0.18rem;
-    font-size: 8.7pt;
+    margin-top: 0.42rem;
+    margin-bottom: 0.2rem;
+    font-size: 9pt;
     break-after: avoid;
   }
 
   .print-summary-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.22rem;
-    margin-top: 0.22rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.28rem;
+    margin-top: 0.26rem;
   }
 
   .print-kpi-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.22rem;
-    margin-top: 0.22rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.28rem;
+    margin-top: 0.26rem;
   }
 
   .print-summary-card,
   .print-kpi {
     border-radius: 0.35rem;
-    padding: 0.22rem 0.3rem;
+    padding: 0.28rem 0.34rem;
   }
 
   .print-summary-card p,
   .print-kpi p {
-    font-size: 7.1pt;
+    font-size: 7.3pt;
   }
 
   .print-summary-card strong,
   .print-kpi strong {
-    font-size: 9.1pt;
-    margin-top: 0.08rem;
+    font-size: 9.5pt;
+    margin-top: 0.1rem;
   }
 
   .print-summary-card small,
   .print-kpi small,
   .print-subnote {
-    font-size: 6.9pt;
+    font-size: 7.1pt;
     margin-top: 0.1rem;
   }
 
   .print-core-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.3rem;
-    margin-top: 0.34rem;
-  }
-
-  .print-core-grid .print-section {
+    display: block;
     margin-top: 0;
   }
 
+  .print-core-grid .print-section {
+    margin-top: 0.42rem;
+  }
+
+  .print-section--component {
+    margin-top: 0.42rem;
+  }
+
+  .print-section--major {
+    break-before: page;
+    margin-top: 0.6rem;
+  }
+
   .print-table-wrap {
-    margin-top: 0.18rem;
+    margin-top: 0.2rem;
     border-radius: 0.3rem;
   }
 
@@ -1703,31 +1716,31 @@ tbody td {
     min-width: 0 !important;
   }
 
+  .print-table thead {
+    display: table-header-group;
+  }
+
   .print-table thead th {
-    font-size: 6.6pt;
-    padding: 1.2mm 1.3mm;
+    font-size: 6.9pt;
+    padding: 1.3mm 1.4mm;
   }
 
   .print-table tbody td {
-    font-size: 7.1pt;
-    padding: 1.05mm 1.3mm;
+    font-size: 7.5pt;
+    padding: 1.2mm 1.4mm;
   }
 
   .print-month-group {
-    margin-top: 0.3rem;
+    margin-top: 0.35rem;
     break-inside: auto;
   }
 
   .print-month-head h3 {
-    font-size: 8.3pt;
+    font-size: 8.6pt;
   }
 
   .print-month-total {
-    font-size: 7.6pt;
-  }
-
-  .print-section--major {
-    margin-top: 0.5rem;
+    font-size: 7.8pt;
   }
 
   thead {

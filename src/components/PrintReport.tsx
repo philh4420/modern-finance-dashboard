@@ -262,7 +262,7 @@ export function PrintReport({
         ) : null}
       </section>
 
-      <section className="print-section print-section--compact">
+      <section className="print-section print-section--component">
         <h2>Month Close Snapshots</h2>
         {snapshotsInRange.length === 0 ? (
           <p className="print-subnote">No month-close snapshots recorded in this range yet. Run monthly cycle to generate snapshots.</p>
@@ -296,8 +296,7 @@ export function PrintReport({
         )}
       </section>
 
-      <div className="print-core-grid">
-        <section className="print-section print-section--compact">
+      <section className="print-section print-section--component">
         <h2>Income</h2>
         {incomes.length === 0 ? (
           <p className="print-subnote">No income entries.</p>
@@ -327,9 +326,9 @@ export function PrintReport({
             </table>
           </div>
         )}
-        </section>
+      </section>
 
-        <section className="print-section print-section--compact">
+      <section className="print-section print-section--component">
         <h2>Bills</h2>
         {bills.length === 0 ? (
           <p className="print-subnote">No bill entries.</p>
@@ -361,9 +360,9 @@ export function PrintReport({
             </table>
           </div>
         )}
-        </section>
+      </section>
 
-        <section className="print-section print-section--compact">
+      <section className="print-section print-section--component">
         <h2>Cards</h2>
         {cards.length === 0 ? (
           <p className="print-subnote">No card entries.</p>
@@ -395,9 +394,9 @@ export function PrintReport({
             </table>
           </div>
         )}
-        </section>
+      </section>
 
-        <section className="print-section print-section--compact">
+      <section className="print-section print-section--component">
         <h2>Loans</h2>
         {loans.length === 0 ? (
           <p className="print-subnote">No loan entries.</p>
@@ -433,9 +432,9 @@ export function PrintReport({
             </table>
           </div>
         )}
-        </section>
+      </section>
 
-        <section className="print-section print-section--compact">
+      <section className="print-section print-section--component">
         <h2>Accounts</h2>
         {accounts.length === 0 ? (
           <p className="print-subnote">No account entries.</p>
@@ -463,9 +462,9 @@ export function PrintReport({
             </table>
           </div>
         )}
-        </section>
+      </section>
 
-        <section className="print-section print-section--compact">
+      <section className="print-section print-section--component">
         <h2>Goals</h2>
         {goals.length === 0 ? (
           <p className="print-subnote">No goal entries.</p>
@@ -495,8 +494,7 @@ export function PrintReport({
             </table>
           </div>
         )}
-        </section>
-      </div>
+      </section>
 
       {config.includePurchases ? (
         <section className="print-section print-section--major">
