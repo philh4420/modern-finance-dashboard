@@ -1,8 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 
 type PrintReportConfig = {
   startMonth: string
   endMonth: string
+  includeDashboard: boolean
+  includeIncome: boolean
+  includeBills: boolean
+  includeCards: boolean
+  includeLoans: boolean
+  includeAccounts: boolean
+  includeGoals: boolean
+  includePlanning: boolean
+  includeReconcile: boolean
   includeNotes: boolean
   includeAuditLogs: boolean
   includePurchases: boolean
@@ -31,6 +40,15 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
 
   const [startMonthValue, setStartMonthValue] = useState(defaults.startMonth)
   const [endMonthValue, setEndMonthValue] = useState(defaults.endMonth)
+  const [includeDashboard, setIncludeDashboard] = useState(true)
+  const [includeIncome, setIncludeIncome] = useState(true)
+  const [includeBills, setIncludeBills] = useState(true)
+  const [includeCards, setIncludeCards] = useState(true)
+  const [includeLoans, setIncludeLoans] = useState(true)
+  const [includeAccounts, setIncludeAccounts] = useState(true)
+  const [includeGoals, setIncludeGoals] = useState(true)
+  const [includePlanning, setIncludePlanning] = useState(true)
+  const [includeReconcile, setIncludeReconcile] = useState(true)
   const [includePurchases, setIncludePurchases] = useState(true)
   const [includeNotes, setIncludeNotes] = useState(false)
   const [includeAuditLogs, setIncludeAuditLogs] = useState(false)
@@ -60,12 +78,40 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
     return null
   }
 
+  const clearErrorIfPresent = () => {
+    if (error) {
+      setError(null)
+    }
+  }
+
+  const handleToggle =
+    (setter: (value: boolean) => void) =>
+    (event: ChangeEvent<HTMLInputElement>) => {
+      setter(event.target.checked)
+      clearErrorIfPresent()
+    }
+
   const validate = () => {
     if (!isValidMonthKey(startMonthValue) || !isValidMonthKey(endMonthValue)) {
       return 'Choose a valid month range.'
     }
     if (startMonthValue > endMonthValue) {
       return 'Start month must be before end month.'
+    }
+    if (
+      !includeDashboard &&
+      !includeIncome &&
+      !includeBills &&
+      !includeCards &&
+      !includeLoans &&
+      !includeAccounts &&
+      !includeGoals &&
+      !includePlanning &&
+      !includeReconcile &&
+      !includePurchases &&
+      !includeAuditLogs
+    ) {
+      return 'Select at least one report section to print.'
     }
     return null
   }
@@ -85,6 +131,15 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
     onStartPrint({
       startMonth: startMonthValue,
       endMonth: endMonthValue,
+      includeDashboard,
+      includeIncome,
+      includeBills,
+      includeCards,
+      includeLoans,
+      includeAccounts,
+      includeGoals,
+      includePlanning,
+      includeReconcile,
       includeNotes,
       includeAuditLogs,
       includePurchases,
@@ -121,7 +176,7 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
                 value={startMonthValue}
                 onChange={(event) => {
                   setStartMonthValue(event.target.value)
-                  if (error) setError(null)
+                  clearErrorIfPresent()
                 }}
               />
               <small className="subnote">Selected: {formatMonth(startMonthValue)}</small>
@@ -135,7 +190,7 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
                 value={endMonthValue}
                 onChange={(event) => {
                   setEndMonthValue(event.target.value)
-                  if (error) setError(null)
+                  clearErrorIfPresent()
                 }}
               />
               <small className="subnote">Selected: {formatMonth(endMonthValue)}</small>
@@ -150,17 +205,176 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
 
           <fieldset className="modal-options" aria-label="Report sections">
             <legend className="sr-only">Report sections</legend>
+            <div className="modal-option-toolbar">
+              <button
+                type="button"
+                className="btn btn-ghost btn--sm"
+                onClick={() => {
+                  setIncludeDashboard(true)
+                  setIncludeIncome(true)
+                  setIncludeBills(true)
+                  setIncludeCards(true)
+                  setIncludeLoans(true)
+                  setIncludeAccounts(true)
+                  setIncludeGoals(true)
+                  setIncludePlanning(true)
+                  setIncludeReconcile(true)
+                  setIncludePurchases(true)
+                  setIncludeAuditLogs(true)
+                  clearErrorIfPresent()
+                }}
+              >
+                Select all sections
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn--sm"
+                onClick={() => {
+                  setIncludeDashboard(true)
+                  setIncludeIncome(false)
+                  setIncludeBills(false)
+                  setIncludeCards(false)
+                  setIncludeLoans(false)
+                  setIncludeAccounts(false)
+                  setIncludeGoals(false)
+                  setIncludePlanning(false)
+                  setIncludeReconcile(false)
+                  setIncludePurchases(false)
+                  setIncludeAuditLogs(false)
+                  clearErrorIfPresent()
+                }}
+              >
+                Dashboard only
+              </button>
+            </div>
+
+            <label className={`modal-option-row ${includeDashboard ? 'modal-option-row--active' : ''}`} htmlFor="print-dashboard">
+              <input
+                id="print-dashboard"
+                type="checkbox"
+                checked={includeDashboard}
+                onChange={handleToggle(setIncludeDashboard)}
+              />
+              <div>
+                <strong>Include dashboard</strong>
+                <small>Summary metrics, trust KPIs, and month-close snapshots.</small>
+              </div>
+            </label>
+
+            <label className={`modal-option-row ${includeIncome ? 'modal-option-row--active' : ''}`} htmlFor="print-income">
+              <input
+                id="print-income"
+                type="checkbox"
+                checked={includeIncome}
+                onChange={handleToggle(setIncludeIncome)}
+              />
+              <div>
+                <strong>Include income</strong>
+                <small>All income rows and cadence details.</small>
+              </div>
+            </label>
+
+            <label className={`modal-option-row ${includeBills ? 'modal-option-row--active' : ''}`} htmlFor="print-bills">
+              <input
+                id="print-bills"
+                type="checkbox"
+                checked={includeBills}
+                onChange={handleToggle(setIncludeBills)}
+              />
+              <div>
+                <strong>Include bills</strong>
+                <small>Bill obligations and due schedule.</small>
+              </div>
+            </label>
+
+            <label className={`modal-option-row ${includeCards ? 'modal-option-row--active' : ''}`} htmlFor="print-cards">
+              <input
+                id="print-cards"
+                type="checkbox"
+                checked={includeCards}
+                onChange={handleToggle(setIncludeCards)}
+              />
+              <div>
+                <strong>Include cards</strong>
+                <small>Card portfolio, risk/payoff analysis, and 12-month projections.</small>
+              </div>
+            </label>
+
+            <label className={`modal-option-row ${includeLoans ? 'modal-option-row--active' : ''}`} htmlFor="print-loans">
+              <input
+                id="print-loans"
+                type="checkbox"
+                checked={includeLoans}
+                onChange={handleToggle(setIncludeLoans)}
+              />
+              <div>
+                <strong>Include loans</strong>
+                <small>Loan balances, payment profiles, and cadence.</small>
+              </div>
+            </label>
+
+            <label className={`modal-option-row ${includePlanning ? 'modal-option-row--active' : ''}`} htmlFor="print-planning">
+              <input
+                id="print-planning"
+                type="checkbox"
+                checked={includePlanning}
+                onChange={handleToggle(setIncludePlanning)}
+              />
+              <div>
+                <strong>Include planning</strong>
+                <small>Planning/rule context from budget intelligence summary.</small>
+              </div>
+            </label>
+
+            <label className={`modal-option-row ${includeReconcile ? 'modal-option-row--active' : ''}`} htmlFor="print-reconcile">
+              <input
+                id="print-reconcile"
+                type="checkbox"
+                checked={includeReconcile}
+                onChange={handleToggle(setIncludeReconcile)}
+              />
+              <div>
+                <strong>Include reconcile</strong>
+                <small>Reconciliation quality and status overview for the selected range.</small>
+              </div>
+            </label>
 
             <label className={`modal-option-row ${includePurchases ? 'modal-option-row--active' : ''}`} htmlFor="print-purchases">
               <input
                 id="print-purchases"
                 type="checkbox"
                 checked={includePurchases}
-                onChange={(event) => setIncludePurchases(event.target.checked)}
+                onChange={handleToggle(setIncludePurchases)}
               />
               <div>
                 <strong>Include purchases</strong>
                 <small>Recommended for complete spending totals.</small>
+              </div>
+            </label>
+
+            <label className={`modal-option-row ${includeAccounts ? 'modal-option-row--active' : ''}`} htmlFor="print-accounts">
+              <input
+                id="print-accounts"
+                type="checkbox"
+                checked={includeAccounts}
+                onChange={handleToggle(setIncludeAccounts)}
+              />
+              <div>
+                <strong>Include accounts</strong>
+                <small>All cash/debt/investment balances.</small>
+              </div>
+            </label>
+
+            <label className={`modal-option-row ${includeGoals ? 'modal-option-row--active' : ''}`} htmlFor="print-goals">
+              <input
+                id="print-goals"
+                type="checkbox"
+                checked={includeGoals}
+                onChange={handleToggle(setIncludeGoals)}
+              />
+              <div>
+                <strong>Include goals</strong>
+                <small>Goal targets, current amounts, and priority.</small>
               </div>
             </label>
 
@@ -169,7 +383,7 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
                 id="print-notes"
                 type="checkbox"
                 checked={includeNotes}
-                onChange={(event) => setIncludeNotes(event.target.checked)}
+                onChange={handleToggle(setIncludeNotes)}
               />
               <div>
                 <strong>Include notes</strong>
@@ -182,7 +396,7 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
                 id="print-audit"
                 type="checkbox"
                 checked={includeAuditLogs}
-                onChange={(event) => setIncludeAuditLogs(event.target.checked)}
+                onChange={handleToggle(setIncludeAuditLogs)}
               />
               <div>
                 <strong>Include audit logs</strong>

@@ -867,6 +867,115 @@ h2 {
   background: color-mix(in oklab, black 2%, white 98%);
 }
 
+.print-card-summary-grid {
+  margin-top: 0.55rem;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
+}
+
+.print-card-risk-list {
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.4rem;
+}
+
+.print-card-risk-item {
+  border-radius: 0.62rem;
+  border: 1px solid color-mix(in oklab, black 12%, transparent);
+  background: color-mix(in oklab, black 2%, white 98%);
+  padding: 0.4rem 0.5rem;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.print-card-risk-item strong {
+  font-size: 0.78rem;
+}
+
+.print-card-risk-item small {
+  font-size: 0.72rem;
+  color: color-mix(in oklab, black 55%, transparent);
+}
+
+.print-card-risk-item--critical {
+  border-color: color-mix(in oklab, var(--tone-negative) 45%, black 55%);
+  background: color-mix(in oklab, var(--tone-negative) 10%, white 90%);
+}
+
+.print-card-risk-item--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 45%, black 55%);
+  background: color-mix(in oklab, var(--tone-warning) 10%, white 90%);
+}
+
+.print-card-risk-item--watch {
+  border-color: color-mix(in oklab, var(--tone-finance) 45%, black 55%);
+  background: color-mix(in oklab, var(--tone-finance) 10%, white 90%);
+}
+
+.print-card-risk-pill {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, black 14%, transparent);
+  padding: 0.08rem 0.45rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.print-card-risk-pill--critical {
+  border-color: color-mix(in oklab, var(--tone-negative) 45%, black 55%);
+  color: color-mix(in oklab, var(--tone-negative) 80%, black 20%);
+}
+
+.print-card-risk-pill--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 45%, black 55%);
+  color: color-mix(in oklab, var(--tone-warning) 80%, black 20%);
+}
+
+.print-card-risk-pill--watch {
+  border-color: color-mix(in oklab, var(--tone-finance) 45%, black 55%);
+  color: color-mix(in oklab, var(--tone-finance) 80%, black 20%);
+}
+
+.print-card-payoff-grid {
+  margin-top: 0.4rem;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}
+
+.print-card-projection {
+  margin-top: 0.6rem;
+  break-inside: avoid-page;
+}
+
+.print-card-projection-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.7rem;
+}
+
+.print-card-projection-head h4 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.print-card-projection-head p {
+  margin: 0;
+  font-size: 0.72rem;
+  color: color-mix(in oklab, black 55%, transparent);
+}
+
+.print-table--projection thead th {
+  white-space: nowrap;
+}
+
 .panel-header {
   display: flex;
   justify-content: space-between;
@@ -2285,6 +2394,55 @@ tbody td {
     margin-top: 0.42rem;
   }
 
+  .print-card-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.28rem;
+    margin-top: 0.3rem;
+  }
+
+  .print-card-risk-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.25rem;
+    margin-top: 0.24rem;
+  }
+
+  .print-card-risk-item {
+    border-radius: 0.34rem;
+    padding: 0.24rem 0.28rem;
+  }
+
+  .print-card-risk-item strong {
+    font-size: 7.6pt;
+  }
+
+  .print-card-risk-item small {
+    font-size: 7.1pt;
+  }
+
+  .print-card-risk-pill {
+    font-size: 6.4pt;
+    padding: 0.04rem 0.3rem;
+  }
+
+  .print-card-payoff-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.28rem;
+    margin-top: 0.24rem;
+  }
+
+  .print-card-projection {
+    margin-top: 0.34rem;
+    break-inside: auto;
+  }
+
+  .print-card-projection-head h4 {
+    font-size: 8.6pt;
+  }
+
+  .print-card-projection-head p {
+    font-size: 7.1pt;
+  }
+
   .print-section--component {
     margin-top: 0.42rem;
   }
@@ -2315,6 +2473,16 @@ tbody td {
   .print-table tbody td {
     font-size: 7.5pt;
     padding: 1.2mm 1.4mm;
+  }
+
+  .print-table--projection thead th {
+    font-size: 6.6pt;
+    padding: 1.1mm 1.2mm;
+  }
+
+  .print-table--projection tbody td {
+    font-size: 7pt;
+    padding: 1mm 1.2mm;
   }
 
   .print-month-group {
