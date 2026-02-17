@@ -158,6 +158,20 @@ const validateDayOfMonth = (value: number, fieldName: string) => {
   }
 }
 
+const validateUsedLimitAgainstCreditLimit = (args: {
+  creditLimit: number
+  usedLimit: number
+  allowOverLimitOverride?: boolean
+}) => {
+  if (args.usedLimit <= args.creditLimit + 0.000001) {
+    return
+  }
+
+  if (!args.allowOverLimitOverride) {
+    throw new Error('Current balance exceeds credit limit. Enable over-limit override to continue.')
+  }
+}
+
 const finiteOrZero = (value: number | undefined | null) =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0
 
@@ -2334,6 +2348,7 @@ export const addCard = mutation({
     name: v.string(),
     creditLimit: v.number(),
     usedLimit: v.number(),
+    allowOverLimitOverride: v.optional(v.boolean()),
     statementBalance: v.optional(v.number()),
     pendingCharges: v.optional(v.number()),
     minimumPayment: v.number(),
@@ -2351,6 +2366,11 @@ export const addCard = mutation({
     validateRequiredText(args.name, 'Card name')
     validatePositive(args.creditLimit, 'Credit limit')
     validateNonNegative(args.usedLimit, 'Used limit')
+    validateUsedLimitAgainstCreditLimit({
+      creditLimit: args.creditLimit,
+      usedLimit: args.usedLimit,
+      allowOverLimitOverride: args.allowOverLimitOverride,
+    })
     if (args.statementBalance !== undefined) {
       validateNonNegative(args.statementBalance, 'Statement balance')
     }
@@ -2441,6 +2461,7 @@ export const updateCard = mutation({
     name: v.string(),
     creditLimit: v.number(),
     usedLimit: v.number(),
+    allowOverLimitOverride: v.optional(v.boolean()),
     statementBalance: v.optional(v.number()),
     pendingCharges: v.optional(v.number()),
     minimumPayment: v.number(),
@@ -2458,6 +2479,11 @@ export const updateCard = mutation({
     validateRequiredText(args.name, 'Card name')
     validatePositive(args.creditLimit, 'Credit limit')
     validateNonNegative(args.usedLimit, 'Used limit')
+    validateUsedLimitAgainstCreditLimit({
+      creditLimit: args.creditLimit,
+      usedLimit: args.usedLimit,
+      allowOverLimitOverride: args.allowOverLimitOverride,
+    })
     if (args.statementBalance !== undefined) {
       validateNonNegative(args.statementBalance, 'Statement balance')
     }
@@ -2564,6 +2590,7 @@ export const addCardCharge = mutation({
   args: {
     id: v.id('cards'),
     amount: v.number(),
+    allowOverLimitOverride: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -2571,6 +2598,12 @@ export const addCardCharge = mutation({
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Card record not found.')
+    const projectedUsed = finiteOrZero(existing.usedLimit) + args.amount
+    validateUsedLimitAgainstCreditLimit({
+      creditLimit: finiteOrZero(existing.creditLimit),
+      usedLimit: projectedUsed,
+      allowOverLimitOverride: args.allowOverLimitOverride,
+    })
     const next = applyChargeToCard(existing, args.amount)
 
     await ctx.db.patch(args.id, {
@@ -2612,6 +2645,10 @@ export const recordCardPayment = mutation({
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Card record not found.')
+    const outstanding = Math.max(finiteOrZero(existing.usedLimit), 0)
+    if (args.amount > outstanding + 0.000001) {
+      throw new Error(`Payment amount cannot exceed current balance (${roundCurrency(outstanding)}).`)
+    }
     const next = applyPaymentToCard(existing, args.amount)
 
     if (next.appliedAmount <= 0) {
@@ -2653,6 +2690,7 @@ export const transferCardBalance = mutation({
     fromCardId: v.id('cards'),
     toCardId: v.id('cards'),
     amount: v.number(),
+    allowOverLimitOverride: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -2665,6 +2703,15 @@ export const transferCardBalance = mutation({
     const [fromCard, toCard] = await Promise.all([ctx.db.get(args.fromCardId), ctx.db.get(args.toCardId)])
     ensureOwned(fromCard, identity.subject, 'Source card not found.')
     ensureOwned(toCard, identity.subject, 'Destination card not found.')
+    const sourceOutstanding = Math.max(finiteOrZero(fromCard.usedLimit), 0)
+    if (args.amount > sourceOutstanding + 0.000001) {
+      throw new Error(`Transfer amount cannot exceed source balance (${roundCurrency(sourceOutstanding)}).`)
+    }
+    validateUsedLimitAgainstCreditLimit({
+      creditLimit: finiteOrZero(toCard.creditLimit),
+      usedLimit: finiteOrZero(toCard.usedLimit) + args.amount,
+      allowOverLimitOverride: args.allowOverLimitOverride,
+    })
 
     const fromNext = applyPaymentToCard(fromCard, args.amount)
     if (fromNext.appliedAmount <= 0) {

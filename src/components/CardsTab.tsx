@@ -34,9 +34,14 @@ type CardsTabProps = {
   onDeleteCard: (id: CardId) => Promise<void>
   saveCardEdit: () => Promise<void>
   startCardEdit: (entry: CardEntry) => void
-  onQuickAddCharge: (id: CardId, amount: number) => Promise<void>
+  onQuickAddCharge: (id: CardId, amount: number, allowOverLimitOverride?: boolean) => Promise<void>
   onQuickRecordPayment: (id: CardId, amount: number) => Promise<void>
-  onQuickTransferBalance: (fromCardId: CardId, toCardId: CardId, amount: number) => Promise<void>
+  onQuickTransferBalance: (
+    fromCardId: CardId,
+    toCardId: CardId,
+    amount: number,
+    allowOverLimitOverride?: boolean,
+  ) => Promise<void>
   formatMoney: (value: number) => string
   formatPercent: (value: number) => string
 }
@@ -88,6 +93,32 @@ type CardRiskAlert = {
 }
 
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
+const parseDecimal = (value: string) => {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const overLimitValidationMessage = (input: { creditLimit: number | null; usedLimit: number | null; override: boolean }) => {
+  const { creditLimit, usedLimit, override } = input
+
+  if (creditLimit === null || usedLimit === null) {
+    return null
+  }
+
+  if (creditLimit <= 0) {
+    return 'Credit limit must be greater than 0.'
+  }
+
+  if (usedLimit < 0) {
+    return 'Current balance cannot be negative.'
+  }
+
+  if (usedLimit > creditLimit + 0.000001 && !override) {
+    return 'Current balance exceeds credit limit. Enable over-limit override to continue.'
+  }
+
+  return null
+}
 
 const toNonNegativeNumber = (value: number | undefined | null) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(value, 0) : 0
@@ -318,6 +349,7 @@ export function CardsTab({
   const [quickAction, setQuickAction] = useState<QuickActionState>(null)
   const [quickAmount, setQuickAmount] = useState('')
   const [quickTransferTo, setQuickTransferTo] = useState<CardId | ''>('')
+  const [quickAllowOverLimitOverride, setQuickAllowOverLimitOverride] = useState(false)
   const [quickSubmitting, setQuickSubmitting] = useState(false)
 
   const pillVariantForUtil = (ratio: number) => {
@@ -497,10 +529,21 @@ export function CardsTab({
 
   const quickAmountValue = Number.parseFloat(quickAmount)
   const quickAmountValid = Number.isFinite(quickAmountValue) && quickAmountValue > 0
+  const addFormCreditLimit = parseDecimal(cardForm.creditLimit)
+  const addFormUsedLimit = parseDecimal(cardForm.usedLimit)
+  const addFormOverLimitMessage = overLimitValidationMessage({
+    creditLimit: addFormCreditLimit,
+    usedLimit: addFormUsedLimit,
+    override: cardForm.allowOverLimitOverride,
+  })
+  const addFormWouldBeOverLimit =
+    addFormCreditLimit !== null && addFormUsedLimit !== null && addFormUsedLimit > addFormCreditLimit + 0.000001
+  const addFormCanSubmit = addFormOverLimitMessage === null
 
   const openQuickAction = (cardId: CardId, type: QuickActionType) => {
     setQuickAction({ cardId, type })
     setQuickAmount('')
+    setQuickAllowOverLimitOverride(false)
     if (type === 'transfer_balance') {
       const firstTarget = cards.find((card) => card._id !== cardId)?._id ?? ''
       setQuickTransferTo(firstTarget)
@@ -513,6 +556,7 @@ export function CardsTab({
     setQuickAction(null)
     setQuickAmount('')
     setQuickTransferTo('')
+    setQuickAllowOverLimitOverride(false)
     setQuickSubmitting(false)
   }
 
@@ -530,11 +574,11 @@ export function CardsTab({
     setQuickSubmitting(true)
     try {
       if (quickAction.type === 'add_charge') {
-        await onQuickAddCharge(quickAction.cardId, quickAmountValue)
+        await onQuickAddCharge(quickAction.cardId, quickAmountValue, quickAllowOverLimitOverride)
       } else if (quickAction.type === 'record_payment') {
         await onQuickRecordPayment(quickAction.cardId, quickAmountValue)
       } else if (quickTransferTo) {
-        await onQuickTransferBalance(quickAction.cardId, quickTransferTo, quickAmountValue)
+        await onQuickTransferBalance(quickAction.cardId, quickTransferTo, quickAmountValue, quickAllowOverLimitOverride)
       }
       closeQuickAction()
     } catch {
@@ -547,10 +591,53 @@ export function CardsTab({
       return null
     }
 
+    const sourceCard = cards.find((card) => card._id === cardId)
+    if (!sourceCard) {
+      return null
+    }
+
+    const sourceBalance = toNonNegativeNumber(sourceCard.usedLimit)
+    const sourceLimit = toNonNegativeNumber(sourceCard.creditLimit)
     const transferTargets = cards.filter((card) => card._id !== cardId)
     const requiresTarget = quickAction.type === 'transfer_balance'
     const transferTargetValid = !requiresTarget || transferTargets.some((card) => card._id === quickTransferTo)
-    const canSubmit = quickAmountValid && transferTargetValid && !quickSubmitting
+    const selectedTransferTarget =
+      quickAction.type === 'transfer_balance'
+        ? transferTargets.find((card) => card._id === quickTransferTo) ?? null
+        : null
+    const paymentLikeMax =
+      quickAction.type === 'record_payment' || quickAction.type === 'transfer_balance' ? sourceBalance : null
+    const exceedsSourceBalance =
+      paymentLikeMax !== null && quickAmountValid && quickAmountValue > paymentLikeMax + 0.000001
+
+    const chargeWouldExceedLimit =
+      quickAction.type === 'add_charge' &&
+      quickAmountValid &&
+      sourceBalance + quickAmountValue > sourceLimit + 0.000001
+
+    const transferWouldExceedTargetLimit =
+      quickAction.type === 'transfer_balance' &&
+      selectedTransferTarget !== null &&
+      quickAmountValid &&
+      toNonNegativeNumber(selectedTransferTarget.usedLimit) + quickAmountValue >
+        toNonNegativeNumber(selectedTransferTarget.creditLimit) + 0.000001
+
+    const needsOverLimitOverride = chargeWouldExceedLimit || transferWouldExceedTargetLimit
+    let quickValidationMessage: string | null = null
+
+    if (requiresTarget && !transferTargetValid) {
+      quickValidationMessage = 'Select a destination card to continue.'
+    } else if (exceedsSourceBalance && paymentLikeMax !== null) {
+      quickValidationMessage = `Amount cannot exceed current balance (${formatMoney(paymentLikeMax)}).`
+    } else if (needsOverLimitOverride && !quickAllowOverLimitOverride) {
+      quickValidationMessage =
+        quickAction.type === 'add_charge'
+          ? 'This charge would exceed the card limit. Enable over-limit override to continue.'
+          : 'This transfer would exceed the destination card limit. Enable over-limit override to continue.'
+    }
+
+    const quickAmountMax = paymentLikeMax !== null ? roundCurrency(Math.max(paymentLikeMax, 0)).toFixed(2) : undefined
+    const canSubmit = quickAmountValid && transferTargetValid && !quickSubmitting && quickValidationMessage === null
 
     return (
       <form
@@ -570,6 +657,7 @@ export function CardsTab({
               inputMode="decimal"
               min="0.01"
               step="0.01"
+              max={quickAmountMax}
               value={quickAmount}
               onChange={(event) => setQuickAmount(event.target.value)}
               placeholder="0.00"
@@ -605,6 +693,30 @@ export function CardsTab({
             </div>
           )}
         </div>
+
+        {needsOverLimitOverride ? (
+          <label className="cards-override-toggle cards-override-toggle--inline">
+            <input
+              type="checkbox"
+              checked={quickAllowOverLimitOverride}
+              onChange={(event) => setQuickAllowOverLimitOverride(event.target.checked)}
+            />
+            <span>
+              {quickAction.type === 'add_charge'
+                ? 'Allow this charge to exceed the card credit limit.'
+                : 'Allow this transfer even if destination card exceeds its credit limit.'}
+            </span>
+          </label>
+        ) : null}
+
+        {quickValidationMessage ? (
+          <p className="cards-inline-validation cards-inline-validation--error">{quickValidationMessage}</p>
+        ) : null}
+        {!quickValidationMessage && needsOverLimitOverride && quickAllowOverLimitOverride ? (
+          <p className="cards-inline-validation cards-inline-validation--warning">
+            Over-limit override enabled for this quick action.
+          </p>
+        ) : null}
 
         <div className="cards-quick-actions">
           <button type="button" className="btn btn-ghost btn--sm" onClick={closeQuickAction} disabled={quickSubmitting}>
@@ -733,6 +845,22 @@ export function CardsTab({
                 onChange={(event) => setCardForm((prev) => ({ ...prev, pendingCharges: event.target.value }))}
                 required
               />
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label className="cards-override-toggle">
+                <input
+                  type="checkbox"
+                  checked={cardForm.allowOverLimitOverride}
+                  onChange={(event) =>
+                    setCardForm((prev) => ({
+                      ...prev,
+                      allowOverLimitOverride: event.target.checked,
+                    }))
+                  }
+                />
+                <span>Allow current balance above credit limit (explicit override)</span>
+              </label>
             </div>
 
             <div className="form-field">
@@ -864,9 +992,17 @@ export function CardsTab({
             New statement = statement balance + APR monthly interest. Payment can be fixed or % + interest, with optional extra payment.
             On/after due day, current/available/utilization use statement minus planned payment, plus pending charges.
           </p>
+          {addFormOverLimitMessage ? (
+            <p className="cards-inline-validation cards-inline-validation--error">{addFormOverLimitMessage}</p>
+          ) : null}
+          {!addFormOverLimitMessage && addFormWouldBeOverLimit && cardForm.allowOverLimitOverride ? (
+            <p className="cards-inline-validation cards-inline-validation--warning">
+              Over-limit override enabled. This card can save above the limit.
+            </p>
+          ) : null}
 
           <div className="form-actions">
-            <button type="submit" className="btn btn-primary">
+            <button type="submit" className="btn btn-primary" disabled={!addFormCanSubmit}>
               Add card
             </button>
           </div>
@@ -1136,6 +1272,19 @@ export function CardsTab({
                             },
                           )
 
+                          const editCreditLimit = Number.isFinite(draftLimit) ? draftLimit : null
+                          const editUsedLimit = Number.isFinite(draftUsed) ? draftUsed : null
+                          const editOverLimitMessage = overLimitValidationMessage({
+                            creditLimit: editCreditLimit,
+                            usedLimit: editUsedLimit,
+                            override: cardEditDraft.allowOverLimitOverride,
+                          })
+                          const editWouldBeOverLimit =
+                            editCreditLimit !== null &&
+                            editUsedLimit !== null &&
+                            editUsedLimit > editCreditLimit + 0.000001
+                          const canSaveEdit = editOverLimitMessage === null
+
                           const rowProjection = isEditing ? editProjection : projection
                           const availableClass = rowProjection.displayAvailableCredit < 0 ? 'amount-negative' : 'amount-positive'
 
@@ -1368,6 +1517,19 @@ export function CardsTab({
                                         }))
                                       }
                                     />
+                                    <label className="cards-override-toggle cards-override-toggle--inline">
+                                      <input
+                                        type="checkbox"
+                                        checked={cardEditDraft.allowOverLimitOverride}
+                                        onChange={(event) =>
+                                          setCardEditDraft((prev) => ({
+                                            ...prev,
+                                            allowOverLimitOverride: event.target.checked,
+                                          }))
+                                        }
+                                      />
+                                      <span>Allow over-limit</span>
+                                    </label>
                                   </div>
                                 ) : (
                                   <div className="cell-stack">
@@ -1388,20 +1550,30 @@ export function CardsTab({
 
                               <td>
                                 {isEditing ? (
-                                  <input
-                                    className="inline-input"
-                                    type="number"
-                                    inputMode="decimal"
-                                    min="0"
-                                    step="0.01"
-                                    value={cardEditDraft.spendPerMonth}
-                                    onChange={(event) =>
-                                      setCardEditDraft((prev) => ({
-                                        ...prev,
-                                        spendPerMonth: event.target.value,
-                                      }))
-                                    }
-                                  />
+                                  <div className="cell-stack">
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      inputMode="decimal"
+                                      min="0"
+                                      step="0.01"
+                                      value={cardEditDraft.spendPerMonth}
+                                      onChange={(event) =>
+                                        setCardEditDraft((prev) => ({
+                                          ...prev,
+                                          spendPerMonth: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                    {editOverLimitMessage ? (
+                                      <small className="cards-inline-validation cards-inline-validation--error">{editOverLimitMessage}</small>
+                                    ) : null}
+                                    {!editOverLimitMessage && editWouldBeOverLimit && cardEditDraft.allowOverLimitOverride ? (
+                                      <small className="cards-inline-validation cards-inline-validation--warning">
+                                        Over-limit override enabled for this update.
+                                      </small>
+                                    ) : null}
+                                  </div>
                                 ) : (
                                   <div className="cell-stack">
                                     <small>Planned spend {formatMoney(rowProjection.plannedSpend)}</small>
@@ -1419,6 +1591,7 @@ export function CardsTab({
                                         type="button"
                                         className="btn btn-secondary btn--sm"
                                         onClick={() => void saveCardEdit()}
+                                        disabled={!canSaveEdit}
                                       >
                                         Save
                                       </button>
@@ -1521,6 +1694,19 @@ export function CardsTab({
                       },
                     )
 
+                    const editCreditLimit = Number.isFinite(draftLimit) ? draftLimit : null
+                    const editUsedLimit = Number.isFinite(draftUsed) ? draftUsed : null
+                    const editOverLimitMessage = overLimitValidationMessage({
+                      creditLimit: editCreditLimit,
+                      usedLimit: editUsedLimit,
+                      override: cardEditDraft.allowOverLimitOverride,
+                    })
+                    const editWouldBeOverLimit =
+                      editCreditLimit !== null &&
+                      editUsedLimit !== null &&
+                      editUsedLimit > editCreditLimit + 0.000001
+                    const canSaveEdit = editOverLimitMessage === null
+
                     const rowProjection = isEditing ? editProjection : projection
                     const availableClass = rowProjection.displayAvailableCredit < 0 ? 'amount-negative' : 'amount-positive'
 
@@ -1548,7 +1734,8 @@ export function CardsTab({
 
                         <div className="cards-mobile-content">
                           {isEditing ? (
-                            <div className="cards-mobile-edit-grid">
+                            <>
+                              <div className="cards-mobile-edit-grid">
                               <label className="cards-mobile-edit-field">
                                 <span>Card name</span>
                                 <input
@@ -1596,6 +1783,22 @@ export function CardsTab({
                                   }
                                 />
                               </label>
+                              <div className="cards-mobile-edit-field cards-mobile-edit-field--span2">
+                                <span>Override</span>
+                                <label className="cards-override-toggle cards-override-toggle--inline">
+                                  <input
+                                    type="checkbox"
+                                    checked={cardEditDraft.allowOverLimitOverride}
+                                    onChange={(event) =>
+                                      setCardEditDraft((prev) => ({
+                                        ...prev,
+                                        allowOverLimitOverride: event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  <span>Allow over-limit</span>
+                                </label>
+                              </div>
                               <label className="cards-mobile-edit-field">
                                 <span>Statement balance</span>
                                 <input
@@ -1757,7 +1960,16 @@ export function CardsTab({
                                   }
                                 />
                               </label>
-                            </div>
+                              </div>
+                              {editOverLimitMessage ? (
+                                <p className="cards-inline-validation cards-inline-validation--error">{editOverLimitMessage}</p>
+                              ) : null}
+                              {!editOverLimitMessage && editWouldBeOverLimit && cardEditDraft.allowOverLimitOverride ? (
+                                <p className="cards-inline-validation cards-inline-validation--warning">
+                                  Over-limit override enabled for this update.
+                                </p>
+                              ) : null}
+                            </>
                           ) : (
                             <div className="cards-mobile-grid">
                               <div>
@@ -1834,7 +2046,12 @@ export function CardsTab({
                           <div className="row-actions row-actions--cards-mobile">
                             {isEditing ? (
                               <>
-                                <button type="button" className="btn btn-secondary btn--sm" onClick={() => void saveCardEdit()}>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn--sm"
+                                  onClick={() => void saveCardEdit()}
+                                  disabled={!canSaveEdit}
+                                >
                                   Save
                                 </button>
                                 <button type="button" className="btn btn-ghost btn--sm" onClick={() => setCardEditId(null)}>

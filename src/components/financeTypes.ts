@@ -146,6 +146,7 @@ export type CardForm = {
   name: string
   creditLimit: string
   usedLimit: string
+  allowOverLimitOverride: boolean
   statementBalance: string
   pendingCharges: string
   minimumPaymentType: CardMinimumPaymentType

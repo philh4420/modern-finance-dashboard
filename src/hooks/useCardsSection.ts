@@ -13,6 +13,7 @@ const initialCardForm: CardForm = {
   name: '',
   creditLimit: '',
   usedLimit: '',
+  allowOverLimitOverride: false,
   statementBalance: '',
   pendingCharges: '',
   minimumPaymentType: 'fixed',
@@ -29,6 +30,7 @@ const initialCardEditDraft: CardEditDraft = {
   name: '',
   creditLimit: '',
   usedLimit: '',
+  allowOverLimitOverride: false,
   statementBalance: '',
   pendingCharges: '',
   minimumPaymentType: 'fixed',
@@ -63,6 +65,7 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
         name: cardForm.name,
         creditLimit: parseFloatInput(cardForm.creditLimit, 'Credit limit'),
         usedLimit: parseFloatInput(cardForm.usedLimit, 'Used limit'),
+        allowOverLimitOverride: cardForm.allowOverLimitOverride,
         statementBalance: cardForm.statementBalance
           ? parseFloatInput(cardForm.statementBalance, 'Statement balance')
           : undefined,
@@ -109,6 +112,7 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
       name: entry.name,
       creditLimit: String(entry.creditLimit),
       usedLimit: String(entry.usedLimit),
+      allowOverLimitOverride: false,
       statementBalance: String(entry.statementBalance ?? entry.usedLimit),
       pendingCharges: String(entry.pendingCharges ?? Math.max(entry.usedLimit - (entry.statementBalance ?? entry.usedLimit), 0)),
       minimumPaymentType: entry.minimumPaymentType ?? 'fixed',
@@ -133,6 +137,7 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
         name: cardEditDraft.name,
         creditLimit: parseFloatInput(cardEditDraft.creditLimit, 'Credit limit'),
         usedLimit: parseFloatInput(cardEditDraft.usedLimit, 'Used limit'),
+        allowOverLimitOverride: cardEditDraft.allowOverLimitOverride,
         statementBalance: cardEditDraft.statementBalance
           ? parseFloatInput(cardEditDraft.statementBalance, 'Statement balance')
           : undefined,
@@ -160,10 +165,10 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
     }
   }
 
-  const onQuickAddCharge = async (id: CardId, amount: number) => {
+  const onQuickAddCharge = async (id: CardId, amount: number, allowOverLimitOverride = false) => {
     clearError()
     try {
-      await addCardCharge({ id, amount })
+      await addCardCharge({ id, amount, allowOverLimitOverride })
     } catch (error) {
       handleMutationError(error)
     }
@@ -178,10 +183,15 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
     }
   }
 
-  const onQuickTransferBalance = async (fromCardId: CardId, toCardId: CardId, amount: number) => {
+  const onQuickTransferBalance = async (
+    fromCardId: CardId,
+    toCardId: CardId,
+    amount: number,
+    allowOverLimitOverride = false,
+  ) => {
     clearError()
     try {
-      await transferCardBalance({ fromCardId, toCardId, amount })
+      await transferCardBalance({ fromCardId, toCardId, amount, allowOverLimitOverride })
     } catch (error) {
       handleMutationError(error)
     }

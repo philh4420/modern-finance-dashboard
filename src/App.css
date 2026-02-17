@@ -1181,6 +1181,48 @@ h2 {
   font-weight: 750;
 }
 
+.cards-override-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.48rem;
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-weight: 560;
+}
+
+.cards-override-toggle input[type='checkbox'] {
+  width: 1rem;
+  min-width: 1rem;
+  height: 1rem;
+  margin-top: 0.04rem;
+  accent-color: color-mix(in oklab, var(--tone-finance) 78%, var(--tone-savings) 22%);
+}
+
+.cards-override-toggle span {
+  line-height: 1.3;
+}
+
+.cards-override-toggle--inline {
+  border-radius: 0.72rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 90%, white 10%);
+  padding: 0.42rem 0.52rem;
+}
+
+.cards-inline-validation {
+  margin: 0.1rem 0 0;
+  font-size: 0.77rem;
+  line-height: 1.32;
+}
+
+.cards-inline-validation--error {
+  color: color-mix(in oklab, var(--tone-negative) 82%, black 18%);
+}
+
+.cards-inline-validation--warning {
+  color: color-mix(in oklab, var(--tone-warning) 78%, black 22%);
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-start;
@@ -1890,6 +1932,10 @@ tbody td {
 .cards-mobile-edit-field {
   display: grid;
   gap: 0.28rem;
+}
+
+.cards-mobile-edit-field--span2 {
+  grid-column: 1 / -1;
 }
 
 .cards-mobile-edit-field>span {
