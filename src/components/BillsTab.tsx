@@ -581,7 +581,8 @@ export function BillsTab({
           </div>
 
           <p id="bill-form-hint" className="form-hint">
-            Tip: use <strong>Custom</strong> for unusual billing cycles (every 6 weeks, 4 months, etc).
+            Tip: use <strong>Custom</strong> for true intervals (every 4 weeks, 6 weeks, 4 months, etc) and{' '}
+            <strong>One Time</strong> for non-recurring bills.
           </p>
 
           <div className="form-actions">

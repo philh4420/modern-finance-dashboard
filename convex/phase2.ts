@@ -348,6 +348,12 @@ const nextDateByMonthCycle = (day: number, cycleMonths: number, anchorDate: Date
   return null
 }
 
+const nextOneTimeDate = (day: number, anchorDate: Date, now: Date) => {
+  const candidate = dateWithClampedDay(anchorDate.getFullYear(), anchorDate.getMonth(), day)
+  const scheduled = candidate < anchorDate ? anchorDate : candidate
+  return scheduled >= now ? scheduled : null
+}
+
 const nextDateForCadence = (
   cadence: Cadence,
   createdAt: number,
@@ -357,13 +363,15 @@ const nextDateForCadence = (
   customUnit?: CustomCadenceUnit,
 ): Date | null => {
   const today = startOfDay(now)
+  const anchorDate = startOfDay(new Date(createdAt))
   if (cadence === 'one_time') {
-    return null
+    const normalizedDay = Math.min(Math.max(dayOfMonth ?? anchorDate.getDate(), 1), 31)
+    return nextOneTimeDate(normalizedDay, anchorDate, today)
   }
 
   if (cadence === 'weekly' || cadence === 'biweekly') {
     const interval = cadence === 'weekly' ? 7 : 14
-    const base = startOfDay(new Date(createdAt))
+    const base = new Date(anchorDate.getTime())
     while (base < today) {
       base.setDate(base.getDate() + interval)
     }
@@ -375,7 +383,7 @@ const nextDateForCadence = (
       return null
     }
 
-    const base = startOfDay(new Date(createdAt))
+    const base = new Date(anchorDate.getTime())
     if (customUnit === 'days' || customUnit === 'weeks') {
       const interval = customUnit === 'days' ? customInterval : customInterval * 7
       while (base < today) {
@@ -385,12 +393,10 @@ const nextDateForCadence = (
     }
 
     const cycleMonths = customUnit === 'months' ? customInterval : customInterval * 12
-    const anchorDate = new Date(createdAt)
     return nextDateByMonthCycle(dayOfMonth ?? anchorDate.getDate(), cycleMonths, anchorDate, today)
   }
 
   const cycleMonths = cadence === 'monthly' ? 1 : cadence === 'quarterly' ? 3 : 12
-  const anchorDate = new Date(createdAt)
   return nextDateByMonthCycle(dayOfMonth ?? anchorDate.getDate(), cycleMonths, anchorDate, today)
 }
 

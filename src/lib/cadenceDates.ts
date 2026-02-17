@@ -72,6 +72,12 @@ const nextDateByMonthCycle = (day: number, cycleMonths: number, anchorDate: Date
   return null
 }
 
+const nextOneTimeDate = (day: number, anchorDate: Date, now: Date) => {
+  const candidate = dateWithClampedDay(anchorDate.getFullYear(), anchorDate.getMonth(), day)
+  const scheduled = candidate < anchorDate ? anchorDate : candidate
+  return scheduled >= now ? scheduled : null
+}
+
 export const isValidIsoDate = (value: string) => parseIsoDateValue(value) !== null
 
 export const nextDateForCadence = (args: {
@@ -87,7 +93,8 @@ export const nextDateForCadence = (args: {
   const anchorDate = resolveCadenceAnchorDate(args.createdAt, args.payDateAnchor)
 
   if (args.cadence === 'one_time') {
-    return null
+    const normalizedDay = clamp(args.dayOfMonth ?? anchorDate.getDate(), 1, 31)
+    return nextOneTimeDate(normalizedDay, anchorDate, today)
   }
 
   if (args.cadence === 'weekly' || args.cadence === 'biweekly') {
