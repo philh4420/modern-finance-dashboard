@@ -651,6 +651,9 @@ function App() {
 	            onDeleteCard={cardsSection.onDeleteCard}
 	            saveCardEdit={cardsSection.saveCardEdit}
 	            startCardEdit={cardsSection.startCardEdit}
+	            onQuickAddCharge={cardsSection.onQuickAddCharge}
+	            onQuickRecordPayment={cardsSection.onQuickRecordPayment}
+	            onQuickTransferBalance={cardsSection.onQuickTransferBalance}
 	            formatMoney={formatSection.formatMoney}
 	            formatPercent={formatSection.formatPercent}
 	          />

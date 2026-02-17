@@ -452,6 +452,53 @@ const resolveCardPaymentPlan = (args: {
   }
 }
 
+const getCardWorkingBalances = (card: CardDoc) => {
+  const statementBalance = Math.max(finiteOrZero(card.statementBalance ?? card.usedLimit), 0)
+  const pendingCharges = Math.max(finiteOrZero(card.pendingCharges), 0)
+
+  return {
+    statementBalance,
+    pendingCharges,
+  }
+}
+
+const buildCardBalancePatch = (statementBalance: number, pendingCharges: number) => ({
+  statementBalance: roundCurrency(Math.max(statementBalance, 0)),
+  pendingCharges: roundCurrency(Math.max(pendingCharges, 0)),
+  usedLimit: roundCurrency(Math.max(statementBalance + pendingCharges, 0)),
+})
+
+const applyChargeToCard = (card: CardDoc, amount: number) => {
+  const balances = getCardWorkingBalances(card)
+  return buildCardBalancePatch(balances.statementBalance, balances.pendingCharges + amount)
+}
+
+const applyPaymentToCard = (card: CardDoc, amount: number) => {
+  const balances = getCardWorkingBalances(card)
+  let remaining = Math.max(amount, 0)
+
+  const statementPayment = Math.min(balances.statementBalance, remaining)
+  const nextStatement = balances.statementBalance - statementPayment
+  remaining -= statementPayment
+
+  const pendingPayment = Math.min(balances.pendingCharges, remaining)
+  const nextPending = balances.pendingCharges - pendingPayment
+  remaining -= pendingPayment
+
+  const appliedAmount = statementPayment + pendingPayment
+
+  return {
+    ...buildCardBalancePatch(nextStatement, nextPending),
+    appliedAmount: roundCurrency(appliedAmount),
+    unappliedAmount: roundCurrency(Math.max(remaining, 0)),
+  }
+}
+
+const applyTransferIntoCard = (card: CardDoc, amount: number) => {
+  const balances = getCardWorkingBalances(card)
+  return buildCardBalancePatch(balances.statementBalance + amount, balances.pendingCharges)
+}
+
 const applyCardMonthlyLifecycle = (card: CardDoc, cycles: number) => {
   let balance = finiteOrZero(card.usedLimit)
   let statementBalance = finiteOrZero(card.statementBalance ?? card.usedLimit)
@@ -2510,6 +2557,179 @@ export const updateCard = mutation({
         dueDay,
       },
     })
+  },
+})
+
+export const addCardCharge = mutation({
+  args: {
+    id: v.id('cards'),
+    amount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validatePositive(args.amount, 'Charge amount')
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Card record not found.')
+    const next = applyChargeToCard(existing, args.amount)
+
+    await ctx.db.patch(args.id, {
+      usedLimit: next.usedLimit,
+      statementBalance: next.statementBalance,
+      pendingCharges: next.pendingCharges,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'card',
+      entityId: String(args.id),
+      action: 'quick_charge',
+      before: {
+        usedLimit: existing.usedLimit,
+        statementBalance: existing.statementBalance ?? existing.usedLimit,
+        pendingCharges: existing.pendingCharges ?? 0,
+      },
+      after: {
+        usedLimit: next.usedLimit,
+        statementBalance: next.statementBalance,
+        pendingCharges: next.pendingCharges,
+      },
+      metadata: {
+        amount: args.amount,
+      },
+    })
+  },
+})
+
+export const recordCardPayment = mutation({
+  args: {
+    id: v.id('cards'),
+    amount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validatePositive(args.amount, 'Payment amount')
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Card record not found.')
+    const next = applyPaymentToCard(existing, args.amount)
+
+    if (next.appliedAmount <= 0) {
+      throw new Error('No outstanding card balance to pay down.')
+    }
+
+    await ctx.db.patch(args.id, {
+      usedLimit: next.usedLimit,
+      statementBalance: next.statementBalance,
+      pendingCharges: next.pendingCharges,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'card',
+      entityId: String(args.id),
+      action: 'quick_payment',
+      before: {
+        usedLimit: existing.usedLimit,
+        statementBalance: existing.statementBalance ?? existing.usedLimit,
+        pendingCharges: existing.pendingCharges ?? 0,
+      },
+      after: {
+        usedLimit: next.usedLimit,
+        statementBalance: next.statementBalance,
+        pendingCharges: next.pendingCharges,
+      },
+      metadata: {
+        requestedAmount: args.amount,
+        appliedAmount: next.appliedAmount,
+        unappliedAmount: next.unappliedAmount,
+      },
+    })
+  },
+})
+
+export const transferCardBalance = mutation({
+  args: {
+    fromCardId: v.id('cards'),
+    toCardId: v.id('cards'),
+    amount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validatePositive(args.amount, 'Transfer amount')
+
+    if (args.fromCardId === args.toCardId) {
+      throw new Error('Transfer source and destination must be different cards.')
+    }
+
+    const [fromCard, toCard] = await Promise.all([ctx.db.get(args.fromCardId), ctx.db.get(args.toCardId)])
+    ensureOwned(fromCard, identity.subject, 'Source card not found.')
+    ensureOwned(toCard, identity.subject, 'Destination card not found.')
+
+    const fromNext = applyPaymentToCard(fromCard, args.amount)
+    if (fromNext.appliedAmount <= 0) {
+      throw new Error('No outstanding source-card balance available to transfer.')
+    }
+
+    const toNext = applyTransferIntoCard(toCard, fromNext.appliedAmount)
+
+    await Promise.all([
+      ctx.db.patch(args.fromCardId, {
+        usedLimit: fromNext.usedLimit,
+        statementBalance: fromNext.statementBalance,
+        pendingCharges: fromNext.pendingCharges,
+      }),
+      ctx.db.patch(args.toCardId, {
+        usedLimit: toNext.usedLimit,
+        statementBalance: toNext.statementBalance,
+        pendingCharges: toNext.pendingCharges,
+      }),
+    ])
+
+    await Promise.all([
+      recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'card',
+        entityId: String(args.fromCardId),
+        action: 'quick_transfer_out',
+        before: {
+          usedLimit: fromCard.usedLimit,
+          statementBalance: fromCard.statementBalance ?? fromCard.usedLimit,
+          pendingCharges: fromCard.pendingCharges ?? 0,
+        },
+        after: {
+          usedLimit: fromNext.usedLimit,
+          statementBalance: fromNext.statementBalance,
+          pendingCharges: fromNext.pendingCharges,
+        },
+        metadata: {
+          destinationCardId: String(args.toCardId),
+          requestedAmount: args.amount,
+          appliedAmount: fromNext.appliedAmount,
+          unappliedAmount: fromNext.unappliedAmount,
+        },
+      }),
+      recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'card',
+        entityId: String(args.toCardId),
+        action: 'quick_transfer_in',
+        before: {
+          usedLimit: toCard.usedLimit,
+          statementBalance: toCard.statementBalance ?? toCard.usedLimit,
+          pendingCharges: toCard.pendingCharges ?? 0,
+        },
+        after: {
+          usedLimit: toNext.usedLimit,
+          statementBalance: toNext.statementBalance,
+          pendingCharges: toNext.pendingCharges,
+        },
+        metadata: {
+          sourceCardId: String(args.fromCardId),
+          amount: fromNext.appliedAmount,
+        },
+      }),
+    ])
   },
 })
 

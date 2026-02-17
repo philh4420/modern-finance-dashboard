@@ -45,6 +45,9 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
   const addCard = useMutation(api.finance.addCard)
   const updateCard = useMutation(api.finance.updateCard)
   const removeCard = useMutation(api.finance.removeCard)
+  const addCardCharge = useMutation(api.finance.addCardCharge)
+  const recordCardPayment = useMutation(api.finance.recordCardPayment)
+  const transferCardBalance = useMutation(api.finance.transferCardBalance)
 
   const [cardForm, setCardForm] = useState<CardForm>(initialCardForm)
   const [cardEditId, setCardEditId] = useState<CardId | null>(null)
@@ -157,6 +160,33 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
     }
   }
 
+  const onQuickAddCharge = async (id: CardId, amount: number) => {
+    clearError()
+    try {
+      await addCardCharge({ id, amount })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onQuickRecordPayment = async (id: CardId, amount: number) => {
+    clearError()
+    try {
+      await recordCardPayment({ id, amount })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onQuickTransferBalance = async (fromCardId: CardId, toCardId: CardId, amount: number) => {
+    clearError()
+    try {
+      await transferCardBalance({ fromCardId, toCardId, amount })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
   return {
     cardForm,
     setCardForm,
@@ -168,6 +198,9 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
     onDeleteCard,
     startCardEdit,
     saveCardEdit,
+    onQuickAddCharge,
+    onQuickRecordPayment,
+    onQuickTransferBalance,
     cards,
   }
 }

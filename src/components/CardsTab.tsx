@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { Fragment, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type { CardEditDraft, CardEntry, CardForm, CardId, CardMinimumPaymentType } from './financeTypes'
 
 type CardSortKey =
@@ -12,6 +12,11 @@ type CardSortKey =
   | 'due_asc'
 
 type PayoffStrategy = 'avalanche' | 'snowball'
+type QuickActionType = 'add_charge' | 'record_payment' | 'transfer_balance'
+type QuickActionState = {
+  cardId: CardId
+  type: QuickActionType
+} | null
 
 type CardsTabProps = {
   cards: CardEntry[]
@@ -29,6 +34,9 @@ type CardsTabProps = {
   onDeleteCard: (id: CardId) => Promise<void>
   saveCardEdit: () => Promise<void>
   startCardEdit: (entry: CardEntry) => void
+  onQuickAddCharge: (id: CardId, amount: number) => Promise<void>
+  onQuickRecordPayment: (id: CardId, amount: number) => Promise<void>
+  onQuickTransferBalance: (fromCardId: CardId, toCardId: CardId, amount: number) => Promise<void>
   formatMoney: (value: number) => string
   formatPercent: (value: number) => string
 }
@@ -298,12 +306,19 @@ export function CardsTab({
   onDeleteCard,
   saveCardEdit,
   startCardEdit,
+  onQuickAddCharge,
+  onQuickRecordPayment,
+  onQuickTransferBalance,
   formatMoney,
   formatPercent,
 }: CardsTabProps) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<CardSortKey>('name_asc')
   const [payoffStrategy, setPayoffStrategy] = useState<PayoffStrategy>('avalanche')
+  const [quickAction, setQuickAction] = useState<QuickActionState>(null)
+  const [quickAmount, setQuickAmount] = useState('')
+  const [quickTransferTo, setQuickTransferTo] = useState<CardId | ''>('')
+  const [quickSubmitting, setQuickSubmitting] = useState(false)
 
   const pillVariantForUtil = (ratio: number) => {
     if (ratio >= 0.9) return 'pill--critical'
@@ -462,6 +477,129 @@ export function CardsTab({
     }),
     [riskAlerts],
   )
+
+  const quickAmountValue = Number.parseFloat(quickAmount)
+  const quickAmountValid = Number.isFinite(quickAmountValue) && quickAmountValue > 0
+
+  const openQuickAction = (cardId: CardId, type: QuickActionType) => {
+    setQuickAction({ cardId, type })
+    setQuickAmount('')
+    if (type === 'transfer_balance') {
+      const firstTarget = cards.find((card) => card._id !== cardId)?._id ?? ''
+      setQuickTransferTo(firstTarget)
+    } else {
+      setQuickTransferTo('')
+    }
+  }
+
+  const closeQuickAction = () => {
+    setQuickAction(null)
+    setQuickAmount('')
+    setQuickTransferTo('')
+    setQuickSubmitting(false)
+  }
+
+  const quickActionLabel = (type: QuickActionType) => {
+    if (type === 'add_charge') return 'Add charge'
+    if (type === 'record_payment') return 'Record payment'
+    return 'Transfer balance'
+  }
+
+  const runQuickAction = async () => {
+    if (!quickAction || !quickAmountValid || quickSubmitting) {
+      return
+    }
+
+    setQuickSubmitting(true)
+    try {
+      if (quickAction.type === 'add_charge') {
+        await onQuickAddCharge(quickAction.cardId, quickAmountValue)
+      } else if (quickAction.type === 'record_payment') {
+        await onQuickRecordPayment(quickAction.cardId, quickAmountValue)
+      } else if (quickTransferTo) {
+        await onQuickTransferBalance(quickAction.cardId, quickTransferTo, quickAmountValue)
+      }
+      closeQuickAction()
+    } catch {
+      setQuickSubmitting(false)
+    }
+  }
+
+  const renderQuickActionPanel = (cardId: CardId, mode: 'desktop' | 'mobile' = 'desktop') => {
+    if (!quickAction || quickAction.cardId !== cardId) {
+      return null
+    }
+
+    const transferTargets = cards.filter((card) => card._id !== cardId)
+    const requiresTarget = quickAction.type === 'transfer_balance'
+    const transferTargetValid = !requiresTarget || transferTargets.some((card) => card._id === quickTransferTo)
+    const canSubmit = quickAmountValid && transferTargetValid && !quickSubmitting
+
+    return (
+      <form
+        className={`cards-quick-panel ${mode === 'mobile' ? 'cards-quick-panel--mobile' : ''}`}
+        onSubmit={(event) => {
+          event.preventDefault()
+          void runQuickAction()
+        }}
+      >
+        <p className="cards-quick-title">{quickActionLabel(quickAction.type)}</p>
+        <div className="cards-quick-fields">
+          <label className="cards-quick-field">
+            <span>Amount</span>
+            <input
+              className="inline-input"
+              type="number"
+              inputMode="decimal"
+              min="0.01"
+              step="0.01"
+              value={quickAmount}
+              onChange={(event) => setQuickAmount(event.target.value)}
+              placeholder="0.00"
+              required
+            />
+          </label>
+
+          {quickAction.type === 'transfer_balance' ? (
+            <label className="cards-quick-field">
+              <span>To card</span>
+              <select
+                className="inline-select"
+                value={quickTransferTo}
+                onChange={(event) => setQuickTransferTo(event.target.value as CardId)}
+                required
+              >
+                {transferTargets.length === 0 ? <option value="">No other cards</option> : null}
+                {transferTargets.map((card) => (
+                  <option key={card._id} value={card._id}>
+                    {card.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="cards-quick-field cards-quick-field--hint">
+              <span>Effect</span>
+              <small>
+                {quickAction.type === 'add_charge'
+                  ? 'Adds to pending + current balance.'
+                  : 'Reduces outstanding statement/current balance.'}
+              </small>
+            </div>
+          )}
+        </div>
+
+        <div className="cards-quick-actions">
+          <button type="button" className="btn btn-ghost btn--sm" onClick={closeQuickAction} disabled={quickSubmitting}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-secondary btn--sm" disabled={!canSubmit}>
+            {quickSubmitting ? 'Applying...' : quickActionLabel(quickAction.type)}
+          </button>
+        </div>
+      </form>
+    )
+  }
 
   const visibleRows = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -953,8 +1091,11 @@ export function CardsTab({
                           const rowProjection = isEditing ? editProjection : projection
                           const availableClass = rowProjection.displayAvailableCredit < 0 ? 'amount-negative' : 'amount-positive'
 
+                          const isQuickOpen = quickAction?.cardId === entry._id && !isEditing
+
                           return (
-                            <tr key={entry._id} className={isEditing ? 'table-row--editing' : undefined}>
+                            <Fragment key={entry._id}>
+                              <tr className={isEditing ? 'table-row--editing' : undefined}>
                               <td>
                                 {isEditing ? (
                                   <input
@@ -1238,24 +1379,61 @@ export function CardsTab({
                                       </button>
                                     </>
                                   ) : (
-                                    <button
-                                      type="button"
-                                      className="btn btn-secondary btn--sm"
-                                      onClick={() => startCardEdit(entry)}
-                                    >
-                                      Edit
-                                    </button>
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn--sm"
+                                        onClick={() => openQuickAction(entry._id, 'add_charge')}
+                                      >
+                                        Add charge
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn--sm"
+                                        onClick={() => openQuickAction(entry._id, 'record_payment')}
+                                      >
+                                        Record payment
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn--sm"
+                                        onClick={() => openQuickAction(entry._id, 'transfer_balance')}
+                                      >
+                                        Transfer
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-secondary btn--sm"
+                                        onClick={() => {
+                                          closeQuickAction()
+                                          startCardEdit(entry)
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
+                                    </>
                                   )}
                                   <button
                                     type="button"
                                     className="btn btn-ghost btn--sm"
-                                    onClick={() => void onDeleteCard(entry._id)}
+                                    onClick={() => {
+                                      if (quickAction?.cardId === entry._id) {
+                                        closeQuickAction()
+                                      }
+                                      void onDeleteCard(entry._id)
+                                    }}
                                   >
                                     Remove
                                   </button>
                                 </div>
                               </td>
-                            </tr>
+                              </tr>
+                              {isQuickOpen ? (
+                                <tr className="table-row--quick">
+                                  <td colSpan={6}>{renderQuickActionPanel(entry._id, 'desktop')}</td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
                           )
                         })}
                       </tbody>
@@ -1616,14 +1794,54 @@ export function CardsTab({
                                 </button>
                               </>
                             ) : (
-                              <button type="button" className="btn btn-secondary btn--sm" onClick={() => startCardEdit(entry)}>
-                                Edit
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn--sm"
+                                  onClick={() => openQuickAction(entry._id, 'add_charge')}
+                                >
+                                  Add charge
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn--sm"
+                                  onClick={() => openQuickAction(entry._id, 'record_payment')}
+                                >
+                                  Record payment
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn--sm"
+                                  onClick={() => openQuickAction(entry._id, 'transfer_balance')}
+                                >
+                                  Transfer
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn--sm"
+                                  onClick={() => {
+                                    closeQuickAction()
+                                    startCardEdit(entry)
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                              </>
                             )}
-                            <button type="button" className="btn btn-ghost btn--sm" onClick={() => void onDeleteCard(entry._id)}>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn--sm"
+                              onClick={() => {
+                                if (quickAction?.cardId === entry._id) {
+                                  closeQuickAction()
+                                }
+                                void onDeleteCard(entry._id)
+                              }}
+                            >
                               Remove
                             </button>
                           </div>
+                          {!isEditing ? renderQuickActionPanel(entry._id, 'mobile') : null}
                         </div>
                       </details>
                     )
