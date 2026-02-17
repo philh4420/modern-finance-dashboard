@@ -291,6 +291,87 @@ h2 {
   justify-content: flex-end;
 }
 
+.executive-strip {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.executive-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.12rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 82%, transparent);
+  background:
+    radial-gradient(130% 170% at 100% -20%, color-mix(in oklab, var(--tone-finance) 16%, transparent), transparent 62%),
+    linear-gradient(145deg,
+      color-mix(in oklab, var(--surface-card) 93%, white 7%),
+      color-mix(in oklab, var(--surface-card) 97%, var(--tone-savings) 3%));
+  box-shadow:
+    0 20px 44px -34px color-mix(in oklab, var(--tone-finance) 35%, transparent),
+    0 14px 26px -24px color-mix(in oklab, black 30%, transparent);
+  padding: 0.86rem 0.94rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.executive-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, white 40%, transparent), transparent 38%),
+    radial-gradient(160% 120% at 0% 0%, color-mix(in oklab, var(--tone-savings) 15%, transparent), transparent 62%);
+  opacity: 0.5;
+}
+
+.executive-card>* {
+  position: relative;
+  z-index: 1;
+}
+
+.executive-label {
+  margin: 0;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.executive-value {
+  margin: 0;
+  font-size: clamp(1.12rem, 2cqi, 1.48rem);
+  line-height: 1.15;
+  letter-spacing: -0.017em;
+  font-weight: 770;
+  color: var(--text-main);
+}
+
+.executive-delta {
+  margin: 0.02rem 0 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.executive-delta--good {
+  color: var(--tone-positive);
+}
+
+.executive-delta--bad {
+  color: var(--tone-negative);
+}
+
+.executive-delta--neutral {
+  color: var(--tone-neutral);
+}
+
+.executive-context {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
 .metric-grid {
   display: grid;
   gap: 1rem;
@@ -2124,6 +2205,10 @@ tbody td {
 }
 
 @media (max-width: 1180px) {
+  .executive-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .metric-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2148,6 +2233,10 @@ tbody td {
 }
 
 @media (max-width: 860px) {
+  .executive-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .topbar {
     flex-direction: column;
   }
@@ -2247,6 +2336,10 @@ tbody td {
 }
 
 @media (max-width: 620px) {
+  .executive-strip {
+    grid-template-columns: 1fr;
+  }
+
   .section-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

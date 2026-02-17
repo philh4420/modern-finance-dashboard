@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import { useMemo, type CSSProperties } from 'react'
 import type {
   Cadence,
   CycleAuditLogEntry,
@@ -53,6 +53,15 @@ type DashboardTabProps = {
   cycleDateLabel: Intl.DateTimeFormat
 }
 
+type ExecutiveMetric = {
+  id: string
+  label: string
+  value: string
+  delta: string
+  context: string
+  tone: 'good' | 'bad' | 'neutral'
+}
+
 export function DashboardTab({
   dashboardCards,
   summary,
@@ -77,6 +86,108 @@ export function DashboardTab({
   dateLabel,
   cycleDateLabel,
 }: DashboardTabProps) {
+  const currentCycleKey = useMemo(() => new Date().toISOString().slice(0, 7), [])
+
+  const monthLabel = useMemo(() => {
+    const locale = dateLabel.resolvedOptions().locale || 'en-US'
+    const formatter = new Intl.DateTimeFormat(locale, { month: 'short', year: 'numeric' })
+    return (cycleKey: string) => {
+      const [year, month] = cycleKey.split('-').map(Number)
+      if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return cycleKey
+      return formatter.format(new Date(Date.UTC(year, month - 1, 1)))
+    }
+  }, [dateLabel])
+
+  const sortedSnapshots = useMemo(
+    () => [...monthCloseSnapshots].sort((left, right) => right.cycleKey.localeCompare(left.cycleKey)),
+    [monthCloseSnapshots],
+  )
+
+  const baselineSnapshot = useMemo(
+    () => sortedSnapshots.find((snapshot) => snapshot.cycleKey < currentCycleKey) ?? sortedSnapshots[1] ?? null,
+    [currentCycleKey, sortedSnapshots],
+  )
+
+  const executiveContext = baselineSnapshot
+    ? `MoM vs ${monthLabel(baselineSnapshot.cycleKey)} close`
+    : 'MoM pending (need prior close snapshot)'
+
+  const formatSignedMoneyDelta = (delta: number | null) => {
+    if (delta === null) return 'MoM n/a'
+    if (Math.abs(delta) < 0.005) return 'Flat month-over-month'
+    const sign = delta >= 0 ? '+' : '-'
+    return `${sign}${formatMoney(Math.abs(delta))}`
+  }
+
+  const formatSignedNumberDelta = (delta: number | null, unit: string, precision = 1) => {
+    if (delta === null) return 'MoM n/a'
+    if (Math.abs(delta) < 0.0001) return 'Flat month-over-month'
+    const sign = delta >= 0 ? '+' : '-'
+    return `${sign}${Math.abs(delta).toFixed(precision)}${unit}`
+  }
+
+  const formatSignedPointDelta = (delta: number | null) => {
+    if (delta === null) return 'MoM n/a'
+    if (Math.abs(delta) < 0.5) return 'Flat month-over-month'
+    const sign = delta >= 0 ? '+' : '-'
+    return `${sign}${Math.abs(delta).toFixed(0)} pts`
+  }
+
+  const baseline = baselineSnapshot?.summary ?? null
+  const netPositionDelta = baseline ? summary.netWorth - baseline.netWorth : null
+  const baselineProjectedNet = baseline ? baseline.monthlyIncome - baseline.monthlyCommitments : null
+  const cashflowDelta = baselineProjectedNet !== null ? summary.projectedMonthlyNet - baselineProjectedNet : null
+  const runwayDelta = baseline ? summary.runwayMonths - baseline.runwayMonths : null
+  const debtLoadDelta = baseline ? summary.totalLiabilities - baseline.totalLiabilities : null
+  const healthDelta = null
+
+  const executiveMetrics: ExecutiveMetric[] = [
+    {
+      id: 'net-position',
+      label: 'Net Position',
+      value: formatMoney(summary.netWorth),
+      delta: formatSignedMoneyDelta(netPositionDelta),
+      context: executiveContext,
+      tone: netPositionDelta === null || Math.abs(netPositionDelta) < 0.005 ? 'neutral' : netPositionDelta > 0 ? 'good' : 'bad',
+    },
+    {
+      id: 'cashflow-30d',
+      label: '30-Day Cashflow',
+      value: formatMoney(summary.projectedMonthlyNet),
+      delta: formatSignedMoneyDelta(cashflowDelta),
+      context: executiveContext,
+      tone: cashflowDelta === null || Math.abs(cashflowDelta) < 0.005 ? 'neutral' : cashflowDelta > 0 ? 'good' : 'bad',
+    },
+    {
+      id: 'runway',
+      label: 'Runway',
+      value: `${summary.runwayMonths.toFixed(1)} mo`,
+      delta: formatSignedNumberDelta(runwayDelta, ' mo'),
+      context: executiveContext,
+      tone: runwayDelta === null || Math.abs(runwayDelta) < 0.0001 ? 'neutral' : runwayDelta > 0 ? 'good' : 'bad',
+    },
+    {
+      id: 'debt-load',
+      label: 'Debt Load',
+      value: formatMoney(summary.totalLiabilities),
+      delta: formatSignedMoneyDelta(debtLoadDelta),
+      context: executiveContext,
+      tone: debtLoadDelta === null || Math.abs(debtLoadDelta) < 0.005 ? 'neutral' : debtLoadDelta < 0 ? 'good' : 'bad',
+    },
+    {
+      id: 'health-score',
+      label: 'Health Score',
+      value: `${summary.healthScore}/100`,
+      delta: formatSignedPointDelta(healthDelta),
+      context: baselineSnapshot ? 'MoM n/a (health score not stored in month-close snapshots)' : executiveContext,
+      tone: 'neutral',
+    },
+  ]
+
+  const compactMetricCards = dashboardCards.filter(
+    (card) => !['health-score', 'projected-net', 'net-worth', 'runway'].includes(card.id),
+  )
+
   const latestCycleRun = monthlyCycleRuns.reduce<MonthlyCycleRunEntry | null>((acc, run) => {
     if (!acc) return run
     return run.ranAt > acc.ranAt ? run : acc
@@ -107,15 +218,28 @@ export function DashboardTab({
 
   return (
     <>
-      <section className="metric-grid" aria-label="Finance intelligence metrics">
-        {dashboardCards.map((card) => (
-          <article className="metric-card" key={card.id}>
-            <p className="metric-label">{card.label}</p>
-            <p className="metric-value">{card.value}</p>
-            <p className={`metric-change metric-change--${card.trend}`}>{card.note}</p>
+      <section className="executive-strip" aria-label="Executive summary strip">
+        {executiveMetrics.map((metric) => (
+          <article className="executive-card" key={metric.id}>
+            <p className="executive-label">{metric.label}</p>
+            <p className="executive-value">{metric.value}</p>
+            <p className={`executive-delta executive-delta--${metric.tone}`}>{metric.delta}</p>
+            <p className="executive-context">{metric.context}</p>
           </article>
         ))}
       </section>
+
+      {compactMetricCards.length > 0 ? (
+        <section className="metric-grid" aria-label="Finance intelligence metrics">
+          {compactMetricCards.map((card) => (
+            <article className="metric-card" key={card.id}>
+              <p className="metric-label">{card.label}</p>
+              <p className="metric-value">{card.value}</p>
+              <p className={`metric-change metric-change--${card.trend}`}>{card.note}</p>
+            </article>
+          ))}
+        </section>
+      ) : null}
 
       <section className="content-grid" aria-label="Finance intelligence panels">
         <article className="panel panel-trust-kpis">
