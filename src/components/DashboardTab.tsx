@@ -587,6 +587,12 @@ export function DashboardTab({
     if (!acc) return run
     return run.ranAt > acc.ranAt ? run : acc
   }, null)
+  const latestSuccessfulCycleRun = monthlyCycleRuns.reduce<MonthlyCycleRunEntry | null>((acc, run) => {
+    if (run.status !== 'completed') return acc
+    if (!acc) return run
+    return run.ranAt > acc.ranAt ? run : acc
+  }, null)
+  const completedCycleRuns = monthlyCycleRuns.filter((run) => run.status === 'completed').length
 
   const latestExport = privacyData?.latestExport ?? null
   const reconciliationRate =
@@ -610,6 +616,15 @@ export function DashboardTab({
     if (value === null || value === undefined) return 'n/a'
     return formatPercent(value)
   }
+
+  const kpiPurchaseCount = kpis?.counts.purchases ?? null
+  const anomalyRate =
+    kpis && kpiPurchaseCount !== null ? (kpiPurchaseCount > 0 ? kpis.counts.anomalies / kpiPurchaseCount : 0) : null
+  const duplicateRate =
+    kpis && kpiPurchaseCount !== null ? (kpiPurchaseCount > 0 ? kpis.counts.duplicates / kpiPurchaseCount : 0) : null
+  const cycleSuccessRate =
+    kpis?.cycleSuccessRate ??
+    (monthlyCycleRuns.length > 0 ? completedCycleRuns / monthlyCycleRuns.length : null)
 
   const riskCenterSourceLabel = (source: RiskCenterAlert['source']) => {
     switch (source) {
@@ -911,25 +926,46 @@ export function DashboardTab({
           </header>
           <div className="trust-kpi-grid">
             <div className="trust-kpi-tile">
-              <p>Accuracy</p>
-              <strong>{kpis ? formatKpi(kpis.accuracyRate) : 'n/a'}</strong>
-              <small>{kpis ? `${kpis.counts.missingCategory} missing categories` : 'Add purchases to score'}</small>
-            </div>
-            <div className="trust-kpi-tile">
-              <p>Sync failure</p>
-              <strong>{kpis ? formatKpi(kpis.syncFailureRate) : 'n/a'}</strong>
-              <small>{kpis?.syncFailureRate === null ? 'Diagnostics disabled or no flushes' : 'Offline queue flushes'}</small>
-            </div>
-            <div className="trust-kpi-tile">
-              <p>Cycle success</p>
-              <strong>{kpis ? formatKpi(kpis.cycleSuccessRate) : 'n/a'}</strong>
-              <small>{latestCycleRun ? `Last run ${latestCycleRun.cycleKey}` : 'No cycles yet'}</small>
-            </div>
-            <div className="trust-kpi-tile">
-              <p>Reconciliation</p>
-              <strong>{kpis ? formatKpi(kpis.reconciliationCompletionRate) : 'n/a'}</strong>
+              <p>Reconciliation completion</p>
+              <strong>{formatPercent(reconciliationRate)}</strong>
               <small>
-                {summary.reconciledPurchases} / {summary.postedPurchases} reconciled
+                {summary.reconciledPurchases} / {summary.postedPurchases} posted reconciled
+              </small>
+            </div>
+            <div className="trust-kpi-tile">
+              <p>Anomaly rate</p>
+              <strong>{formatKpi(anomalyRate)}</strong>
+              <small>
+                {kpis
+                  ? `${kpis.counts.anomalies} anomaly flags in ${kpis.counts.purchases} purchases`
+                  : 'Enable diagnostics + activity for anomaly scoring'}
+              </small>
+            </div>
+            <div className="trust-kpi-tile">
+              <p>Duplicate rate</p>
+              <strong>{formatKpi(duplicateRate)}</strong>
+              <small>
+                {kpis
+                  ? `${kpis.counts.duplicates} duplicates in ${kpis.counts.purchases} purchases`
+                  : 'Duplicate checks appear after purchase activity'}
+              </small>
+            </div>
+            <div className="trust-kpi-tile">
+              <p>Cycle success rate</p>
+              <strong>{formatKpi(cycleSuccessRate)}</strong>
+              <small>
+                {monthlyCycleRuns.length > 0
+                  ? `${completedCycleRuns} completed / ${monthlyCycleRuns.length} recorded runs`
+                  : 'Run monthly cycle to establish baseline'}
+              </small>
+            </div>
+            <div className="trust-kpi-tile">
+              <p>Last successful cycle run</p>
+              <strong>{latestSuccessfulCycleRun ? latestSuccessfulCycleRun.cycleKey : 'None yet'}</strong>
+              <small>
+                {latestSuccessfulCycleRun
+                  ? `${cycleDateLabel.format(new Date(latestSuccessfulCycleRun.ranAt))} · ${latestSuccessfulCycleRun.source}`
+                  : 'No completed monthly cycle recorded yet'}
               </small>
             </div>
           </div>
