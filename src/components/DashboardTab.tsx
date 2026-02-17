@@ -1,8 +1,9 @@
-import { useMemo, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react'
 import type {
   AccountEntry,
   Cadence,
   CardEntry,
+  CardId,
   CardMinimumPaymentType,
   CycleAuditLogEntry,
   FinanceAuditEventEntry,
@@ -58,6 +59,13 @@ type DashboardTabProps = {
   severityLabel: (severity: InsightSeverity) => string
   dateLabel: Intl.DateTimeFormat
   cycleDateLabel: Intl.DateTimeFormat
+  onActionQueueRecordPayment: (cardId: CardId, amount: number) => Promise<void>
+  onActionQueueAddCharge: (cardId: CardId, amount: number) => Promise<void>
+  onActionQueueRunMonthlyCycle: () => Promise<void>
+  onActionQueueReconcilePending: () => Promise<void>
+  isRunningMonthlyCycle: boolean
+  isReconcilingPending: boolean
+  pendingReconciliationCount: number
 }
 
 type ExecutiveMetric = {
@@ -256,7 +264,36 @@ export function DashboardTab({
   severityLabel,
   dateLabel,
   cycleDateLabel,
+  onActionQueueRecordPayment,
+  onActionQueueAddCharge,
+  onActionQueueRunMonthlyCycle,
+  onActionQueueReconcilePending,
+  isRunningMonthlyCycle,
+  isReconcilingPending,
+  pendingReconciliationCount,
 }: DashboardTabProps) {
+  const [paymentCardId, setPaymentCardId] = useState<CardId | ''>('')
+  const [paymentAmount, setPaymentAmount] = useState('')
+  const [chargeCardId, setChargeCardId] = useState<CardId | ''>('')
+  const [chargeAmount, setChargeAmount] = useState('')
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false)
+  const [isSubmittingCharge, setIsSubmittingCharge] = useState(false)
+
+  useEffect(() => {
+    if (cards.length === 0) {
+      setPaymentCardId('')
+      setChargeCardId('')
+      return
+    }
+
+    if (!paymentCardId || !cards.some((card) => card._id === paymentCardId)) {
+      setPaymentCardId(cards[0]._id)
+    }
+    if (!chargeCardId || !cards.some((card) => card._id === chargeCardId)) {
+      setChargeCardId(cards[0]._id)
+    }
+  }, [cards, chargeCardId, paymentCardId])
+
   const currentCycleKey = useMemo(() => new Date().toISOString().slice(0, 7), [])
 
   const monthLabel = useMemo(() => {
@@ -888,6 +925,37 @@ export function DashboardTab({
     [riskCenterAlerts],
   )
 
+  const paymentAmountValue = Number.parseFloat(paymentAmount)
+  const chargeAmountValue = Number.parseFloat(chargeAmount)
+  const canRecordPayment =
+    Boolean(paymentCardId) && Number.isFinite(paymentAmountValue) && paymentAmountValue > 0 && !isSubmittingPayment
+  const canAddCharge =
+    Boolean(chargeCardId) && Number.isFinite(chargeAmountValue) && chargeAmountValue > 0 && !isSubmittingCharge
+
+  const submitRecordPayment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!paymentCardId || !canRecordPayment) return
+    setIsSubmittingPayment(true)
+    try {
+      await onActionQueueRecordPayment(paymentCardId, paymentAmountValue)
+      setPaymentAmount('')
+    } finally {
+      setIsSubmittingPayment(false)
+    }
+  }
+
+  const submitAddCharge = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!chargeCardId || !canAddCharge) return
+    setIsSubmittingCharge(true)
+    try {
+      await onActionQueueAddCharge(chargeCardId, chargeAmountValue)
+      setChargeAmount('')
+    } finally {
+      setIsSubmittingCharge(false)
+    }
+  }
+
   return (
     <>
       <section className="executive-strip" aria-label="Executive summary strip">
@@ -1058,6 +1126,129 @@ export function DashboardTab({
           <p className="subnote">
             Alerts cover due-soon timelines, utilization tiers (&gt;30/50/90), payment-below-interest, and reconciliation gaps.
           </p>
+        </article>
+
+        <article className="panel panel-action-queue">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Action Queue</p>
+              <h2>Quick Actions</h2>
+            </div>
+            <p className="panel-value">Run high-impact updates directly from dashboard</p>
+          </header>
+          <div className="action-queue-grid">
+            <form className="action-queue-card" onSubmit={(event) => void submitRecordPayment(event)}>
+              <p className="action-queue-title">Record payment</p>
+              {cards.length === 0 ? (
+                <p className="subnote">Add a card first to record payments.</p>
+              ) : (
+                <>
+                  <label className="sr-only" htmlFor="action-queue-payment-card">
+                    Card for payment
+                  </label>
+                  <select
+                    id="action-queue-payment-card"
+                    value={paymentCardId}
+                    onChange={(event) => setPaymentCardId(event.target.value as CardId)}
+                  >
+                    {cards.map((card) => (
+                      <option key={`payment-${card._id}`} value={card._id}>
+                        {card.name}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="sr-only" htmlFor="action-queue-payment-amount">
+                    Payment amount
+                  </label>
+                  <input
+                    id="action-queue-payment-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="Amount"
+                    value={paymentAmount}
+                    onChange={(event) => setPaymentAmount(event.target.value)}
+                  />
+                  <button type="submit" className="btn btn-secondary btn--sm" disabled={!canRecordPayment}>
+                    {isSubmittingPayment ? 'Recording...' : 'Record payment'}
+                  </button>
+                </>
+              )}
+            </form>
+
+            <form className="action-queue-card" onSubmit={(event) => void submitAddCharge(event)}>
+              <p className="action-queue-title">Add charge</p>
+              {cards.length === 0 ? (
+                <p className="subnote">Add a card first to apply charges.</p>
+              ) : (
+                <>
+                  <label className="sr-only" htmlFor="action-queue-charge-card">
+                    Card for charge
+                  </label>
+                  <select
+                    id="action-queue-charge-card"
+                    value={chargeCardId}
+                    onChange={(event) => setChargeCardId(event.target.value as CardId)}
+                  >
+                    {cards.map((card) => (
+                      <option key={`charge-${card._id}`} value={card._id}>
+                        {card.name}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="sr-only" htmlFor="action-queue-charge-amount">
+                    Charge amount
+                  </label>
+                  <input
+                    id="action-queue-charge-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="Amount"
+                    value={chargeAmount}
+                    onChange={(event) => setChargeAmount(event.target.value)}
+                  />
+                  <button type="submit" className="btn btn-secondary btn--sm" disabled={!canAddCharge}>
+                    {isSubmittingCharge ? 'Adding...' : 'Add charge'}
+                  </button>
+                </>
+              )}
+            </form>
+
+            <article className="action-queue-card">
+              <p className="action-queue-title">Run monthly cycle</p>
+              <p className="subnote">
+                Apply card/loan monthly updates, interest accrual, and snapshot calculations for the current cycle.
+              </p>
+              <button
+                type="button"
+                className="btn btn-secondary btn--sm"
+                onClick={() => void onActionQueueRunMonthlyCycle()}
+                disabled={isRunningMonthlyCycle}
+              >
+                {isRunningMonthlyCycle ? 'Running cycle...' : 'Run monthly cycle'}
+              </button>
+            </article>
+
+            <article className="action-queue-card">
+              <p className="action-queue-title">Reconcile pending</p>
+              <p className="subnote">
+                {pendingReconciliationCount > 0
+                  ? `${pendingReconciliationCount} pending purchase${pendingReconciliationCount === 1 ? '' : 's'} ready to reconcile.`
+                  : 'No pending purchases waiting for reconciliation.'}
+              </p>
+              <button
+                type="button"
+                className="btn btn-secondary btn--sm"
+                onClick={() => void onActionQueueReconcilePending()}
+                disabled={isReconcilingPending || pendingReconciliationCount === 0}
+              >
+                {isReconcilingPending ? 'Reconciling...' : 'Reconcile pending'}
+              </button>
+            </article>
+          </div>
         </article>
 
         <article className="panel panel-cash-forecast">

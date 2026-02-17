@@ -67,12 +67,14 @@ function App() {
   const kpisState = useQuery(api.ops.getKpis, { windowDays: 30 })
   const cleanupLegacySeedData = useMutation(api.finance.cleanupLegacySeedData)
   const runMonthlyCycle = useMutation(api.finance.runMonthlyCycle)
+  const bulkUpdatePurchaseReconciliation = useMutation(api.phase2.bulkUpdatePurchaseReconciliation)
   const logClientOpsMetric = useMutation(api.ops.logClientOpsMetric)
 
   const cleanupTriggered = useRef(false)
   const monthlyCycleTriggered = useRef(false)
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
   const [isRunningMonthlyCycle, setIsRunningMonthlyCycle] = useState(false)
+  const [isReconcilingPending, setIsReconcilingPending] = useState(false)
   const [printModalOpen, setPrintModalOpen] = useState(false)
   const [printConfig, setPrintConfig] = useState<PrintReportConfig | null>(null)
   const [cspMode, setCspMode] = useState<CspMode>('unknown')
@@ -392,6 +394,25 @@ function App() {
     }
   }
 
+  const reconcilePendingPurchasesNow = async () => {
+    const pendingPurchaseIds = purchases
+      .filter((purchase) => (purchase.reconciliationStatus ?? 'posted') === 'pending')
+      .map((purchase) => purchase._id)
+    if (pendingPurchaseIds.length === 0) return
+    clearError()
+    setIsReconcilingPending(true)
+    try {
+      await bulkUpdatePurchaseReconciliation({
+        ids: pendingPurchaseIds,
+        reconciliationStatus: 'reconciled',
+      })
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setIsReconcilingPending(false)
+    }
+  }
+
   const startPrint = (config: PrintReportConfig) => {
     clearError()
     setPrintModalOpen(false)
@@ -590,6 +611,13 @@ function App() {
 	            severityLabel={severityLabel}
 	            dateLabel={dateLabel}
             cycleDateLabel={cycleDateLabel}
+            onActionQueueRecordPayment={cardsSection.onQuickRecordPayment}
+            onActionQueueAddCharge={async (cardId, amount) => cardsSection.onQuickAddCharge(cardId, amount)}
+            onActionQueueRunMonthlyCycle={runMonthlyCycleNow}
+            onActionQueueReconcilePending={reconcilePendingPurchasesNow}
+            isRunningMonthlyCycle={isRunningMonthlyCycle}
+            isReconcilingPending={isReconcilingPending}
+            pendingReconciliationCount={summary.pendingPurchases}
           />
         ) : null}
 

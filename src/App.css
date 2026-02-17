@@ -521,6 +521,14 @@ h2 {
     color-mix(in oklab, var(--surface-card) 93%, white 7%);
 }
 
+.panel-action-queue {
+  grid-column: span 12;
+  background:
+    radial-gradient(140% 170% at 0% 0%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 66%),
+    radial-gradient(130% 140% at 100% -20%, color-mix(in oklab, var(--tone-savings) 11%, transparent), transparent 68%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+}
+
 .panel-cash-forecast {
   grid-column: span 7;
 }
@@ -1090,6 +1098,51 @@ h2 {
   border-color: color-mix(in oklab, var(--tone-finance) 34%, var(--stroke));
   background: color-mix(in oklab, var(--tone-finance) 14%, white 86%);
   color: color-mix(in oklab, var(--tone-finance) 74%, black 26%);
+}
+
+.action-queue-grid {
+  margin-top: 0.74rem;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.action-queue-card {
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.62rem 0.68rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.action-queue-title {
+  margin: 0;
+  font-size: 0.86rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.action-queue-card select,
+.action-queue-card input {
+  width: 100%;
+  border-radius: 0.72rem;
+  border: 1px solid var(--stroke);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  color: var(--text-main);
+  padding: 0.5rem 0.62rem;
+  font: inherit;
+}
+
+.action-queue-card select:focus,
+.action-queue-card input:focus {
+  outline: 2px solid color-mix(in oklab, var(--tone-finance) 40%, transparent);
+  outline-offset: 1px;
+}
+
+.action-queue-card .btn {
+  justify-self: start;
 }
 
 .net-worth-trend {
@@ -2895,6 +2948,7 @@ tbody td {
   .panel-trust-kpis,
   .panel-launch,
   .panel-risk-center,
+  .panel-action-queue,
   .panel-cash-forecast,
   .panel-debt-focus,
   .panel-commitments,
@@ -2962,6 +3016,10 @@ tbody td {
   }
 
   .risk-center-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .action-queue-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3043,6 +3101,10 @@ tbody td {
   }
 
   .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .action-queue-grid {
     grid-template-columns: 1fr;
   }
 
