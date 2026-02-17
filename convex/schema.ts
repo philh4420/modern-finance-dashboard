@@ -150,6 +150,23 @@ const exportStatus = v.union(v.literal('processing'), v.literal('ready'), v.lite
 const deletionJobStatus = v.union(v.literal('running'), v.literal('completed'), v.literal('failed'))
 const cardMinimumPaymentType = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
 const incomePaymentStatus = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
+const incomeAllocationTarget = v.union(
+  v.literal('bills'),
+  v.literal('savings'),
+  v.literal('goals'),
+  v.literal('debt_overpay'),
+)
+const incomeAllocationActionType = v.union(
+  v.literal('reserve_bills'),
+  v.literal('move_to_savings'),
+  v.literal('fund_goals'),
+  v.literal('debt_overpay'),
+)
+const incomeAllocationSuggestionStatus = v.union(
+  v.literal('suggested'),
+  v.literal('completed'),
+  v.literal('dismissed'),
+)
 
 export default defineSchema({
   dashboardStates: defineTable({
@@ -397,6 +414,33 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_month', ['userId', 'month']),
+  incomeAllocationRules: defineTable({
+    userId: v.string(),
+    target: incomeAllocationTarget,
+    percentage: v.number(),
+    active: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_target', ['userId', 'target']),
+  incomeAllocationSuggestions: defineTable({
+    userId: v.string(),
+    month: v.string(),
+    runId: v.string(),
+    target: incomeAllocationTarget,
+    actionType: incomeAllocationActionType,
+    title: v.string(),
+    detail: v.string(),
+    percentage: v.number(),
+    amount: v.number(),
+    status: incomeAllocationSuggestionStatus,
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_month', ['userId', 'month'])
+    .index('by_userId_month_target', ['userId', 'month', 'target']),
   cycleAuditLogs: defineTable({
     userId: v.string(),
     source: cycleRunSource,

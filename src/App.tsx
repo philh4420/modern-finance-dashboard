@@ -225,6 +225,22 @@ function App() {
       monthKey: phase2MonthKey,
       transactionRules: [],
       envelopeBudgets: [],
+      incomeAllocationRules: [],
+      incomeAllocationSuggestions: [],
+      autoAllocationPlan: {
+        monthlyIncome: 0,
+        totalAllocatedPercent: 0,
+        totalAllocatedAmount: 0,
+        residualAmount: 0,
+        unallocatedPercent: 100,
+        overAllocatedPercent: 0,
+        buckets: [
+          { target: 'bills', label: 'Bills', percentage: 0, monthlyAmount: 0, active: false },
+          { target: 'savings', label: 'Savings', percentage: 0, monthlyAmount: 0, active: false },
+          { target: 'goals', label: 'Goals', percentage: 0, monthlyAmount: 0, active: false },
+          { target: 'debt_overpay', label: 'Debt Overpay', percentage: 0, monthlyAmount: 0, active: false },
+        ],
+      },
       budgetPerformance: [],
       recurringCandidates: [],
       billRiskAlerts: [],
@@ -268,6 +284,7 @@ function App() {
     monthKey: phase2Data.monthKey,
     transactionRules: phase2Data.transactionRules,
     envelopeBudgets: phase2Data.envelopeBudgets,
+    incomeAllocationRules: phase2Data.incomeAllocationRules,
     userId,
     onQueueMetric: queueMetricHandler,
     clearError,
@@ -791,8 +808,21 @@ function App() {
             submitBudget={planningSection.submitBudget}
             startBudgetEdit={planningSection.startBudgetEdit}
             removeBudget={planningSection.removeBudget}
+            allocationRuleForm={planningSection.allocationRuleForm}
+            setAllocationRuleForm={planningSection.setAllocationRuleForm}
+            allocationRuleEditId={planningSection.allocationRuleEditId}
+            setAllocationRuleEditId={planningSection.setAllocationRuleEditId}
+            sortedIncomeAllocationRules={planningSection.sortedIncomeAllocationRules}
+            submitAllocationRule={planningSection.submitAllocationRule}
+            startAllocationRuleEdit={planningSection.startAllocationRuleEdit}
+            removeAllocationRule={planningSection.removeAllocationRule}
+            incomeAllocationSuggestions={phase2Data.incomeAllocationSuggestions}
+            isApplyingAutoAllocation={planningSection.isApplyingAutoAllocation}
+            autoAllocationLastRunNote={planningSection.autoAllocationLastRunNote}
+            onApplyAutoAllocationNow={planningSection.onApplyAutoAllocationNow}
             whatIfInput={planningSection.whatIfInput}
             setWhatIfInput={planningSection.setWhatIfInput}
+            autoAllocationPlan={phase2Data.autoAllocationPlan}
             budgetPerformance={phase2Data.budgetPerformance}
             recurringCandidates={phase2Data.recurringCandidates}
             billRiskAlerts={phase2Data.billRiskAlerts}

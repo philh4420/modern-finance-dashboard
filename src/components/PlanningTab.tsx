@@ -1,10 +1,15 @@
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type {
+  AutoAllocationSuggestionEntry,
+  AutoAllocationPlan,
   BillRiskAlert,
   BudgetPerformance,
   EnvelopeBudgetEntry,
   EnvelopeBudgetId,
   ForecastWindow,
+  IncomeAllocationRuleEntry,
+  IncomeAllocationRuleId,
+  IncomeAllocationTarget,
   MonthCloseChecklistItem,
   RecurringCandidate,
   ReconciliationStatus,
@@ -38,6 +43,12 @@ type WhatIfInput = {
   spendDeltaPercent: string
 }
 
+type AllocationRuleForm = {
+  target: IncomeAllocationTarget
+  percentage: string
+  active: boolean
+}
+
 type PlanningTabProps = {
   monthKey: string
   summary: Summary
@@ -57,8 +68,21 @@ type PlanningTabProps = {
   submitBudget: (event: FormEvent<HTMLFormElement>) => void
   startBudgetEdit: (entry: EnvelopeBudgetEntry) => void
   removeBudget: (id: EnvelopeBudgetId) => Promise<void>
+  allocationRuleForm: AllocationRuleForm
+  setAllocationRuleForm: Dispatch<SetStateAction<AllocationRuleForm>>
+  allocationRuleEditId: IncomeAllocationRuleId | null
+  setAllocationRuleEditId: Dispatch<SetStateAction<IncomeAllocationRuleId | null>>
+  sortedIncomeAllocationRules: IncomeAllocationRuleEntry[]
+  submitAllocationRule: (event: FormEvent<HTMLFormElement>) => void
+  startAllocationRuleEdit: (entry: IncomeAllocationRuleEntry) => void
+  removeAllocationRule: (id: IncomeAllocationRuleId) => Promise<void>
+  incomeAllocationSuggestions: AutoAllocationSuggestionEntry[]
+  isApplyingAutoAllocation: boolean
+  autoAllocationLastRunNote: string | null
+  onApplyAutoAllocationNow: () => Promise<void>
   whatIfInput: WhatIfInput
   setWhatIfInput: Dispatch<SetStateAction<WhatIfInput>>
+  autoAllocationPlan: AutoAllocationPlan
   budgetPerformance: BudgetPerformance[]
   recurringCandidates: RecurringCandidate[]
   billRiskAlerts: BillRiskAlert[]
@@ -76,6 +100,7 @@ type PlanningTabProps = {
 
 type RuleSortKey = 'priority_desc' | 'priority_asc' | 'name_asc' | 'category_asc' | 'status_asc'
 type BudgetSortKey = 'category_asc' | 'target_desc' | 'spent_desc' | 'variance_asc' | 'status_priority'
+type AllocationSortKey = 'target_asc' | 'percentage_desc' | 'percentage_asc' | 'status_asc'
 
 const emptyRuleForm: RuleForm = {
   name: '',
@@ -91,6 +116,27 @@ const budgetStatusRank: Record<BudgetPerformance['status'], number> = {
   over: 0,
   warning: 1,
   on_track: 2,
+}
+
+const allocationTargetOrder: Record<IncomeAllocationTarget, number> = {
+  bills: 0,
+  savings: 1,
+  goals: 2,
+  debt_overpay: 3,
+}
+
+const allocationTargetLabel: Record<IncomeAllocationTarget, string> = {
+  bills: 'Bills',
+  savings: 'Savings',
+  goals: 'Goals',
+  debt_overpay: 'Debt overpay',
+}
+
+const allocationActionTypeLabel: Record<AutoAllocationSuggestionEntry['actionType'], string> = {
+  reserve_bills: 'Reserve bills',
+  move_to_savings: 'Move to savings',
+  fund_goals: 'Fund goals',
+  debt_overpay: 'Debt overpay',
 }
 
 export function PlanningTab({
@@ -112,8 +158,21 @@ export function PlanningTab({
   submitBudget,
   startBudgetEdit,
   removeBudget,
+  allocationRuleForm,
+  setAllocationRuleForm,
+  allocationRuleEditId,
+  setAllocationRuleEditId,
+  sortedIncomeAllocationRules,
+  submitAllocationRule,
+  startAllocationRuleEdit,
+  removeAllocationRule,
+  incomeAllocationSuggestions,
+  isApplyingAutoAllocation,
+  autoAllocationLastRunNote,
+  onApplyAutoAllocationNow,
   whatIfInput,
   setWhatIfInput,
+  autoAllocationPlan,
   budgetPerformance,
   recurringCandidates,
   billRiskAlerts,
@@ -127,6 +186,8 @@ export function PlanningTab({
   const [budgetQuery, setBudgetQuery] = useState('')
   const [budgetStatusFilter, setBudgetStatusFilter] = useState<'all' | BudgetPerformance['status']>('all')
   const [budgetSortKey, setBudgetSortKey] = useState<BudgetSortKey>('category_asc')
+  const [allocationQuery, setAllocationQuery] = useState('')
+  const [allocationSortKey, setAllocationSortKey] = useState<AllocationSortKey>('target_asc')
 
   const incomeDelta = Number.parseFloat(whatIfInput.incomeDeltaPercent || '0') / 100
   const commitmentDelta = Number.parseFloat(whatIfInput.commitmentDeltaPercent || '0') / 100
@@ -207,7 +268,36 @@ export function PlanningTab({
     })
   }, [budgetPerformance, budgetQuery, budgetSortKey, budgetStatusFilter])
 
+  const visibleAllocationRules = useMemo(() => {
+    const query = allocationQuery.trim().toLowerCase()
+    const filtered = query
+      ? sortedIncomeAllocationRules.filter((rule) => {
+          const label = allocationTargetLabel[rule.target]
+          return `${rule.target} ${label}`.toLowerCase().includes(query)
+        })
+      : sortedIncomeAllocationRules.slice()
+
+    return filtered.sort((a, b) => {
+      switch (allocationSortKey) {
+        case 'target_asc':
+          return allocationTargetOrder[a.target] - allocationTargetOrder[b.target]
+        case 'percentage_desc':
+          return b.percentage - a.percentage || allocationTargetOrder[a.target] - allocationTargetOrder[b.target]
+        case 'percentage_asc':
+          return a.percentage - b.percentage || allocationTargetOrder[a.target] - allocationTargetOrder[b.target]
+        case 'status_asc': {
+          const aKey = a.active ? 0 : 1
+          const bKey = b.active ? 0 : 1
+          return aKey - bKey || b.percentage - a.percentage
+        }
+        default:
+          return 0
+      }
+    })
+  }, [allocationQuery, allocationSortKey, sortedIncomeAllocationRules])
+
   const activeRuleCount = sortedRules.filter((rule) => rule.active).length
+  const activeAllocationRuleCount = sortedIncomeAllocationRules.filter((rule) => rule.active).length
   const overBudgetCount = budgetPerformance.filter((entry) => entry.status === 'over').length
   const warningBudgetCount = budgetPerformance.filter((entry) => entry.status === 'warning').length
   const criticalRiskCount = billRiskAlerts.filter((alert) => alert.risk === 'critical').length
@@ -261,11 +351,23 @@ export function PlanningTab({
     })
   }
 
+  const resetAllocationRuleForm = () => {
+    setAllocationRuleEditId(null)
+    setAllocationRuleForm({
+      target: 'bills',
+      percentage: '',
+      active: true,
+    })
+  }
+
   const forecast30 = forecastByWindow.get(30)
   const forecast90 = forecastByWindow.get(90)
   const forecast365 = forecastByWindow.get(365)
   const hasRuleFilters = ruleQuery.length > 0 || ruleSortKey !== 'priority_desc'
   const hasBudgetFilters = budgetQuery.length > 0 || budgetStatusFilter !== 'all' || budgetSortKey !== 'category_asc'
+  const hasAllocationFilters = allocationQuery.length > 0 || allocationSortKey !== 'target_asc'
+  const latestAllocationSuggestionAt =
+    incomeAllocationSuggestions.length > 0 ? Math.max(...incomeAllocationSuggestions.map((entry) => entry.createdAt)) : null
 
   return (
     <section className="content-grid" aria-label="Planning and automation">
@@ -281,7 +383,9 @@ export function PlanningTab({
           <div className="trust-kpi-tile">
             <p>Rules active</p>
             <strong>{activeRuleCount}</strong>
-            <small>{sortedRules.length} total configured</small>
+            <small>
+              {sortedRules.length} transaction / {activeAllocationRuleCount} allocation
+            </small>
           </div>
           <div className="trust-kpi-tile">
             <p>Budgets in month</p>
@@ -347,6 +451,262 @@ export function PlanningTab({
             <strong>{recurringCandidates.length}</strong>
           </li>
         </ul>
+      </article>
+
+      <article className="panel panel-form">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Auto allocation</p>
+            <h2>Income split editor</h2>
+            <p className="panel-value">{autoAllocationPlan.totalAllocatedPercent.toFixed(2)}% allocated</p>
+          </div>
+        </header>
+        <form className="entry-form entry-form--grid" onSubmit={submitAllocationRule}>
+          <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="allocation-target">Target bucket</label>
+              <select
+                id="allocation-target"
+                value={allocationRuleForm.target}
+                onChange={(event) =>
+                  setAllocationRuleForm((previous) => ({
+                    ...previous,
+                    target: event.target.value as IncomeAllocationTarget,
+                  }))
+                }
+              >
+                <option value="bills">Bills</option>
+                <option value="savings">Savings</option>
+                <option value="goals">Goals</option>
+                <option value="debt_overpay">Debt overpay</option>
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="allocation-percentage">Allocation %</label>
+              <input
+                id="allocation-percentage"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                max="100"
+                step="0.01"
+                value={allocationRuleForm.percentage}
+                onChange={(event) =>
+                  setAllocationRuleForm((previous) => ({ ...previous, percentage: event.target.value }))
+                }
+                placeholder="e.g. 25"
+                required
+              />
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="allocation-active">
+                <input
+                  id="allocation-active"
+                  type="checkbox"
+                  checked={allocationRuleForm.active}
+                  onChange={(event) =>
+                    setAllocationRuleForm((previous) => ({ ...previous, active: event.target.checked }))
+                  }
+                />
+                Rule active
+              </label>
+            </div>
+          </div>
+
+          <p className="form-hint">
+            Configure one rule per bucket so each paycheck can be split into bills, savings, goals, and debt overpay.
+          </p>
+
+          <div className="form-actions row-actions">
+            <button type="submit" className="btn btn-primary">
+              {allocationRuleEditId ? 'Update allocation' : 'Add allocation'}
+            </button>
+            {allocationRuleEditId ? (
+              <button type="button" className="btn btn-ghost" onClick={resetAllocationRuleForm}>
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      </article>
+
+      <article className="panel panel-list">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Allocation plan</p>
+            <h2>Monthly split preview</h2>
+            <p className="panel-value">{formatMoney(autoAllocationPlan.totalAllocatedAmount)} allocated monthly</p>
+          </div>
+          <div className="panel-actions">
+            <button
+              type="button"
+              className="btn btn-primary btn--sm"
+              onClick={() => void onApplyAutoAllocationNow()}
+              disabled={isApplyingAutoAllocation}
+            >
+              {isApplyingAutoAllocation ? 'Generating...' : 'Apply auto-allocation now'}
+            </button>
+            <input
+              aria-label="Search allocation rules"
+              placeholder="Search target…"
+              value={allocationQuery}
+              onChange={(event) => setAllocationQuery(event.target.value)}
+            />
+            <select
+              aria-label="Sort allocation rules"
+              value={allocationSortKey}
+              onChange={(event) => setAllocationSortKey(event.target.value as AllocationSortKey)}
+            >
+              <option value="target_asc">Target order</option>
+              <option value="percentage_desc">Percentage (high-low)</option>
+              <option value="percentage_asc">Percentage (low-high)</option>
+              <option value="status_asc">Status (active first)</option>
+            </select>
+            <button
+              type="button"
+              className="btn btn-ghost btn--sm"
+              onClick={() => {
+                setAllocationQuery('')
+                setAllocationSortKey('target_asc')
+              }}
+              disabled={!hasAllocationFilters}
+            >
+              Clear
+            </button>
+          </div>
+        </header>
+        <p className="subnote">
+          {autoAllocationLastRunNote ??
+            (latestAllocationSuggestionAt
+              ? `Last generated ${new Date(latestAllocationSuggestionAt).toLocaleString()}.`
+              : 'No suggestion run yet for this month.')}
+        </p>
+
+        <div className="bulk-summary">
+          <div>
+            <p>Allocated</p>
+            <strong>{autoAllocationPlan.totalAllocatedPercent.toFixed(2)}%</strong>
+            <small>{formatMoney(autoAllocationPlan.totalAllocatedAmount)}</small>
+          </div>
+          <div>
+            <p>Unallocated</p>
+            <strong>{autoAllocationPlan.unallocatedPercent.toFixed(2)}%</strong>
+            <small>{formatMoney(autoAllocationPlan.residualAmount)} remaining</small>
+          </div>
+        </div>
+
+        <ul className="launch-readiness">
+          {autoAllocationPlan.buckets.map((bucket) => (
+            <li key={bucket.target}>
+              <span>
+                {bucket.label} {bucket.active ? '(active)' : '(inactive)'}
+              </span>
+              <strong>
+                {bucket.percentage.toFixed(2)}% • {formatMoney(bucket.monthlyAmount)}
+              </strong>
+            </li>
+          ))}
+          {autoAllocationPlan.overAllocatedPercent > 0 ? (
+            <li>
+              <span>Overallocated</span>
+              <strong className="amount-negative">{autoAllocationPlan.overAllocatedPercent.toFixed(2)}%</strong>
+            </li>
+          ) : null}
+        </ul>
+
+        {sortedIncomeAllocationRules.length === 0 ? (
+          <p className="empty-state">No income allocation rules configured yet.</p>
+        ) : visibleAllocationRules.length === 0 ? (
+          <p className="empty-state">No allocation rules match this filter.</p>
+        ) : (
+          <div className="table-wrap table-wrap--card">
+            <table className="data-table">
+              <caption className="sr-only">Income allocation rules</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Target</th>
+                  <th scope="col">Percentage</th>
+                  <th scope="col">Monthly amount</th>
+                  <th scope="col">State</th>
+                  <th scope="col">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleAllocationRules.map((rule) => (
+                  <tr key={rule._id} className={allocationRuleEditId === rule._id ? 'table-row--editing' : undefined}>
+                    <td>{allocationTargetLabel[rule.target]}</td>
+                    <td className="table-amount">{rule.percentage.toFixed(2)}%</td>
+                    <td className="table-amount">
+                      {formatMoney((autoAllocationPlan.monthlyIncome * rule.percentage) / 100)}
+                    </td>
+                    <td>
+                      <span className={ruleStatusPill(rule.active)}>{rule.active ? 'active' : 'disabled'}</span>
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <button type="button" className="btn btn-secondary btn--sm" onClick={() => startAllocationRuleEdit(rule)}>
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn--sm"
+                          onClick={() => void removeAllocationRule(rule._id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {incomeAllocationSuggestions.length === 0 ? (
+          <p className="empty-state">No transfer/action suggestions generated yet for this month.</p>
+        ) : (
+          <div className="table-wrap table-wrap--card">
+            <table className="data-table">
+              <caption className="sr-only">Auto-allocation suggested actions</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Action</th>
+                  <th scope="col">Target</th>
+                  <th scope="col">Suggested amount</th>
+                  <th scope="col">Percent</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {incomeAllocationSuggestions.map((entry) => (
+                  <tr key={entry.id}>
+                    <td>
+                      <div>
+                        <strong>{entry.title}</strong>
+                        <p className="subnote">{entry.detail}</p>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="pill pill--neutral">
+                        {allocationActionTypeLabel[entry.actionType]} - {allocationTargetLabel[entry.target]}
+                      </span>
+                    </td>
+                    <td className="table-amount">{formatMoney(entry.amount)}</td>
+                    <td className="table-amount">{entry.percentage.toFixed(2)}%</td>
+                    <td>
+                      <span className={entry.status === 'suggested' ? 'pill pill--warning' : 'pill pill--good'}>
+                        {entry.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </article>
 
       <article className="panel panel-form">

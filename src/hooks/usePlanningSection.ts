@@ -4,6 +4,9 @@ import { api } from '../../convex/_generated/api'
 import type {
   EnvelopeBudgetEntry,
   EnvelopeBudgetId,
+  IncomeAllocationRuleEntry,
+  IncomeAllocationRuleId,
+  IncomeAllocationTarget,
   ReconciliationStatus,
   RuleMatchType,
   TransactionRuleEntry,
@@ -37,10 +40,17 @@ type WhatIfInput = {
   spendDeltaPercent: string
 }
 
+type AllocationRuleForm = {
+  target: IncomeAllocationTarget
+  percentage: string
+  active: boolean
+}
+
 type UsePlanningSectionArgs = {
   monthKey: string
   transactionRules: TransactionRuleEntry[]
   envelopeBudgets: EnvelopeBudgetEntry[]
+  incomeAllocationRules: IncomeAllocationRuleEntry[]
   userId: string | null | undefined
   onQueueMetric?: (metric: {
     event: string
@@ -75,10 +85,17 @@ const defaultWhatIf: WhatIfInput = {
   spendDeltaPercent: '0',
 }
 
+const emptyAllocationRuleForm: AllocationRuleForm = {
+  target: 'bills',
+  percentage: '',
+  active: true,
+}
+
 export const usePlanningSection = ({
   monthKey,
   transactionRules,
   envelopeBudgets,
+  incomeAllocationRules,
   userId,
   onQueueMetric,
   clearError,
@@ -90,12 +107,20 @@ export const usePlanningSection = ({
   const addEnvelopeBudget = useMutation(api.phase2.addEnvelopeBudget)
   const updateEnvelopeBudget = useMutation(api.phase2.updateEnvelopeBudget)
   const removeEnvelopeBudget = useMutation(api.phase2.removeEnvelopeBudget)
+  const addIncomeAllocationRule = useMutation(api.phase2.addIncomeAllocationRule)
+  const updateIncomeAllocationRule = useMutation(api.phase2.updateIncomeAllocationRule)
+  const removeIncomeAllocationRule = useMutation(api.phase2.removeIncomeAllocationRule)
+  const applyIncomeAutoAllocationNow = useMutation(api.phase2.applyIncomeAutoAllocationNow)
 
   const [ruleForm, setRuleForm] = useState<RuleForm>(emptyRuleForm)
   const [budgetForm, setBudgetForm] = useState<BudgetForm>(emptyBudgetForm(monthKey))
+  const [allocationRuleForm, setAllocationRuleForm] = useState<AllocationRuleForm>(emptyAllocationRuleForm)
   const [ruleEditId, setRuleEditId] = useState<TransactionRuleId | null>(null)
   const [budgetEditId, setBudgetEditId] = useState<EnvelopeBudgetId | null>(null)
+  const [allocationRuleEditId, setAllocationRuleEditId] = useState<IncomeAllocationRuleId | null>(null)
   const [whatIfInput, setWhatIfInput] = useState<WhatIfInput>(defaultWhatIf)
+  const [isApplyingAutoAllocation, setIsApplyingAutoAllocation] = useState(false)
+  const [autoAllocationLastRunNote, setAutoAllocationLastRunNote] = useState<string | null>(null)
 
   const queue = useOfflineQueue({
     storageKey: 'finance-offline-queue-v2-planning',
@@ -118,6 +143,15 @@ export const usePlanningSection = ({
       removeEnvelopeBudget: async (args) => {
         await removeEnvelopeBudget(args as Parameters<typeof removeEnvelopeBudget>[0])
       },
+      addIncomeAllocationRule: async (args) => {
+        await addIncomeAllocationRule(args as Parameters<typeof addIncomeAllocationRule>[0])
+      },
+      updateIncomeAllocationRule: async (args) => {
+        await updateIncomeAllocationRule(args as Parameters<typeof updateIncomeAllocationRule>[0])
+      },
+      removeIncomeAllocationRule: async (args) => {
+        await removeIncomeAllocationRule(args as Parameters<typeof removeIncomeAllocationRule>[0])
+      },
     },
     userId,
     onMetric: onQueueMetric,
@@ -131,6 +165,11 @@ export const usePlanningSection = ({
   const sortedBudgets = useMemo(
     () => [...envelopeBudgets].sort((a, b) => a.category.localeCompare(b.category)),
     [envelopeBudgets],
+  )
+
+  const sortedIncomeAllocationRules = useMemo(
+    () => [...incomeAllocationRules].sort((a, b) => a.target.localeCompare(b.target) || b.createdAt - a.createdAt),
+    [incomeAllocationRules],
   )
 
   const submitRule = async (event: FormEvent<HTMLFormElement>) => {
@@ -237,6 +276,70 @@ export const usePlanningSection = ({
     }
   }
 
+  const submitAllocationRule = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    clearError()
+
+    const payload = {
+      target: allocationRuleForm.target,
+      percentage: parseFloatInput(allocationRuleForm.percentage, 'Allocation percentage'),
+      active: allocationRuleForm.active,
+    }
+
+    try {
+      if (allocationRuleEditId) {
+        await queue.runOrQueue('updateIncomeAllocationRule', { id: allocationRuleEditId, ...payload }, async (args) =>
+          updateIncomeAllocationRule(args),
+        )
+      } else {
+        await queue.runOrQueue('addIncomeAllocationRule', payload, async (args) => addIncomeAllocationRule(args))
+      }
+
+      setAllocationRuleForm(emptyAllocationRuleForm)
+      setAllocationRuleEditId(null)
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const startAllocationRuleEdit = (entry: IncomeAllocationRuleEntry) => {
+    setAllocationRuleEditId(entry._id)
+    setAllocationRuleForm({
+      target: entry.target,
+      percentage: String(entry.percentage),
+      active: entry.active,
+    })
+  }
+
+  const removeAllocationRule = async (id: IncomeAllocationRuleId) => {
+    clearError()
+    try {
+      await queue.runOrQueue('removeIncomeAllocationRule', { id }, async (args) => removeIncomeAllocationRule(args))
+      if (allocationRuleEditId === id) {
+        setAllocationRuleEditId(null)
+        setAllocationRuleForm(emptyAllocationRuleForm)
+      }
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onApplyAutoAllocationNow = async () => {
+    clearError()
+    setIsApplyingAutoAllocation(true)
+    try {
+      const result = await applyIncomeAutoAllocationNow({ month: monthKey })
+      setAutoAllocationLastRunNote(
+        `Generated ${result.suggestionsCreated} suggestion${result.suggestionsCreated === 1 ? '' : 's'} for ${result.monthKey}.`,
+      )
+    } catch (error) {
+      setAutoAllocationLastRunNote(null)
+      handleMutationError(error)
+    } finally {
+      setIsApplyingAutoAllocation(false)
+    }
+  }
+
   return {
     ruleForm,
     setRuleForm,
@@ -254,6 +357,17 @@ export const usePlanningSection = ({
     submitBudget,
     startBudgetEdit,
     removeBudget,
+    allocationRuleForm,
+    setAllocationRuleForm,
+    allocationRuleEditId,
+    setAllocationRuleEditId,
+    sortedIncomeAllocationRules,
+    submitAllocationRule,
+    startAllocationRuleEdit,
+    removeAllocationRule,
+    isApplyingAutoAllocation,
+    autoAllocationLastRunNote,
+    onApplyAutoAllocationNow,
     whatIfInput,
     setWhatIfInput,
     queue,

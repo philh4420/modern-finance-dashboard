@@ -22,6 +22,8 @@ export type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 export type RuleMatchType = 'contains' | 'exact' | 'starts_with'
 export type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 export type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
+export type IncomeAllocationTarget = 'bills' | 'savings' | 'goals' | 'debt_overpay'
+export type AutoAllocationActionType = 'reserve_bills' | 'move_to_savings' | 'fund_goals' | 'debt_overpay'
 
 export type FinancePreference = {
   currency: string
@@ -72,6 +74,7 @@ export type FinanceAuditEventEntry = Doc<'financeAuditEvents'>
 export type LedgerEntry = Doc<'ledgerEntries'>
 export type TransactionRuleEntry = Doc<'transactionRules'>
 export type EnvelopeBudgetEntry = Doc<'envelopeBudgets'>
+export type IncomeAllocationRuleEntry = Doc<'incomeAllocationRules'>
 export type PurchaseSplitEntry = Doc<'purchaseSplits'>
 export type ConsentLogEntry = Doc<'consentLogs'>
 export type UserExportEntry = Doc<'userExports'>
@@ -311,10 +314,45 @@ export type MonthCloseChecklistItem = {
   detail: string
 }
 
+export type AutoAllocationBucket = {
+  target: IncomeAllocationTarget
+  label: string
+  percentage: number
+  monthlyAmount: number
+  active: boolean
+}
+
+export type AutoAllocationPlan = {
+  monthlyIncome: number
+  totalAllocatedPercent: number
+  totalAllocatedAmount: number
+  residualAmount: number
+  unallocatedPercent: number
+  overAllocatedPercent: number
+  buckets: AutoAllocationBucket[]
+}
+
+export type AutoAllocationSuggestionEntry = {
+  id: string
+  target: IncomeAllocationTarget
+  actionType: AutoAllocationActionType
+  title: string
+  detail: string
+  percentage: number
+  amount: number
+  status: 'suggested' | 'completed' | 'dismissed'
+  month: string
+  runId: string
+  createdAt: number
+}
+
 export type Phase2Data = {
   monthKey: string
   transactionRules: TransactionRuleEntry[]
   envelopeBudgets: EnvelopeBudgetEntry[]
+  incomeAllocationRules: IncomeAllocationRuleEntry[]
+  incomeAllocationSuggestions: AutoAllocationSuggestionEntry[]
+  autoAllocationPlan: AutoAllocationPlan
   budgetPerformance: BudgetPerformance[]
   recurringCandidates: RecurringCandidate[]
   billRiskAlerts: BillRiskAlert[]
@@ -359,3 +397,4 @@ export type AccountId = Id<'accounts'>
 export type GoalId = Id<'goals'>
 export type TransactionRuleId = Id<'transactionRules'>
 export type EnvelopeBudgetId = Id<'envelopeBudgets'>
+export type IncomeAllocationRuleId = Id<'incomeAllocationRules'>

@@ -27,6 +27,8 @@ type DeletionTable =
   | 'purchases'
   | 'transactionRules'
   | 'envelopeBudgets'
+  | 'incomeAllocationRules'
+  | 'incomeAllocationSuggestions'
   | 'incomes'
   | 'bills'
   | 'cards'
@@ -51,6 +53,8 @@ const deletionTableValidator = v.union(
   v.literal('purchases'),
   v.literal('transactionRules'),
   v.literal('envelopeBudgets'),
+  v.literal('incomeAllocationRules'),
+  v.literal('incomeAllocationSuggestions'),
   v.literal('incomes'),
   v.literal('bills'),
   v.literal('cards'),
@@ -366,6 +370,8 @@ export const requestDeletion = action({
       'purchases',
       'transactionRules',
       'envelopeBudgets',
+      'incomeAllocationRules',
+      'incomeAllocationSuggestions',
       'incomes',
       'bills',
       'cards',
@@ -509,6 +515,8 @@ export const _collectExportData = internalQuery({
       goals,
       transactionRules,
       envelopeBudgets,
+      incomeAllocationRules,
+      incomeAllocationSuggestions,
       purchaseSplits,
       cycleAuditLogs,
       monthlyCycleRuns,
@@ -531,6 +539,8 @@ export const _collectExportData = internalQuery({
       ctx.db.query('goals').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('transactionRules').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('envelopeBudgets').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('incomeAllocationRules').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('incomeAllocationSuggestions').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('purchaseSplits').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cycleAuditLogs').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('monthlyCycleRuns').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -555,6 +565,8 @@ export const _collectExportData = internalQuery({
       goals: docsToPortableRows(goals),
       transactionRules: docsToPortableRows(transactionRules),
       envelopeBudgets: docsToPortableRows(envelopeBudgets),
+      incomeAllocationRules: docsToPortableRows(incomeAllocationRules),
+      incomeAllocationSuggestions: docsToPortableRows(incomeAllocationSuggestions),
       purchaseSplits: docsToPortableRows(purchaseSplits),
       cycleAuditLogs: docsToPortableRows(cycleAuditLogs),
       monthlyCycleRuns: docsToPortableRows(monthlyCycleRuns),
