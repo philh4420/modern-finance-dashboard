@@ -386,6 +386,23 @@ export function CardsTab({
   const dueAdjustedUtilizationPercent = cardLimitTotal > 0 ? dueAdjustedCurrentTotal / cardLimitTotal : 0
   const projectedUtilizationAfterPaymentPortfolio =
     cardLimitTotal > 0 ? projectedPostPaymentBalanceTotal / cardLimitTotal : 0
+  const weightedAprPercent = useMemo(() => {
+    if (dueAdjustedCurrentTotal <= 0) {
+      return 0
+    }
+
+    const weightedAprTotal = cardRows.reduce((sum, row) => {
+      const balanceWeight = Math.max(row.projection.displayCurrentBalance, 0)
+      const apr = toNonNegativeNumber(row.entry.interestRate)
+      return sum + balanceWeight * apr
+    }, 0)
+
+    return weightedAprTotal / dueAdjustedCurrentTotal
+  }, [cardRows, dueAdjustedCurrentTotal])
+  const utilizationTrendDelta = projectedUtilizationAfterPaymentPortfolio - dueAdjustedUtilizationPercent
+  const utilizationTrendDeltaPp = utilizationTrendDelta * 100
+  const utilizationTrendDirection =
+    utilizationTrendDeltaPp < -0.05 ? 'down' : utilizationTrendDeltaPp > 0.05 ? 'up' : 'flat'
 
   const payoffCards = useMemo<PayoffCard[]>(
     () =>
@@ -903,6 +920,37 @@ export function CardsTab({
             </button>
           </div>
         </header>
+
+        <section className="cards-portfolio-strip" aria-label="Card portfolio summary">
+          <article className="cards-portfolio-tile">
+            <p>Total card debt</p>
+            <strong>{formatMoney(dueAdjustedCurrentTotal)}</strong>
+            <small>{cards.length} cards with due-adjusted balances</small>
+          </article>
+
+          <article className="cards-portfolio-tile">
+            <p>Weighted APR</p>
+            <strong>{weightedAprPercent.toFixed(2)}%</strong>
+            <small>Balance-weighted portfolio APR</small>
+          </article>
+
+          <article className="cards-portfolio-tile">
+            <p>Total minimum payments</p>
+            <strong>{formatMoney(estimatedMinimumDueTotal)}</strong>
+            <small>Current-cycle minimum due total</small>
+          </article>
+
+          <article className="cards-portfolio-tile">
+            <p>Utilization trend</p>
+            <strong>
+              {formatPercent(dueAdjustedUtilizationPercent)} to {formatPercent(projectedUtilizationAfterPaymentPortfolio)}
+            </strong>
+            <small className={`cards-portfolio-trend cards-portfolio-trend--${utilizationTrendDirection}`}>
+              {utilizationTrendDeltaPp >= 0 ? '+' : ''}
+              {utilizationTrendDeltaPp.toFixed(1)}pp after planned payments
+            </small>
+          </article>
+        </section>
 
         {cards.length === 0 ? (
           <p className="empty-state">No cards added yet.</p>
