@@ -165,10 +165,34 @@ type IncomePaymentReliabilitySummary = {
   lastStatus: IncomePaymentStatus | null
 }
 
+type IncomeStatusTag = 'confirmed' | 'pending' | 'at_risk' | 'missed'
+
 const incomePaymentStatusLabel = (status: IncomePaymentStatus) => {
   if (status === 'on_time') return 'On time'
   if (status === 'late') return 'Late'
   return 'Missed'
+}
+
+const incomeStatusLabel = (status: IncomeStatusTag) => {
+  if (status === 'confirmed') return 'Confirmed'
+  if (status === 'at_risk') return 'At-risk'
+  if (status === 'missed') return 'Missed'
+  return 'Pending'
+}
+
+const resolveIncomeStatusTag = (args: {
+  currentCycleStatus: IncomePaymentStatus | null
+  reliability: IncomePaymentReliabilitySummary
+  hasActualPaidAmount: boolean
+}): IncomeStatusTag => {
+  if (args.currentCycleStatus === 'missed') return 'missed'
+  if (args.currentCycleStatus === 'late') return 'at_risk'
+  if (args.currentCycleStatus === 'on_time') return 'confirmed'
+
+  if (args.reliability.missedStreak > 0) return 'missed'
+  if (args.reliability.lateOrMissedStreak > 0) return 'at_risk'
+  if (args.reliability.lastStatus === 'on_time' || args.hasActualPaidAmount) return 'confirmed'
+  return 'pending'
 }
 
 const calculateIncomePaymentReliability = (
@@ -463,6 +487,7 @@ export function PrintReport({
 }: PrintReportProps) {
   const locale = preference.locale || 'en-US'
   const generatedAt = new Date()
+  const currentCycleMonth = generatedAt.toISOString().slice(0, 7)
   const rangeMonths = monthsBetweenInclusive(config.startMonth, config.endMonth)
 
   const purchasesInRange = purchases
@@ -907,6 +932,7 @@ export function PrintReport({
                       <th scope="col">Variance</th>
                       <th scope="col">Reliability</th>
                       <th scope="col">Latest Status</th>
+                      <th scope="col">Income Status</th>
                       <th scope="col">Cadence</th>
                       <th scope="col">Received</th>
                       <th scope="col">Anchor</th>
@@ -927,6 +953,13 @@ export function PrintReport({
                         actualPaidAmount !== undefined ? roundCurrency(actualPaidAmount - netAmount) : undefined
                       const paymentHistory = incomePaymentChecksByIncomeId.get(String(income._id)) ?? []
                       const reliability = calculateIncomePaymentReliability(paymentHistory)
+                      const currentCycleCheck =
+                        paymentHistory.find((entry) => entry.cycleMonth === currentCycleMonth) ?? null
+                      const incomeStatus = resolveIncomeStatusTag({
+                        currentCycleStatus: currentCycleCheck?.status ?? null,
+                        reliability,
+                        hasActualPaidAmount: actualPaidAmount !== undefined,
+                      })
                       const nextPayday = nextDateForCadence({
                         cadence: income.cadence,
                         createdAt: income.createdAt,
@@ -954,6 +987,7 @@ export function PrintReport({
                               ? `${incomePaymentStatusLabel(reliability.lastStatus)} · late ${reliability.lateStreak} · missed ${reliability.missedStreak}`
                               : 'n/a'}
                           </td>
+                          <td>{incomeStatusLabel(incomeStatus)}</td>
                           <td>{income.cadence}</td>
                           <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
                           <td>{income.payDateAnchor ?? 'n/a'}</td>

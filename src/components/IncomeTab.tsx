@@ -55,6 +55,8 @@ type IncomePaymentReliability = {
   lastStatus: IncomePaymentStatus | null
 }
 
+type IncomeStatusTag = 'confirmed' | 'pending' | 'at_risk' | 'missed'
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 const reliabilityStatusLabel = (status: IncomePaymentStatus) => {
@@ -67,6 +69,41 @@ const reliabilityStatusPillClass = (status: IncomePaymentStatus) => {
   if (status === 'on_time') return 'pill pill--good'
   if (status === 'late') return 'pill pill--warning'
   return 'pill pill--critical'
+}
+
+const incomeStatusLabel = (status: IncomeStatusTag) => {
+  if (status === 'confirmed') return 'Confirmed'
+  if (status === 'at_risk') return 'At-risk'
+  if (status === 'missed') return 'Missed'
+  return 'Pending'
+}
+
+const incomeStatusPillClass = (status: IncomeStatusTag) => {
+  if (status === 'confirmed') return 'pill pill--good'
+  if (status === 'at_risk') return 'pill pill--warning'
+  if (status === 'missed') return 'pill pill--critical'
+  return 'pill pill--neutral'
+}
+
+const resolveIncomeStatusTag = (args: {
+  currentCycleCheck: IncomePaymentCheckEntry | null
+  latestPaymentCheck: IncomePaymentCheckEntry | null
+  reliability: IncomePaymentReliability
+  hasActualPaidAmount: boolean
+}): IncomeStatusTag => {
+  const cycleStatus = args.currentCycleCheck?.status ?? null
+  if (cycleStatus === 'missed') return 'missed'
+  if (cycleStatus === 'late') return 'at_risk'
+  if (cycleStatus === 'on_time') return 'confirmed'
+
+  if (args.reliability.missedStreak > 0) return 'missed'
+  if (args.reliability.lateOrMissedStreak > 0) return 'at_risk'
+
+  if (args.latestPaymentCheck?.status === 'on_time' || args.hasActualPaidAmount) {
+    return 'confirmed'
+  }
+
+  return 'pending'
 }
 
 const calculateIncomePaymentReliability = (checks: IncomePaymentCheckEntry[]): IncomePaymentReliability => {
@@ -722,6 +759,7 @@ export function IncomeTab({
                     <th scope="col">Actual paid</th>
                     <th scope="col">Variance</th>
                     <th scope="col">Reliability</th>
+                    <th scope="col">Status</th>
                     <th scope="col">Frequency</th>
                     <th scope="col">Day</th>
                     <th scope="col">Anchor</th>
@@ -766,6 +804,14 @@ export function IncomeTab({
                     const rowPaymentChecks = paymentChecksByIncomeId.get(entry._id) ?? []
                     const rowReliability = calculateIncomePaymentReliability(rowPaymentChecks)
                     const latestPaymentCheck = rowPaymentChecks[0] ?? null
+                    const currentCycleCheck =
+                      rowPaymentChecks.find((paymentCheck) => paymentCheck.cycleMonth === currentCycleMonth) ?? null
+                    const incomeStatus = resolveIncomeStatusTag({
+                      currentCycleCheck,
+                      latestPaymentCheck,
+                      reliability: rowReliability,
+                      hasActualPaidAmount: actualPaidAmount !== undefined,
+                    })
                     const isPaymentLogOpen = paymentLogIncomeId === entry._id
                     const editCustomInterval = isCustomCadence(incomeEditDraft.cadence)
                       ? parseOptionalPositiveInt(incomeEditDraft.customInterval)
@@ -968,6 +1014,20 @@ export function IncomeTab({
                           )}
                         </td>
                         <td>
+                          <div className="cell-stack">
+                            <span className={incomeStatusPillClass(incomeStatus)}>{incomeStatusLabel(incomeStatus)}</span>
+                            <small>
+                              {currentCycleCheck
+                                ? `${currentCycleCheck.cycleMonth} log`
+                                : latestPaymentCheck
+                                  ? 'from latest log'
+                                  : actualPaidAmount !== undefined
+                                    ? 'from actual amount'
+                                    : 'awaiting payment log'}
+                            </small>
+                          </div>
+                        </td>
+                        <td>
                           {isEditing ? (
                             <div className="inline-cadence-controls">
                               <select
@@ -1133,7 +1193,7 @@ export function IncomeTab({
                         </tr>
                         {isPaymentLogOpen ? (
                           <tr className="table-row--quick">
-                            <td colSpan={13}>
+                            <td colSpan={14}>
                               <div className="income-payment-log-panel">
                                 <div className="income-payment-log-head">
                                   <h3>Payment reliability log</h3>
