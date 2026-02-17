@@ -2241,6 +2241,11 @@ h2 {
   gap: 0.55rem;
 }
 
+.income-breakdown-summary {
+  margin-top: 0.72rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .bulk-summary>div {
   border-radius: 1rem;
   border: 1px solid color-mix(in oklab, var(--stroke) 75%, transparent);
@@ -2267,6 +2272,12 @@ h2 {
 .bulk-summary small {
   color: var(--text-muted);
   font-size: 0.82rem;
+}
+
+.income-deductions-editor {
+  display: grid;
+  gap: 0.32rem;
+  min-width: 9.6rem;
 }
 
 .entry-form label {

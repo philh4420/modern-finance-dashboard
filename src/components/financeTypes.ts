@@ -124,6 +124,10 @@ export type RetentionPolicyRow = {
 export type IncomeForm = {
   source: string
   amount: string
+  grossAmount: string
+  taxAmount: string
+  nationalInsuranceAmount: string
+  pensionAmount: string
   cadence: Cadence
   customInterval: string
   customUnit: CustomCadenceUnit

@@ -175,6 +175,32 @@ const validateUsedLimitAgainstCreditLimit = (args: {
 const finiteOrZero = (value: number | undefined | null) =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0
 
+const computeIncomeDeductionsTotal = (entry: {
+  taxAmount?: number | null
+  nationalInsuranceAmount?: number | null
+  pensionAmount?: number | null
+}) =>
+  finiteOrZero(entry.taxAmount) +
+  finiteOrZero(entry.nationalInsuranceAmount) +
+  finiteOrZero(entry.pensionAmount)
+
+const resolveIncomeNetAmount = (entry: {
+  amount: number
+  grossAmount?: number | null
+  taxAmount?: number | null
+  nationalInsuranceAmount?: number | null
+  pensionAmount?: number | null
+}) => {
+  const grossAmount = finiteOrZero(entry.grossAmount)
+  const deductionTotal = computeIncomeDeductionsTotal(entry)
+
+  if (grossAmount > 0 || deductionTotal > 0) {
+    return Math.max(grossAmount - deductionTotal, 0)
+  }
+
+  return Math.max(finiteOrZero(entry.amount), 0)
+}
+
 const normalizeCardMinimumPaymentType = (
   value: CardMinimumPaymentType | undefined | null,
 ): CardMinimumPaymentType => (value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed')
@@ -921,7 +947,7 @@ const buildUpcomingCashEvents = (
       label: entry.source,
       type: 'income',
       date: nextDate.toISOString().slice(0, 10),
-      amount: entry.amount,
+      amount: resolveIncomeNetAmount(entry),
       daysAway,
       cadence: entry.cadence,
       customInterval: entry.customInterval,
@@ -1342,7 +1368,8 @@ const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string
   ])
 
   const monthlyIncome = incomes.reduce(
-    (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
+    (sum, entry) =>
+      sum + toMonthlyAmount(resolveIncomeNetAmount(entry), entry.cadence, entry.customInterval, entry.customUnit),
     0,
   )
   const monthlyBills = bills.reduce(
@@ -1532,7 +1559,8 @@ export const getFinanceData = query({
     ])
 
     const monthlyIncome = incomes.reduce(
-      (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
+      (sum, entry) =>
+        sum + toMonthlyAmount(resolveIncomeNetAmount(entry), entry.cadence, entry.customInterval, entry.customUnit),
       0,
     )
     const monthlyBills = bills.reduce(
@@ -1751,6 +1779,10 @@ export const addIncome = mutation({
   args: {
     source: v.string(),
     amount: v.number(),
+    grossAmount: v.optional(v.number()),
+    taxAmount: v.optional(v.number()),
+    nationalInsuranceAmount: v.optional(v.number()),
+    pensionAmount: v.optional(v.number()),
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
@@ -1761,19 +1793,50 @@ export const addIncome = mutation({
     const identity = await requireIdentity(ctx)
 
     validateRequiredText(args.source, 'Income source')
-    validatePositive(args.amount, 'Income amount')
+    validateFinite(args.amount, 'Income net amount')
     validateOptionalText(args.notes, 'Notes', 2000)
+    if (args.grossAmount !== undefined) {
+      validateNonNegative(args.grossAmount, 'Income gross amount')
+    }
+    if (args.taxAmount !== undefined) {
+      validateNonNegative(args.taxAmount, 'Income tax deduction')
+    }
+    if (args.nationalInsuranceAmount !== undefined) {
+      validateNonNegative(args.nationalInsuranceAmount, 'Income NI deduction')
+    }
+    if (args.pensionAmount !== undefined) {
+      validateNonNegative(args.pensionAmount, 'Income pension deduction')
+    }
 
     if (args.receivedDay !== undefined && (args.receivedDay < 1 || args.receivedDay > 31)) {
       throw new Error('Received day must be between 1 and 31.')
     }
+
+    const deductionTotal = computeIncomeDeductionsTotal(args)
+    if (deductionTotal > 0.000001 && args.grossAmount === undefined) {
+      throw new Error('Gross amount is required when adding income deductions.')
+    }
+
+    if (args.grossAmount !== undefined && deductionTotal > args.grossAmount + 0.000001) {
+      throw new Error('Income deductions cannot exceed gross amount.')
+    }
+
+    const resolvedNetAmount =
+      args.grossAmount !== undefined || deductionTotal > 0
+        ? Math.max(args.grossAmount ?? 0 - deductionTotal, 0)
+        : Math.max(args.amount, 0)
+    validatePositive(resolvedNetAmount, 'Income net amount')
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
     const createdIncomeId = await ctx.db.insert('incomes', {
       userId: identity.subject,
       source: args.source.trim(),
-      amount: args.amount,
+      amount: roundCurrency(resolvedNetAmount),
+      grossAmount: args.grossAmount,
+      taxAmount: args.taxAmount,
+      nationalInsuranceAmount: args.nationalInsuranceAmount,
+      pensionAmount: args.pensionAmount,
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
@@ -1789,7 +1852,11 @@ export const addIncome = mutation({
       action: 'created',
       after: {
         source: args.source.trim(),
-        amount: args.amount,
+        amount: roundCurrency(resolvedNetAmount),
+        grossAmount: args.grossAmount,
+        taxAmount: args.taxAmount,
+        nationalInsuranceAmount: args.nationalInsuranceAmount,
+        pensionAmount: args.pensionAmount,
         cadence: args.cadence,
       },
     })
@@ -1801,6 +1868,10 @@ export const updateIncome = mutation({
     id: v.id('incomes'),
     source: v.string(),
     amount: v.number(),
+    grossAmount: v.optional(v.number()),
+    taxAmount: v.optional(v.number()),
+    nationalInsuranceAmount: v.optional(v.number()),
+    pensionAmount: v.optional(v.number()),
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
@@ -1811,12 +1882,39 @@ export const updateIncome = mutation({
     const identity = await requireIdentity(ctx)
 
     validateRequiredText(args.source, 'Income source')
-    validatePositive(args.amount, 'Income amount')
+    validateFinite(args.amount, 'Income net amount')
     validateOptionalText(args.notes, 'Notes', 2000)
+    if (args.grossAmount !== undefined) {
+      validateNonNegative(args.grossAmount, 'Income gross amount')
+    }
+    if (args.taxAmount !== undefined) {
+      validateNonNegative(args.taxAmount, 'Income tax deduction')
+    }
+    if (args.nationalInsuranceAmount !== undefined) {
+      validateNonNegative(args.nationalInsuranceAmount, 'Income NI deduction')
+    }
+    if (args.pensionAmount !== undefined) {
+      validateNonNegative(args.pensionAmount, 'Income pension deduction')
+    }
 
     if (args.receivedDay !== undefined && (args.receivedDay < 1 || args.receivedDay > 31)) {
       throw new Error('Received day must be between 1 and 31.')
     }
+
+    const deductionTotal = computeIncomeDeductionsTotal(args)
+    if (deductionTotal > 0.000001 && args.grossAmount === undefined) {
+      throw new Error('Gross amount is required when adding income deductions.')
+    }
+
+    if (args.grossAmount !== undefined && deductionTotal > args.grossAmount + 0.000001) {
+      throw new Error('Income deductions cannot exceed gross amount.')
+    }
+
+    const resolvedNetAmount =
+      args.grossAmount !== undefined || deductionTotal > 0
+        ? Math.max(args.grossAmount ?? 0 - deductionTotal, 0)
+        : Math.max(args.amount, 0)
+    validatePositive(resolvedNetAmount, 'Income net amount')
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
@@ -1825,7 +1923,11 @@ export const updateIncome = mutation({
 
     await ctx.db.patch(args.id, {
       source: args.source.trim(),
-      amount: args.amount,
+      amount: roundCurrency(resolvedNetAmount),
+      grossAmount: args.grossAmount,
+      taxAmount: args.taxAmount,
+      nationalInsuranceAmount: args.nationalInsuranceAmount,
+      pensionAmount: args.pensionAmount,
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
@@ -1841,11 +1943,19 @@ export const updateIncome = mutation({
       before: {
         source: existing.source,
         amount: existing.amount,
+        grossAmount: existing.grossAmount,
+        taxAmount: existing.taxAmount,
+        nationalInsuranceAmount: existing.nationalInsuranceAmount,
+        pensionAmount: existing.pensionAmount,
         cadence: existing.cadence,
       },
       after: {
         source: args.source.trim(),
-        amount: args.amount,
+        amount: roundCurrency(resolvedNetAmount),
+        grossAmount: args.grossAmount,
+        taxAmount: args.taxAmount,
+        nationalInsuranceAmount: args.nationalInsuranceAmount,
+        pensionAmount: args.pensionAmount,
         cadence: args.cadence,
       },
     })

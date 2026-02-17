@@ -16,6 +16,7 @@ import type {
   Summary,
 } from './financeTypes'
 import type { PrintReportConfig } from './PrintReportModal'
+import { computeIncomeDeductionsTotal, resolveIncomeGrossAmount, resolveIncomeNetAmount } from '../lib/incomeMath'
 
 type PrintReportProps = {
   config: PrintReportConfig
@@ -725,22 +726,32 @@ export function PrintReport({
                 <thead>
                   <tr>
                     <th scope="col">Source</th>
-                    <th scope="col">Amount</th>
+                    <th scope="col">Gross</th>
+                    <th scope="col">Deductions</th>
+                    <th scope="col">Net</th>
                     <th scope="col">Cadence</th>
                     <th scope="col">Received</th>
                     {config.includeNotes ? <th scope="col">Notes</th> : null}
                   </tr>
                 </thead>
                 <tbody>
-                  {incomes.map((income) => (
-                    <tr key={income._id}>
-                      <td>{income.source}</td>
-                      <td className="table-amount">{formatMoney(income.amount)}</td>
-                      <td>{income.cadence}</td>
-                      <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
-                      {config.includeNotes ? <td>{income.notes ?? ''}</td> : null}
-                    </tr>
-                  ))}
+                  {incomes.map((income) => {
+                    const grossAmount = resolveIncomeGrossAmount(income)
+                    const deductionTotal = computeIncomeDeductionsTotal(income)
+                    const netAmount = resolveIncomeNetAmount(income)
+
+                    return (
+                      <tr key={income._id}>
+                        <td>{income.source}</td>
+                        <td className="table-amount">{formatMoney(grossAmount)}</td>
+                        <td className="table-amount">{formatMoney(deductionTotal)}</td>
+                        <td className="table-amount">{formatMoney(netAmount)}</td>
+                        <td>{income.cadence}</td>
+                        <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
+                        {config.includeNotes ? <td>{income.notes ?? ''}</td> : null}
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

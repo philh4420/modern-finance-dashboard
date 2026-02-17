@@ -68,6 +68,32 @@ const finiteOrZero = (value: number | undefined | null) =>
 
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
 
+const computeIncomeDeductionsTotal = (entry: {
+  taxAmount?: number | null
+  nationalInsuranceAmount?: number | null
+  pensionAmount?: number | null
+}) =>
+  finiteOrZero(entry.taxAmount) +
+  finiteOrZero(entry.nationalInsuranceAmount) +
+  finiteOrZero(entry.pensionAmount)
+
+const resolveIncomeNetAmount = (entry: {
+  amount: number
+  grossAmount?: number | null
+  taxAmount?: number | null
+  nationalInsuranceAmount?: number | null
+  pensionAmount?: number | null
+}) => {
+  const grossAmount = finiteOrZero(entry.grossAmount)
+  const deductionTotal = computeIncomeDeductionsTotal(entry)
+
+  if (grossAmount > 0 || deductionTotal > 0) {
+    return Math.max(grossAmount - deductionTotal, 0)
+  }
+
+  return Math.max(finiteOrZero(entry.amount), 0)
+}
+
 const toMonthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 
 const normalizeText = (value: string) => value.trim().toLowerCase()
@@ -428,7 +454,8 @@ export const getPhase2Data = query({
       .slice(0, 8)
 
     const monthlyIncome = incomes.reduce(
-      (sum, income) => sum + toMonthlyAmount(income.amount, income.cadence, income.customInterval, income.customUnit),
+      (sum, income) =>
+        sum + toMonthlyAmount(resolveIncomeNetAmount(income), income.cadence, income.customInterval, income.customUnit),
       0,
     )
     const monthlyBills = bills.reduce(
