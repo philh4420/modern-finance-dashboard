@@ -174,6 +174,7 @@ export default defineSchema({
     userId: v.string(),
     source: v.string(),
     amount: v.number(),
+    actualAmount: v.optional(v.number()),
     grossAmount: v.optional(v.number()),
     taxAmount: v.optional(v.number()),
     nationalInsuranceAmount: v.optional(v.number()),

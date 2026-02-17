@@ -2243,7 +2243,7 @@ h2 {
 
 .income-breakdown-summary {
   margin-top: 0.72rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
 }
 
 .bulk-summary>div {
@@ -2375,6 +2375,10 @@ input[type='checkbox'] {
 
 .data-table--wide {
   min-width: 44rem;
+}
+
+.data-table--income {
+  min-width: 64rem;
 }
 
 table {

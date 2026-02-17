@@ -124,6 +124,7 @@ export type RetentionPolicyRow = {
 export type IncomeForm = {
   source: string
   amount: string
+  actualAmount: string
   grossAmount: string
   taxAmount: string
   nationalInsuranceAmount: string

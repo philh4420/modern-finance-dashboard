@@ -1779,6 +1779,7 @@ export const addIncome = mutation({
   args: {
     source: v.string(),
     amount: v.number(),
+    actualAmount: v.optional(v.number()),
     grossAmount: v.optional(v.number()),
     taxAmount: v.optional(v.number()),
     nationalInsuranceAmount: v.optional(v.number()),
@@ -1795,6 +1796,9 @@ export const addIncome = mutation({
     validateRequiredText(args.source, 'Income source')
     validateFinite(args.amount, 'Income net amount')
     validateOptionalText(args.notes, 'Notes', 2000)
+    if (args.actualAmount !== undefined) {
+      validateNonNegative(args.actualAmount, 'Income actual paid amount')
+    }
     if (args.grossAmount !== undefined) {
       validateNonNegative(args.grossAmount, 'Income gross amount')
     }
@@ -1833,6 +1837,7 @@ export const addIncome = mutation({
       userId: identity.subject,
       source: args.source.trim(),
       amount: roundCurrency(resolvedNetAmount),
+      actualAmount: args.actualAmount !== undefined ? roundCurrency(args.actualAmount) : undefined,
       grossAmount: args.grossAmount,
       taxAmount: args.taxAmount,
       nationalInsuranceAmount: args.nationalInsuranceAmount,
@@ -1853,6 +1858,7 @@ export const addIncome = mutation({
       after: {
         source: args.source.trim(),
         amount: roundCurrency(resolvedNetAmount),
+        actualAmount: args.actualAmount !== undefined ? roundCurrency(args.actualAmount) : undefined,
         grossAmount: args.grossAmount,
         taxAmount: args.taxAmount,
         nationalInsuranceAmount: args.nationalInsuranceAmount,
@@ -1868,6 +1874,7 @@ export const updateIncome = mutation({
     id: v.id('incomes'),
     source: v.string(),
     amount: v.number(),
+    actualAmount: v.optional(v.number()),
     grossAmount: v.optional(v.number()),
     taxAmount: v.optional(v.number()),
     nationalInsuranceAmount: v.optional(v.number()),
@@ -1884,6 +1891,9 @@ export const updateIncome = mutation({
     validateRequiredText(args.source, 'Income source')
     validateFinite(args.amount, 'Income net amount')
     validateOptionalText(args.notes, 'Notes', 2000)
+    if (args.actualAmount !== undefined) {
+      validateNonNegative(args.actualAmount, 'Income actual paid amount')
+    }
     if (args.grossAmount !== undefined) {
       validateNonNegative(args.grossAmount, 'Income gross amount')
     }
@@ -1924,6 +1934,7 @@ export const updateIncome = mutation({
     await ctx.db.patch(args.id, {
       source: args.source.trim(),
       amount: roundCurrency(resolvedNetAmount),
+      actualAmount: args.actualAmount !== undefined ? roundCurrency(args.actualAmount) : undefined,
       grossAmount: args.grossAmount,
       taxAmount: args.taxAmount,
       nationalInsuranceAmount: args.nationalInsuranceAmount,
@@ -1943,6 +1954,7 @@ export const updateIncome = mutation({
       before: {
         source: existing.source,
         amount: existing.amount,
+        actualAmount: existing.actualAmount,
         grossAmount: existing.grossAmount,
         taxAmount: existing.taxAmount,
         nationalInsuranceAmount: existing.nationalInsuranceAmount,
@@ -1952,6 +1964,7 @@ export const updateIncome = mutation({
       after: {
         source: args.source.trim(),
         amount: roundCurrency(resolvedNetAmount),
+        actualAmount: args.actualAmount !== undefined ? roundCurrency(args.actualAmount) : undefined,
         grossAmount: args.grossAmount,
         taxAmount: args.taxAmount,
         nationalInsuranceAmount: args.nationalInsuranceAmount,

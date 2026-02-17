@@ -16,7 +16,12 @@ import type {
   Summary,
 } from './financeTypes'
 import type { PrintReportConfig } from './PrintReportModal'
-import { computeIncomeDeductionsTotal, resolveIncomeGrossAmount, resolveIncomeNetAmount } from '../lib/incomeMath'
+import {
+  computeIncomeDeductionsTotal,
+  resolveIncomeGrossAmount,
+  resolveIncomeNetAmount,
+  toMonthlyAmount,
+} from '../lib/incomeMath'
 
 type PrintReportProps = {
   config: PrintReportConfig
@@ -469,6 +474,31 @@ export function PrintReport({
 
   const avgMonthlyPurchases = rangeMonths > 0 ? roundCurrency(purchasesTotal / rangeMonths) : 0
   const projectedMonthlyNetAfterPurchases = roundCurrency(summary.monthlyIncome - summary.monthlyCommitments - avgMonthlyPurchases)
+  const incomeExpectations = incomes.reduce(
+    (totals, income) => {
+      const plannedNet = resolveIncomeNetAmount(income)
+      const plannedMonthly = toMonthlyAmount(plannedNet, income.cadence, income.customInterval, income.customUnit)
+      totals.plannedMonthly += plannedMonthly
+
+      if (typeof income.actualAmount === 'number' && Number.isFinite(income.actualAmount)) {
+        totals.trackedCount += 1
+        totals.expectedTrackedMonthly += plannedMonthly
+        totals.actualTrackedMonthly += toMonthlyAmount(
+          Math.max(income.actualAmount, 0),
+          income.cadence,
+          income.customInterval,
+          income.customUnit,
+        )
+      }
+
+      return totals
+    },
+    { plannedMonthly: 0, expectedTrackedMonthly: 0, actualTrackedMonthly: 0, trackedCount: 0 },
+  )
+  const incomeVarianceMonthly = roundCurrency(
+    incomeExpectations.actualTrackedMonthly - incomeExpectations.expectedTrackedMonthly,
+  )
+  const incomePendingCount = Math.max(incomes.length - incomeExpectations.trackedCount, 0)
 
   const filteredAuditLogs = config.includeAuditLogs
     ? {
@@ -721,40 +751,77 @@ export function PrintReport({
           {incomes.length === 0 ? (
             <p className="print-subnote">No income entries.</p>
           ) : (
-            <div className="print-table-wrap">
-              <table className="print-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Source</th>
-                    <th scope="col">Gross</th>
-                    <th scope="col">Deductions</th>
-                    <th scope="col">Net</th>
-                    <th scope="col">Cadence</th>
-                    <th scope="col">Received</th>
-                    {config.includeNotes ? <th scope="col">Notes</th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {incomes.map((income) => {
-                    const grossAmount = resolveIncomeGrossAmount(income)
-                    const deductionTotal = computeIncomeDeductionsTotal(income)
-                    const netAmount = resolveIncomeNetAmount(income)
+            <>
+              <div className="print-kpi-grid">
+                <div className="print-kpi">
+                  <p>Planned net (monthly)</p>
+                  <strong>{formatMoney(incomeExpectations.plannedMonthly)}</strong>
+                  <small>{formatMoney(incomeExpectations.plannedMonthly * rangeMonths)} over range</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Actual received (tracked monthly)</p>
+                  <strong>{formatMoney(incomeExpectations.actualTrackedMonthly)}</strong>
+                  <small>{formatMoney(incomeExpectations.actualTrackedMonthly * rangeMonths)} over range</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Variance (tracked monthly)</p>
+                  <strong>{formatMoney(incomeVarianceMonthly)}</strong>
+                  <small>{formatMoney(incomeVarianceMonthly * rangeMonths)} over range</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Tracking coverage</p>
+                  <strong>
+                    {incomeExpectations.trackedCount}/{incomes.length}
+                  </strong>
+                  <small>{incomePendingCount} pending actual value{incomePendingCount === 1 ? '' : 's'}</small>
+                </div>
+              </div>
 
-                    return (
-                      <tr key={income._id}>
-                        <td>{income.source}</td>
-                        <td className="table-amount">{formatMoney(grossAmount)}</td>
-                        <td className="table-amount">{formatMoney(deductionTotal)}</td>
-                        <td className="table-amount">{formatMoney(netAmount)}</td>
-                        <td>{income.cadence}</td>
-                        <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
-                        {config.includeNotes ? <td>{income.notes ?? ''}</td> : null}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+              <div className="print-table-wrap">
+                <table className="print-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Source</th>
+                      <th scope="col">Gross</th>
+                      <th scope="col">Deductions</th>
+                      <th scope="col">Planned Net</th>
+                      <th scope="col">Actual Paid</th>
+                      <th scope="col">Variance</th>
+                      <th scope="col">Cadence</th>
+                      <th scope="col">Received</th>
+                      {config.includeNotes ? <th scope="col">Notes</th> : null}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {incomes.map((income) => {
+                      const grossAmount = resolveIncomeGrossAmount(income)
+                      const deductionTotal = computeIncomeDeductionsTotal(income)
+                      const netAmount = resolveIncomeNetAmount(income)
+                      const actualPaidAmount =
+                        typeof income.actualAmount === 'number' && Number.isFinite(income.actualAmount)
+                          ? roundCurrency(Math.max(income.actualAmount, 0))
+                          : undefined
+                      const varianceAmount =
+                        actualPaidAmount !== undefined ? roundCurrency(actualPaidAmount - netAmount) : undefined
+
+                      return (
+                        <tr key={income._id}>
+                          <td>{income.source}</td>
+                          <td className="table-amount">{formatMoney(grossAmount)}</td>
+                          <td className="table-amount">{formatMoney(deductionTotal)}</td>
+                          <td className="table-amount">{formatMoney(netAmount)}</td>
+                          <td className="table-amount">{actualPaidAmount !== undefined ? formatMoney(actualPaidAmount) : 'n/a'}</td>
+                          <td className="table-amount">{varianceAmount !== undefined ? formatMoney(varianceAmount) : 'n/a'}</td>
+                          <td>{income.cadence}</td>
+                          <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
+                          {config.includeNotes ? <td>{income.notes ?? ''}</td> : null}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       ) : null}

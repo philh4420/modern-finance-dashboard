@@ -12,6 +12,7 @@ type UseIncomeSectionArgs = {
 const initialIncomeForm: IncomeForm = {
   source: '',
   amount: '',
+  actualAmount: '',
   grossAmount: '',
   taxAmount: '',
   nationalInsuranceAmount: '',
@@ -26,6 +27,7 @@ const initialIncomeForm: IncomeForm = {
 const initialIncomeEditDraft: IncomeEditDraft = {
   source: '',
   amount: '',
+  actualAmount: '',
   grossAmount: '',
   taxAmount: '',
   nationalInsuranceAmount: '',
@@ -52,7 +54,14 @@ const parseOptionalNonNegativeFloat = (value: string, label: string) => {
   return parsed
 }
 
-const parseIncomeAmounts = (input: Pick<IncomeForm, 'amount' | 'grossAmount' | 'taxAmount' | 'nationalInsuranceAmount' | 'pensionAmount'>) => {
+const parseIncomeAmounts = (
+  input: Pick<
+    IncomeForm,
+    'amount' | 'actualAmount' | 'grossAmount' | 'taxAmount' | 'nationalInsuranceAmount' | 'pensionAmount'
+  >,
+) => {
+  const parsedActualAmount = parseOptionalNonNegativeFloat(input.actualAmount, 'Income actual paid amount')
+  const actualAmount = parsedActualAmount !== undefined ? roundCurrency(parsedActualAmount) : undefined
   const grossAmount = parseOptionalNonNegativeFloat(input.grossAmount, 'Income gross amount')
   const taxAmount = parseOptionalNonNegativeFloat(input.taxAmount, 'Income tax deduction')
   const nationalInsuranceAmount = parseOptionalNonNegativeFloat(input.nationalInsuranceAmount, 'Income NI deduction')
@@ -78,6 +87,7 @@ const parseIncomeAmounts = (input: Pick<IncomeForm, 'amount' | 'grossAmount' | '
 
   return {
     amount: roundCurrency(netAmount),
+    actualAmount,
     grossAmount,
     taxAmount,
     nationalInsuranceAmount,
@@ -137,6 +147,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
     setIncomeEditDraft({
       source: entry.source,
       amount: String(entry.amount),
+      actualAmount: entry.actualAmount !== undefined ? String(entry.actualAmount) : '',
       grossAmount: entry.grossAmount !== undefined ? String(entry.grossAmount) : '',
       taxAmount: entry.taxAmount !== undefined ? String(entry.taxAmount) : '',
       nationalInsuranceAmount: entry.nationalInsuranceAmount !== undefined ? String(entry.nationalInsuranceAmount) : '',

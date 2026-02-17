@@ -18,7 +18,14 @@ import {
   toMonthlyAmount,
 } from '../lib/incomeMath'
 
-type IncomeSortKey = 'source_asc' | 'amount_desc' | 'amount_asc' | 'cadence_asc' | 'day_asc'
+type IncomeSortKey =
+  | 'source_asc'
+  | 'planned_desc'
+  | 'planned_asc'
+  | 'actual_desc'
+  | 'variance_desc'
+  | 'cadence_asc'
+  | 'day_asc'
 
 const parseOptionalMoneyInput = (value: string) => {
   const parsed = Number.parseFloat(value)
@@ -71,6 +78,7 @@ export function IncomeTab({
   const formTaxAmount = parseOptionalMoneyInput(incomeForm.taxAmount)
   const formNationalInsuranceAmount = parseOptionalMoneyInput(incomeForm.nationalInsuranceAmount)
   const formPensionAmount = parseOptionalMoneyInput(incomeForm.pensionAmount)
+  const formActualAmount = parseOptionalMoneyInput(incomeForm.actualAmount)
   const formDeductionTotal = computeIncomeDeductionsTotal({
     taxAmount: formTaxAmount,
     nationalInsuranceAmount: formNationalInsuranceAmount,
@@ -88,15 +96,29 @@ export function IncomeTab({
         const grossAmount = resolveIncomeGrossAmount(entry)
         const deductionTotal = computeIncomeDeductionsTotal(entry)
         const netAmount = resolveIncomeNetAmount(entry)
+        const plannedMonthly = toMonthlyAmount(netAmount, entry.cadence, entry.customInterval, entry.customUnit)
 
         totals.gross += toMonthlyAmount(grossAmount, entry.cadence, entry.customInterval, entry.customUnit)
         totals.deductions += toMonthlyAmount(deductionTotal, entry.cadence, entry.customInterval, entry.customUnit)
-        totals.net += toMonthlyAmount(netAmount, entry.cadence, entry.customInterval, entry.customUnit)
+        totals.net += plannedMonthly
+        if (typeof entry.actualAmount === 'number' && Number.isFinite(entry.actualAmount)) {
+          totals.expectedTracked += plannedMonthly
+          totals.receivedActual += toMonthlyAmount(
+            Math.max(entry.actualAmount, 0),
+            entry.cadence,
+            entry.customInterval,
+            entry.customUnit,
+          )
+          totals.trackedCount += 1
+        }
         return totals
       },
-      { gross: 0, deductions: 0, net: 0 },
+      { gross: 0, deductions: 0, net: 0, expectedTracked: 0, receivedActual: 0, trackedCount: 0 },
     )
   }, [incomes])
+
+  const trackedVarianceMonthly = roundCurrency(monthlyBreakdown.receivedActual - monthlyBreakdown.expectedTracked)
+  const untrackedCount = Math.max(incomes.length - monthlyBreakdown.trackedCount, 0)
 
   const visibleIncomes = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -108,13 +130,26 @@ export function IncomeTab({
       : incomes.slice()
 
     const sorted = [...filtered].sort((a, b) => {
+      const plannedA = resolveIncomeNetAmount(a)
+      const plannedB = resolveIncomeNetAmount(b)
+      const actualA = typeof a.actualAmount === 'number' ? a.actualAmount : Number.NEGATIVE_INFINITY
+      const actualB = typeof b.actualAmount === 'number' ? b.actualAmount : Number.NEGATIVE_INFINITY
+      const varianceA =
+        typeof a.actualAmount === 'number' ? roundCurrency(a.actualAmount - plannedA) : Number.NEGATIVE_INFINITY
+      const varianceB =
+        typeof b.actualAmount === 'number' ? roundCurrency(b.actualAmount - plannedB) : Number.NEGATIVE_INFINITY
+
       switch (sortKey) {
         case 'source_asc':
           return a.source.localeCompare(b.source, undefined, { sensitivity: 'base' })
-        case 'amount_desc':
-          return resolveIncomeNetAmount(b) - resolveIncomeNetAmount(a)
-        case 'amount_asc':
-          return resolveIncomeNetAmount(a) - resolveIncomeNetAmount(b)
+        case 'planned_desc':
+          return plannedB - plannedA
+        case 'planned_asc':
+          return plannedA - plannedB
+        case 'actual_desc':
+          return actualB - actualA
+        case 'variance_desc':
+          return varianceB - varianceA
         case 'cadence_asc':
           return cadenceLabel(a.cadence, a.customInterval, a.customUnit).localeCompare(
             cadenceLabel(b.cadence, b.customInterval, b.customUnit),
@@ -157,7 +192,7 @@ export function IncomeTab({
             </div>
 
             <div className="form-field">
-              <label htmlFor="income-amount">Net amount</label>
+              <label htmlFor="income-amount">Planned net amount</label>
               <input
                 id="income-amount"
                 type="number"
@@ -167,6 +202,20 @@ export function IncomeTab({
                 value={incomeForm.amount}
                 onChange={(event) => setIncomeForm((prev) => ({ ...prev, amount: event.target.value }))}
                 required={formGrossAmount === undefined && formDeductionTotal <= 0}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="income-actual">Actual paid amount</label>
+              <input
+                id="income-actual"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                placeholder="Optional"
+                value={incomeForm.actualAmount}
+                onChange={(event) => setIncomeForm((prev) => ({ ...prev, actualAmount: event.target.value }))}
               />
             </div>
 
@@ -322,7 +371,10 @@ export function IncomeTab({
               ? `Derived net ${formatMoney(formDerivedNetAmount)} = gross ${formatMoney(formGrossAmount ?? 0)} - deductions ${formatMoney(formDeductionTotal)}.`
               : formManualNetAmount !== undefined
                 ? `Using manual net amount ${formatMoney(formManualNetAmount)}. Add gross + deductions to auto-calculate net.`
-                : 'Enter net amount directly or provide gross + deductions to auto-calculate net.'}{' '}
+                : 'Enter planned net amount directly or provide gross + deductions to auto-calculate net.'}{' '}
+            {formActualAmount !== undefined
+              ? `Actual paid captured as ${formatMoney(formActualAmount)} for expected vs received variance. `
+              : 'Add Actual paid amount to track expected vs received variance. '}{' '}
             Tip: use <strong>Custom</strong> for 4-week pay cycles and other unusual schedules.
           </p>
 
@@ -339,7 +391,7 @@ export function IncomeTab({
           <div>
             <p className="panel-kicker">Income</p>
             <h2>Current entries</h2>
-            <p className="panel-value">{formatMoney(monthlyIncome)} monthly estimate</p>
+            <p className="panel-value">{formatMoney(monthlyIncome)} planned net/month</p>
           </div>
           <div className="panel-actions">
             <input
@@ -354,8 +406,10 @@ export function IncomeTab({
               onChange={(event) => setSortKey(event.target.value as IncomeSortKey)}
             >
               <option value="source_asc">Source (A-Z)</option>
-              <option value="amount_desc">Net amount (high-low)</option>
-              <option value="amount_asc">Net amount (low-high)</option>
+              <option value="planned_desc">Planned net (high-low)</option>
+              <option value="planned_asc">Planned net (low-high)</option>
+              <option value="actual_desc">Actual paid (high-low)</option>
+              <option value="variance_desc">Variance (high-low)</option>
               <option value="cadence_asc">Frequency</option>
               <option value="day_asc">Received day</option>
             </select>
@@ -379,7 +433,11 @@ export function IncomeTab({
           <>
             <p className="subnote">
               Showing {visibleIncomes.length} of {incomes.length} source{incomes.length === 1 ? '' : 's'} ·{' '}
-              {formatMoney(monthlyIncome)} net/month scheduled.
+              {formatMoney(monthlyIncome)} planned net/month scheduled.
+            </p>
+            <p className="subnote">
+              Actuals tracked on {monthlyBreakdown.trackedCount}/{incomes.length} sources · {untrackedCount} pending
+              actual value{untrackedCount === 1 ? '' : 's'}.
             </p>
             <div className="bulk-summary income-breakdown-summary">
               <div>
@@ -393,20 +451,36 @@ export function IncomeTab({
                 <small>tax + NI + pension</small>
               </div>
               <div>
-                <p>Net income</p>
+                <p>Planned net</p>
                 <strong>{formatMoney(monthlyBreakdown.net)}</strong>
                 <small>gross - deductions</small>
               </div>
+              <div>
+                <p>Actual received</p>
+                <strong>{formatMoney(monthlyBreakdown.receivedActual)}</strong>
+                <small>
+                  {monthlyBreakdown.trackedCount}/{incomes.length} sources tracked
+                </small>
+              </div>
+              <div>
+                <p>Variance</p>
+                <strong className={trackedVarianceMonthly < 0 ? 'amount-negative' : 'amount-positive'}>
+                  {formatMoney(trackedVarianceMonthly)}
+                </strong>
+                <small>actual - planned for tracked sources</small>
+              </div>
             </div>
             <div className="table-wrap table-wrap--card">
-              <table className="data-table" data-testid="income-table">
+              <table className="data-table data-table--income" data-testid="income-table">
                 <caption className="sr-only">Income entries</caption>
                 <thead>
                   <tr>
                     <th scope="col">Source</th>
                     <th scope="col">Gross</th>
                     <th scope="col">Deductions</th>
-                    <th scope="col">Net</th>
+                    <th scope="col">Planned net</th>
+                    <th scope="col">Actual paid</th>
+                    <th scope="col">Variance</th>
                     <th scope="col">Frequency</th>
                     <th scope="col">Day</th>
                     <th scope="col">Notes</th>
@@ -419,8 +493,33 @@ export function IncomeTab({
                     const grossAmount = resolveIncomeGrossAmount(entry)
                     const deductionTotal = computeIncomeDeductionsTotal(entry)
                     const netAmount = resolveIncomeNetAmount(entry)
+                    const actualPaidAmount =
+                      typeof entry.actualAmount === 'number' && Number.isFinite(entry.actualAmount)
+                        ? roundCurrency(Math.max(entry.actualAmount, 0))
+                        : undefined
+                    const varianceAmount =
+                      actualPaidAmount !== undefined ? roundCurrency(actualPaidAmount - netAmount) : undefined
                     const entryHasBreakdown = hasIncomeBreakdown(entry)
                     const effectiveDeductionRate = grossAmount > 0 ? (deductionTotal / grossAmount) * 100 : 0
+                    const editGrossAmount = parseOptionalMoneyInput(incomeEditDraft.grossAmount)
+                    const editTaxAmount = parseOptionalMoneyInput(incomeEditDraft.taxAmount)
+                    const editNationalInsuranceAmount = parseOptionalMoneyInput(incomeEditDraft.nationalInsuranceAmount)
+                    const editPensionAmount = parseOptionalMoneyInput(incomeEditDraft.pensionAmount)
+                    const editDeductionTotal = computeIncomeDeductionsTotal({
+                      taxAmount: editTaxAmount,
+                      nationalInsuranceAmount: editNationalInsuranceAmount,
+                      pensionAmount: editPensionAmount,
+                    })
+                    const editManualNetAmount = parseOptionalMoneyInput(incomeEditDraft.amount)
+                    const editPlannedNetAmount =
+                      editGrossAmount !== undefined || editDeductionTotal > 0
+                        ? roundCurrency(Math.max((editGrossAmount ?? 0) - editDeductionTotal, 0))
+                        : editManualNetAmount
+                    const editActualPaidAmount = parseOptionalMoneyInput(incomeEditDraft.actualAmount)
+                    const editVarianceAmount =
+                      editActualPaidAmount !== undefined && editPlannedNetAmount !== undefined
+                        ? roundCurrency(editActualPaidAmount - editPlannedNetAmount)
+                        : undefined
 
                     return (
                       <tr key={entry._id} className={isEditing ? 'table-row--editing' : undefined}>
@@ -536,8 +635,50 @@ export function IncomeTab({
                           ) : (
                             <div className="cell-stack">
                               <strong>{formatMoney(netAmount)}</strong>
-                              <small>{entryHasBreakdown ? 'gross - deductions' : 'manual net'}</small>
+                              <small>{entryHasBreakdown ? 'gross - deductions' : 'planned net input'}</small>
                             </div>
+                          )}
+                        </td>
+                        <td className="table-amount">
+                          {isEditing ? (
+                            <input
+                              className="inline-input"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="Optional"
+                              value={incomeEditDraft.actualAmount}
+                              onChange={(event) =>
+                                setIncomeEditDraft((prev) => ({
+                                  ...prev,
+                                  actualAmount: event.target.value,
+                                }))
+                              }
+                            />
+                          ) : actualPaidAmount !== undefined ? (
+                            <div className="cell-stack">
+                              <strong>{formatMoney(actualPaidAmount)}</strong>
+                              <small>logged received</small>
+                            </div>
+                          ) : (
+                            <span className="pill pill--neutral">Not logged</span>
+                          )}
+                        </td>
+                        <td className="table-amount">
+                          {isEditing ? (
+                            editVarianceAmount !== undefined ? (
+                              <span className={editVarianceAmount < 0 ? 'amount-negative' : 'amount-positive'}>
+                                {formatMoney(editVarianceAmount)}
+                              </span>
+                            ) : (
+                              <span className="pill pill--neutral">n/a</span>
+                            )
+                          ) : varianceAmount !== undefined ? (
+                            <span className={varianceAmount < 0 ? 'amount-negative' : 'amount-positive'}>
+                              {formatMoney(varianceAmount)}
+                            </span>
+                          ) : (
+                            <span className="pill pill--neutral">n/a</span>
                           )}
                         </td>
                         <td>
