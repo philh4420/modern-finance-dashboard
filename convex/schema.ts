@@ -184,6 +184,7 @@ export default defineSchema({
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnit),
     receivedDay: v.optional(v.number()),
+    payDateAnchor: v.optional(v.string()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
   })

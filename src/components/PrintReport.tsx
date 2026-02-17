@@ -24,6 +24,7 @@ import {
   resolveIncomeNetAmount,
   toMonthlyAmount,
 } from '../lib/incomeMath'
+import { nextDateForCadence, toIsoDate } from '../lib/cadenceDates'
 
 type PrintReportProps = {
   config: PrintReportConfig
@@ -908,6 +909,8 @@ export function PrintReport({
                       <th scope="col">Latest Status</th>
                       <th scope="col">Cadence</th>
                       <th scope="col">Received</th>
+                      <th scope="col">Anchor</th>
+                      <th scope="col">Next Payday</th>
                       {config.includeNotes ? <th scope="col">Notes</th> : null}
                     </tr>
                   </thead>
@@ -924,6 +927,14 @@ export function PrintReport({
                         actualPaidAmount !== undefined ? roundCurrency(actualPaidAmount - netAmount) : undefined
                       const paymentHistory = incomePaymentChecksByIncomeId.get(String(income._id)) ?? []
                       const reliability = calculateIncomePaymentReliability(paymentHistory)
+                      const nextPayday = nextDateForCadence({
+                        cadence: income.cadence,
+                        createdAt: income.createdAt,
+                        dayOfMonth: income.receivedDay,
+                        customInterval: income.customInterval ?? undefined,
+                        customUnit: income.customUnit ?? undefined,
+                        payDateAnchor: income.payDateAnchor,
+                      })
 
                       return (
                         <tr key={income._id}>
@@ -945,6 +956,8 @@ export function PrintReport({
                           </td>
                           <td>{income.cadence}</td>
                           <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
+                          <td>{income.payDateAnchor ?? 'n/a'}</td>
+                          <td>{nextPayday ? toIsoDate(nextPayday) : 'n/a'}</td>
                           {config.includeNotes ? <td>{income.notes ?? ''}</td> : null}
                         </tr>
                       )

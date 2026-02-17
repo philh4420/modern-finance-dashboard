@@ -230,8 +230,34 @@ const validateOptionalText = (value: string | undefined | null, fieldName: strin
   }
 }
 
-const validateIsoDate = (value: string, fieldName: string) => {
+const parseIsoDateValue = (value: string) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null
+  }
+
+  const [yearText, monthText, dayText] = value.split('-')
+  const year = Number.parseInt(yearText, 10)
+  const month = Number.parseInt(monthText, 10)
+  const day = Number.parseInt(dayText, 10)
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null
+  }
+
+  const parsed = new Date(year, month - 1, day)
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null
+  }
+
+  return parsed
+}
+
+const validateIsoDate = (value: string, fieldName: string) => {
+  if (!parseIsoDateValue(value)) {
     throw new Error(`${fieldName} must use YYYY-MM-DD format.`)
   }
 }
@@ -386,6 +412,16 @@ const countCompletedMonthlyCycles = (fromTimestamp: number, now: Date) => {
   return cycles
 }
 
+const resolveCadenceAnchorDate = (createdAt: number, payDateAnchor?: string) => {
+  if (payDateAnchor) {
+    const parsed = parseIsoDateValue(payDateAnchor)
+    if (parsed) {
+      return startOfDay(parsed)
+    }
+  }
+  return startOfDay(new Date(createdAt))
+}
+
 const nextDateByMonthCycle = (day: number, cycleMonths: number, anchorDate: Date, now: Date) => {
   const anchorMonthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1)
   let probeYear = now.getFullYear()
@@ -417,8 +453,10 @@ const nextDateForCadence = (
   dayOfMonth?: number,
   customInterval?: number,
   customUnit?: CustomCadenceUnit,
+  payDateAnchor?: string,
 ): Date | null => {
   const today = startOfDay(now)
+  const anchorDate = resolveCadenceAnchorDate(createdAt, payDateAnchor)
 
   if (cadence === 'one_time') {
     return null
@@ -426,7 +464,7 @@ const nextDateForCadence = (
 
   if (cadence === 'weekly' || cadence === 'biweekly') {
     const interval = cadence === 'weekly' ? 7 : 14
-    const base = startOfDay(new Date(createdAt))
+    const base = new Date(anchorDate.getTime())
 
     while (base < today) {
       base.setDate(base.getDate() + interval)
@@ -440,7 +478,7 @@ const nextDateForCadence = (
       return null
     }
 
-    const base = startOfDay(new Date(createdAt))
+    const base = new Date(anchorDate.getTime())
 
     if (customUnit === 'days' || customUnit === 'weeks') {
       const interval = customUnit === 'days' ? customInterval : customInterval * 7
@@ -450,13 +488,11 @@ const nextDateForCadence = (
       return base
     }
 
-    const anchorDate = new Date(createdAt)
     const cycleMonths = customUnit === 'months' ? customInterval : customInterval * 12
     const normalizedDay = clamp(dayOfMonth ?? anchorDate.getDate(), 1, 31)
     return nextDateByMonthCycle(normalizedDay, cycleMonths, anchorDate, today)
   }
 
-  const anchorDate = new Date(createdAt)
   const cycleMonths = cadence === 'monthly' ? 1 : cadence === 'quarterly' ? 3 : 12
   const normalizedDay = clamp(dayOfMonth ?? anchorDate.getDate(), 1, 31)
 
@@ -933,6 +969,7 @@ const buildUpcomingCashEvents = (
       entry.receivedDay,
       entry.customInterval,
       entry.customUnit,
+      entry.payDateAnchor,
     )
 
     if (!nextDate) {
@@ -1799,6 +1836,7 @@ export const addIncome = mutation({
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
     receivedDay: v.optional(v.number()),
+    payDateAnchor: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -1826,6 +1864,9 @@ export const addIncome = mutation({
     if (args.receivedDay !== undefined && (args.receivedDay < 1 || args.receivedDay > 31)) {
       throw new Error('Received day must be between 1 and 31.')
     }
+    if (args.payDateAnchor !== undefined) {
+      validateIsoDate(args.payDateAnchor, 'Pay date anchor')
+    }
 
     const deductionTotal = computeIncomeDeductionsTotal(args)
     if (deductionTotal > 0.000001 && args.grossAmount === undefined) {
@@ -1841,6 +1882,7 @@ export const addIncome = mutation({
         ? Math.max(args.grossAmount ?? 0 - deductionTotal, 0)
         : Math.max(args.amount, 0)
     validatePositive(resolvedNetAmount, 'Income net amount')
+    const payDateAnchor = args.payDateAnchor?.trim() || undefined
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
@@ -1857,6 +1899,7 @@ export const addIncome = mutation({
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
       receivedDay: args.receivedDay,
+      payDateAnchor,
       notes: args.notes?.trim() || undefined,
       createdAt: Date.now(),
     })
@@ -1875,6 +1918,7 @@ export const addIncome = mutation({
         nationalInsuranceAmount: args.nationalInsuranceAmount,
         pensionAmount: args.pensionAmount,
         cadence: args.cadence,
+        payDateAnchor,
       },
     })
   },
@@ -1894,6 +1938,7 @@ export const updateIncome = mutation({
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
     receivedDay: v.optional(v.number()),
+    payDateAnchor: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -1921,6 +1966,9 @@ export const updateIncome = mutation({
     if (args.receivedDay !== undefined && (args.receivedDay < 1 || args.receivedDay > 31)) {
       throw new Error('Received day must be between 1 and 31.')
     }
+    if (args.payDateAnchor !== undefined) {
+      validateIsoDate(args.payDateAnchor, 'Pay date anchor')
+    }
 
     const deductionTotal = computeIncomeDeductionsTotal(args)
     if (deductionTotal > 0.000001 && args.grossAmount === undefined) {
@@ -1936,6 +1984,7 @@ export const updateIncome = mutation({
         ? Math.max(args.grossAmount ?? 0 - deductionTotal, 0)
         : Math.max(args.amount, 0)
     validatePositive(resolvedNetAmount, 'Income net amount')
+    const payDateAnchor = args.payDateAnchor?.trim() || undefined
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
@@ -1954,6 +2003,7 @@ export const updateIncome = mutation({
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
       receivedDay: args.receivedDay,
+      payDateAnchor,
       notes: args.notes?.trim() || undefined,
     })
 
@@ -1971,6 +2021,7 @@ export const updateIncome = mutation({
         nationalInsuranceAmount: existing.nationalInsuranceAmount,
         pensionAmount: existing.pensionAmount,
         cadence: existing.cadence,
+        payDateAnchor: existing.payDateAnchor,
       },
       after: {
         source: args.source.trim(),
@@ -1981,6 +2032,7 @@ export const updateIncome = mutation({
         nationalInsuranceAmount: args.nationalInsuranceAmount,
         pensionAmount: args.pensionAmount,
         cadence: args.cadence,
+        payDateAnchor,
       },
     })
   },

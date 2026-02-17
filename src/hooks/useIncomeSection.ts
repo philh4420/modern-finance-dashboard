@@ -10,6 +10,7 @@ import type {
   IncomePaymentStatus,
 } from '../components/financeTypes'
 import { isCustomCadence, parseCustomInterval, parseFloatInput, parseIntInput } from '../lib/financeHelpers'
+import { isValidIsoDate } from '../lib/cadenceDates'
 import type { MutationHandlers } from './useMutationFeedback'
 
 type UseIncomeSectionArgs = {
@@ -28,6 +29,7 @@ const initialIncomeForm: IncomeForm = {
   customInterval: '',
   customUnit: 'weeks',
   receivedDay: '',
+  payDateAnchor: '',
   notes: '',
 }
 
@@ -43,6 +45,7 @@ const initialIncomeEditDraft: IncomeEditDraft = {
   customInterval: '',
   customUnit: 'weeks',
   receivedDay: '',
+  payDateAnchor: '',
   notes: '',
 }
 
@@ -59,6 +62,19 @@ const parseOptionalNonNegativeFloat = (value: string, label: string) => {
     throw new Error(`${label} cannot be negative.`)
   }
   return parsed
+}
+
+const parseOptionalIsoDateInput = (value: string, label: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  if (!isValidIsoDate(trimmed)) {
+    throw new Error(`${label} must use YYYY-MM-DD format.`)
+  }
+
+  return trimmed
 }
 
 const parseIncomeAmounts = (
@@ -130,6 +146,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         customInterval,
         customUnit: isCustomCadence(incomeForm.cadence) ? incomeForm.customUnit : undefined,
         receivedDay: incomeForm.receivedDay ? parseIntInput(incomeForm.receivedDay, 'Received day') : undefined,
+        payDateAnchor: parseOptionalIsoDateInput(incomeForm.payDateAnchor, 'Pay date anchor'),
         notes: incomeForm.notes || undefined,
       })
 
@@ -165,6 +182,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
       customInterval: entry.customInterval ? String(entry.customInterval) : '',
       customUnit: entry.customUnit ?? 'weeks',
       receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
+      payDateAnchor: entry.payDateAnchor ?? '',
       notes: entry.notes ?? '',
     })
   }
@@ -189,6 +207,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         receivedDay: incomeEditDraft.receivedDay
           ? parseIntInput(incomeEditDraft.receivedDay, 'Received day')
           : undefined,
+        payDateAnchor: parseOptionalIsoDateInput(incomeEditDraft.payDateAnchor, 'Pay date anchor'),
         notes: incomeEditDraft.notes || undefined,
       })
       setIncomeEditId(null)

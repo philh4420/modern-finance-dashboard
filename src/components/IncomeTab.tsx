@@ -20,6 +20,7 @@ import {
   roundCurrency,
   toMonthlyAmount,
 } from '../lib/incomeMath'
+import { nextDateForCadence, toIsoDate } from '../lib/cadenceDates'
 
 type IncomeSortKey =
   | 'source_asc'
@@ -28,11 +29,17 @@ type IncomeSortKey =
   | 'actual_desc'
   | 'variance_desc'
   | 'cadence_asc'
+  | 'next_payday_asc'
   | 'day_asc'
 
 const parseOptionalMoneyInput = (value: string) => {
   const parsed = Number.parseFloat(value)
   return Number.isFinite(parsed) ? parsed : undefined
+}
+
+const parseOptionalPositiveInt = (value: string) => {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
 type IncomePaymentReliability = {
@@ -215,6 +222,21 @@ export function IncomeTab({
     formGrossAmount !== undefined || formDeductionTotal > 0
       ? roundCurrency(Math.max((formGrossAmount ?? 0) - formDeductionTotal, 0))
       : undefined
+  const formPayDateAnchor = incomeForm.payDateAnchor.trim()
+  const formCustomInterval = isCustomCadence(incomeForm.cadence)
+    ? parseOptionalPositiveInt(incomeForm.customInterval)
+    : undefined
+  const formNextPayday =
+    formPayDateAnchor.length > 0
+      ? nextDateForCadence({
+          cadence: incomeForm.cadence,
+          createdAt: 0,
+          dayOfMonth: parseOptionalPositiveInt(incomeForm.receivedDay),
+          customInterval: formCustomInterval,
+          customUnit: isCustomCadence(incomeForm.cadence) ? incomeForm.customUnit : undefined,
+          payDateAnchor: formPayDateAnchor,
+        })
+      : null
 
   const monthlyBreakdown = useMemo(() => {
     return incomes.reduce(
@@ -313,6 +335,24 @@ export function IncomeTab({
         typeof a.actualAmount === 'number' ? roundCurrency(a.actualAmount - plannedA) : Number.NEGATIVE_INFINITY
       const varianceB =
         typeof b.actualAmount === 'number' ? roundCurrency(b.actualAmount - plannedB) : Number.NEGATIVE_INFINITY
+      const nextPaydayA = nextDateForCadence({
+        cadence: a.cadence,
+        createdAt: a.createdAt,
+        dayOfMonth: a.receivedDay,
+        customInterval: a.customInterval ?? undefined,
+        customUnit: a.customUnit ?? undefined,
+        payDateAnchor: a.payDateAnchor,
+      })
+      const nextPaydayB = nextDateForCadence({
+        cadence: b.cadence,
+        createdAt: b.createdAt,
+        dayOfMonth: b.receivedDay,
+        customInterval: b.customInterval ?? undefined,
+        customUnit: b.customUnit ?? undefined,
+        payDateAnchor: b.payDateAnchor,
+      })
+      const nextPaydayAAt = nextPaydayA ? nextPaydayA.getTime() : Number.POSITIVE_INFINITY
+      const nextPaydayBAt = nextPaydayB ? nextPaydayB.getTime() : Number.POSITIVE_INFINITY
 
       switch (sortKey) {
         case 'source_asc':
@@ -331,6 +371,8 @@ export function IncomeTab({
             undefined,
             { sensitivity: 'base' },
           )
+        case 'next_payday_asc':
+          return nextPaydayAAt - nextPaydayBAt
         case 'day_asc':
           return (a.receivedDay ?? 999) - (b.receivedDay ?? 999)
         default:
@@ -490,6 +532,16 @@ export function IncomeTab({
               />
             </div>
 
+            <div className="form-field">
+              <label htmlFor="income-anchor">Pay date anchor</label>
+              <input
+                id="income-anchor"
+                type="date"
+                value={incomeForm.payDateAnchor}
+                onChange={(event) => setIncomeForm((prev) => ({ ...prev, payDateAnchor: event.target.value }))}
+              />
+            </div>
+
             {isCustomCadence(incomeForm.cadence) ? (
               <div className="form-field form-field--span2">
                 <label htmlFor="income-custom-interval">Custom cadence</label>
@@ -550,7 +602,9 @@ export function IncomeTab({
             {formActualAmount !== undefined
               ? `Actual paid captured as ${formatMoney(formActualAmount)} for expected vs received variance. `
               : 'Add Actual paid amount to track expected vs received variance. '}{' '}
-            Tip: use <strong>Custom</strong> for 4-week pay cycles and other unusual schedules.
+            Tip: use <strong>Custom</strong> for 4-week pay cycles and set <strong>Pay date anchor</strong> for
+            accurate next payday prediction. Next predicted payday:{' '}
+            <strong>{formNextPayday ? toIsoDate(formNextPayday) : 'n/a'}</strong>.
           </p>
 
           <div className="form-actions">
@@ -586,6 +640,7 @@ export function IncomeTab({
               <option value="actual_desc">Actual paid (high-low)</option>
               <option value="variance_desc">Variance (high-low)</option>
               <option value="cadence_asc">Frequency</option>
+              <option value="next_payday_asc">Next payday</option>
               <option value="day_asc">Received day</option>
             </select>
             <button
@@ -669,6 +724,8 @@ export function IncomeTab({
                     <th scope="col">Reliability</th>
                     <th scope="col">Frequency</th>
                     <th scope="col">Day</th>
+                    <th scope="col">Anchor</th>
+                    <th scope="col">Next payday</th>
                     <th scope="col">Notes</th>
                     <th scope="col">Action</th>
                   </tr>
@@ -710,6 +767,21 @@ export function IncomeTab({
                     const rowReliability = calculateIncomePaymentReliability(rowPaymentChecks)
                     const latestPaymentCheck = rowPaymentChecks[0] ?? null
                     const isPaymentLogOpen = paymentLogIncomeId === entry._id
+                    const editCustomInterval = isCustomCadence(incomeEditDraft.cadence)
+                      ? parseOptionalPositiveInt(incomeEditDraft.customInterval)
+                      : undefined
+                    const nextPayday = nextDateForCadence({
+                      cadence: isEditing ? incomeEditDraft.cadence : entry.cadence,
+                      createdAt: entry.createdAt,
+                      dayOfMonth: isEditing ? parseOptionalPositiveInt(incomeEditDraft.receivedDay) : entry.receivedDay,
+                      customInterval: isEditing ? editCustomInterval : entry.customInterval ?? undefined,
+                      customUnit: isEditing
+                        ? isCustomCadence(incomeEditDraft.cadence)
+                          ? incomeEditDraft.customUnit
+                          : undefined
+                        : entry.customUnit ?? undefined,
+                      payDateAnchor: isEditing ? incomeEditDraft.payDateAnchor.trim() || undefined : entry.payDateAnchor,
+                    })
 
                     return (
                       <Fragment key={entry._id}>
@@ -978,6 +1050,26 @@ export function IncomeTab({
                           {isEditing ? (
                             <input
                               className="inline-input"
+                              type="date"
+                              value={incomeEditDraft.payDateAnchor}
+                              onChange={(event) =>
+                                setIncomeEditDraft((prev) => ({
+                                  ...prev,
+                                  payDateAnchor: event.target.value,
+                                }))
+                              }
+                            />
+                          ) : (
+                            <span className="pill pill--neutral">{entry.payDateAnchor ?? '-'}</span>
+                          )}
+                        </td>
+                        <td>
+                          <span className="pill pill--neutral">{nextPayday ? toIsoDate(nextPayday) : 'n/a'}</span>
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <input
+                              className="inline-input"
                               value={incomeEditDraft.notes}
                               onChange={(event) =>
                                 setIncomeEditDraft((prev) => ({
@@ -1041,7 +1133,7 @@ export function IncomeTab({
                         </tr>
                         {isPaymentLogOpen ? (
                           <tr className="table-row--quick">
-                            <td colSpan={11}>
+                            <td colSpan={13}>
                               <div className="income-payment-log-panel">
                                 <div className="income-payment-log-head">
                                   <h3>Payment reliability log</h3>
