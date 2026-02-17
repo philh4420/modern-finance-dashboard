@@ -219,6 +219,21 @@ export function DashboardTab({
     return formatPercent(value)
   }
 
+  const upcomingEventTypeLabel = (event: UpcomingCashEvent['type']) => {
+    switch (event) {
+      case 'income':
+        return 'Income'
+      case 'bill':
+        return 'Bill'
+      case 'card':
+        return 'Card due'
+      case 'loan':
+        return 'Loan payment'
+      default:
+        return 'Cash event'
+    }
+  }
+
   const forecastRiskPill = (risk: ForecastWindow['risk']) => {
     if (risk === 'critical') return 'pill pill--critical'
     if (risk === 'warning') return 'pill pill--warning'
@@ -549,11 +564,11 @@ export function DashboardTab({
           <header className="panel-header">
             <div>
               <p className="panel-kicker">Flow</p>
-              <h2>Upcoming Cash Events</h2>
+              <h2>Upcoming Money Timeline (Next 14 Days)</h2>
             </div>
           </header>
           {upcomingCashEvents.length === 0 ? (
-            <p className="empty-state">No recurring events scheduled in the next 60 days.</p>
+            <p className="empty-state">No scheduled income, bills, card dues, or loan payments in the next 14 days.</p>
           ) : (
             <ul className="timeline-list">
               {upcomingCashEvents.map((event) => (
@@ -561,7 +576,8 @@ export function DashboardTab({
                   <div>
                     <p>{event.label}</p>
                     <small>
-                      {dateLabel.format(new Date(`${event.date}T00:00:00`))} • {event.daysAway} day
+                      {upcomingEventTypeLabel(event.type)} • {dateLabel.format(new Date(`${event.date}T00:00:00`))} •{' '}
+                      {event.daysAway} day
                       {event.daysAway === 1 ? '' : 's'} • {cadenceLabel(event.cadence, event.customInterval, event.customUnit)}
                     </small>
                   </div>

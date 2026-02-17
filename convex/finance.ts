@@ -877,11 +877,18 @@ const runLoanMonthlyCycleForUser = async (
   }
 }
 
-const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: LoanDoc[], now: Date) => {
+const buildUpcomingCashEvents = (
+  incomes: IncomeDoc[],
+  bills: BillDoc[],
+  cards: CardDoc[],
+  loans: LoanDoc[],
+  now: Date,
+) => {
+  const horizonDays = 14
   const events: Array<{
     id: string
     label: string
-    type: 'income' | 'bill' | 'loan'
+    type: 'income' | 'bill' | 'card' | 'loan'
     date: string
     amount: number
     daysAway: number
@@ -905,7 +912,7 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: 
     }
 
     const daysAway = Math.round((nextDate.getTime() - startOfDay(now).getTime()) / 86400000)
-    if (daysAway < 0 || daysAway > 60) {
+    if (daysAway < 0 || daysAway > horizonDays) {
       return
     }
 
@@ -937,7 +944,7 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: 
     }
 
     const daysAway = Math.round((nextDate.getTime() - startOfDay(now).getTime()) / 86400000)
-    if (daysAway < 0 || daysAway > 60) {
+    if (daysAway < 0 || daysAway > horizonDays) {
       return
     }
 
@@ -951,6 +958,34 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: 
       cadence: entry.cadence,
       customInterval: entry.customInterval,
       customUnit: entry.customUnit,
+    })
+  })
+
+  cards.forEach((entry) => {
+    const nextDate = nextDateForCadence('monthly', entry.createdAt, now, entry.dueDay ?? 21)
+
+    if (!nextDate) {
+      return
+    }
+
+    const daysAway = Math.round((nextDate.getTime() - startOfDay(now).getTime()) / 86400000)
+    if (daysAway < 0 || daysAway > horizonDays) {
+      return
+    }
+
+    const projectedDue = estimateCardMonthlyPayment(entry)
+    if (projectedDue <= 0) {
+      return
+    }
+
+    events.push({
+      id: `card-${entry._id}`,
+      label: `${entry.name} due`,
+      type: 'card',
+      date: nextDate.toISOString().slice(0, 10),
+      amount: -projectedDue,
+      daysAway,
+      cadence: 'monthly',
     })
   })
 
@@ -969,7 +1004,7 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: 
     }
 
     const daysAway = Math.round((nextDate.getTime() - startOfDay(now).getTime()) / 86400000)
-    if (daysAway < 0 || daysAway > 60) {
+    if (daysAway < 0 || daysAway > horizonDays) {
       return
     }
 
@@ -986,7 +1021,7 @@ const buildUpcomingCashEvents = (incomes: IncomeDoc[], bills: BillDoc[], loans: 
     })
   })
 
-  return events.sort((a, b) => a.daysAway - b.daysAway || a.amount - b.amount).slice(0, 12)
+  return events.sort((a, b) => a.date.localeCompare(b.date) || a.daysAway - b.daysAway || a.amount - b.amount)
 }
 
 const buildInsights = (args: {
@@ -1567,7 +1602,7 @@ export const getFinanceData = query({
       .sort((a, b) => b.total - a.total)
       .slice(0, 5)
 
-    const upcomingCashEvents = buildUpcomingCashEvents(incomes, bills, loans, now)
+    const upcomingCashEvents = buildUpcomingCashEvents(incomes, bills, cards, loans, now)
 
     const insights = buildInsights({
       monthlyIncome,

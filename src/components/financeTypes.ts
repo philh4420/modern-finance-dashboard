@@ -230,7 +230,7 @@ export type TopCategory = {
 export type UpcomingCashEvent = {
   id: string
   label: string
-  type: 'income' | 'bill' | 'loan'
+  type: 'income' | 'bill' | 'card' | 'loan'
   date: string
   amount: number
   daysAway: number
