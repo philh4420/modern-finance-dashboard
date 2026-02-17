@@ -568,6 +568,7 @@ function App() {
             monthCloseSnapshots={monthCloseSnapshots}
             financeAuditEvents={financeAuditEvents}
             ledgerEntries={ledgerEntries}
+            forecastWindows={phase2Data.forecastWindows}
 	            counts={{
 	              incomes: incomes.length,
 	              bills: bills.length,

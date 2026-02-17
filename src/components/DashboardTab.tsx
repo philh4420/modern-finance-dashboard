@@ -3,6 +3,7 @@ import type {
   Cadence,
   CycleAuditLogEntry,
   FinanceAuditEventEntry,
+  ForecastWindow,
   CustomCadenceUnit,
   DashboardCard,
   GoalWithMetrics,
@@ -32,6 +33,7 @@ type DashboardTabProps = {
   monthCloseSnapshots: MonthCloseSnapshotEntry[]
   financeAuditEvents: FinanceAuditEventEntry[]
   ledgerEntries: LedgerEntry[]
+  forecastWindows: ForecastWindow[]
   counts: {
     incomes: number
     bills: number
@@ -74,6 +76,7 @@ export function DashboardTab({
   monthCloseSnapshots,
   financeAuditEvents,
   ledgerEntries,
+  forecastWindows,
   counts,
   kpis,
   privacyData,
@@ -216,6 +219,83 @@ export function DashboardTab({
     return formatPercent(value)
   }
 
+  const forecastRiskPill = (risk: ForecastWindow['risk']) => {
+    if (risk === 'critical') return 'pill pill--critical'
+    if (risk === 'warning') return 'pill pill--warning'
+    return 'pill pill--good'
+  }
+
+  const orderedForecastWindows = useMemo(
+    () => [...forecastWindows].sort((left, right) => left.days - right.days),
+    [forecastWindows],
+  )
+
+  const openingForecastRisk: ForecastWindow['risk'] =
+    summary.liquidReserves < 0 ? 'critical' : summary.liquidReserves < summary.monthlyCommitments ? 'warning' : 'healthy'
+
+  const forecastPath = useMemo(
+    () => [
+      {
+        id: 'day-0',
+        days: 0,
+        label: 'Today',
+        projectedCash: summary.liquidReserves,
+        projectedNet: 0,
+        coverageMonths: summary.monthlyCommitments > 0 ? summary.liquidReserves / summary.monthlyCommitments : 99,
+        risk: openingForecastRisk,
+      },
+      ...orderedForecastWindows.map((window) => ({
+        id: `day-${window.days}`,
+        days: window.days,
+        label: `${window.days}d`,
+        projectedCash: window.projectedCash,
+        projectedNet: window.projectedNet,
+        coverageMonths: window.coverageMonths,
+        risk: window.risk,
+      })),
+    ],
+    [openingForecastRisk, orderedForecastWindows, summary.liquidReserves, summary.monthlyCommitments],
+  )
+
+  const forecastChart = useMemo(() => {
+    const width = 340
+    const height = 126
+    const padX = 14
+    const padY = 14
+    const maxDays = Math.max(...forecastPath.map((point) => point.days), 1)
+    const values = forecastPath.map((point) => point.projectedCash)
+    const minValue = Math.min(...values)
+    const maxValue = Math.max(...values)
+    const rawRange = maxValue - minValue
+    const softPadding = rawRange === 0 ? Math.max(Math.abs(maxValue) * 0.15, 1) : rawRange * 0.14
+    const chartMin = minValue - softPadding
+    const chartMax = maxValue + softPadding
+    const valueRange = chartMax - chartMin || 1
+    const innerWidth = width - padX * 2
+    const innerHeight = height - padY * 2
+
+    const mapX = (days: number) => padX + (days / maxDays) * innerWidth
+    const mapY = (value: number) => height - padY - ((value - chartMin) / valueRange) * innerHeight
+
+    const points = forecastPath.map((point) => ({
+      ...point,
+      x: mapX(point.days),
+      y: mapY(point.projectedCash),
+    }))
+
+    const zeroLineY = chartMin <= 0 && chartMax >= 0 ? mapY(0) : null
+
+    return {
+      width,
+      height,
+      points,
+      line: points.map((point) => `${point.x},${point.y}`).join(' '),
+      zeroLineY,
+    }
+  }, [forecastPath])
+
+  const lowCashRiskPoints = forecastPath.filter((point) => point.risk !== 'healthy')
+
   return (
     <>
       <section className="executive-strip" aria-label="Executive summary strip">
@@ -314,6 +394,91 @@ export function DashboardTab({
             </li>
           </ul>
           <p className="subnote">For production CSP enforcement, see docs in `docs/DEPLOYMENT.md`.</p>
+        </article>
+
+        <article className="panel panel-cash-forecast">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Forecast</p>
+              <h2>30 / 90 / 365 Cashflow Path</h2>
+            </div>
+            <p className="panel-value">{formatMoney(summary.liquidReserves)} starting liquid reserves</p>
+          </header>
+          {orderedForecastWindows.length === 0 ? (
+            <p className="empty-state">No forecast windows available yet. Add more finance entries to generate forecast data.</p>
+          ) : (
+            <>
+              <div className="forecast-window-strip">
+                {orderedForecastWindows.map((window) => (
+                  <article className="forecast-window-card" key={window.days}>
+                    <p>{window.days}-day horizon</p>
+                    <strong className={window.projectedCash < 0 ? 'amount-negative' : 'amount-positive'}>
+                      {formatMoney(window.projectedCash)}
+                    </strong>
+                    <small>
+                      {formatMoney(window.projectedNet)} net • {window.coverageMonths.toFixed(1)} mo coverage
+                    </small>
+                    <span className={forecastRiskPill(window.risk)}>{window.risk}</span>
+                  </article>
+                ))}
+              </div>
+
+              <div className="forecast-chart-wrap" aria-label="Expected balance path">
+                <svg
+                  className="forecast-chart"
+                  viewBox={`0 0 ${forecastChart.width} ${forecastChart.height}`}
+                  role="img"
+                  aria-label="Expected cash balance path for today, 30, 90, and 365 days"
+                >
+                  {forecastChart.zeroLineY !== null ? (
+                    <line
+                      x1="0"
+                      y1={forecastChart.zeroLineY}
+                      x2={forecastChart.width}
+                      y2={forecastChart.zeroLineY}
+                      className="forecast-zero-line"
+                    />
+                  ) : null}
+                  <polyline className="forecast-line" points={forecastChart.line} />
+                  {forecastChart.points.map((point) => (
+                    <circle
+                      key={point.id}
+                      cx={point.x}
+                      cy={point.y}
+                      r="4.2"
+                      className={`forecast-point forecast-point--${point.risk}`}
+                    />
+                  ))}
+                </svg>
+                <div className="forecast-axis-labels">
+                  {forecastChart.points.map((point) => (
+                    <span key={`${point.id}-label`}>{point.label}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="forecast-risk-block">
+                <h3>Low cash risk points</h3>
+                {lowCashRiskPoints.length === 0 ? (
+                  <p className="subnote">No low-cash risk points across current 30/90/365 horizons.</p>
+                ) : (
+                  <ul className="forecast-risk-list">
+                    {lowCashRiskPoints.map((point) => (
+                      <li key={`${point.id}-risk`}>
+                        <div>
+                          <p>{point.days === 0 ? 'Today' : `${point.days}-day horizon`}</p>
+                          <small>
+                            {formatMoney(point.projectedCash)} projected cash • {point.coverageMonths.toFixed(1)} mo coverage
+                          </small>
+                        </div>
+                        <span className={forecastRiskPill(point.risk)}>{point.risk}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
         </article>
 
         <article className="panel panel-health">
