@@ -152,6 +152,76 @@ const toIncomeCycleDate = (cycleMonth: string, day: number) => {
   return new Date(year, month - 1, clamp(day, 1, daysInMonth))
 }
 
+const monthKeyToDate = (monthKey: string) => {
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+    return null
+  }
+
+  const year = Number.parseInt(monthKey.slice(0, 4), 10)
+  const month = Number.parseInt(monthKey.slice(5, 7), 10)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null
+  }
+
+  return new Date(year, month - 1, 1)
+}
+
+const buildLookbackMonthKeys = (anchorMonthKey: string, months: number) => {
+  const anchorDate = monthKeyToDate(anchorMonthKey) ?? new Date()
+  const keys: string[] = []
+  let cursor = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1)
+  for (let index = 0; index < months; index += 1) {
+    keys.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`)
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1)
+  }
+  return keys
+}
+
+const normalizeLookbackMonths = (value: number | undefined) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 6
+  }
+  const rounded = Math.round(value)
+  return clamp(rounded, 2, 24)
+}
+
+const resolveIncomeForecastMonthlyAmount = (
+  income: IncomeEntry,
+  checks: IncomePaymentCheckEntry[],
+  anchorMonthKey: string,
+) => {
+  const baselineCycleAmount = resolveIncomeNetAmount(income)
+  const baselineMonthlyAmount = roundCurrency(
+    toMonthlyAmount(baselineCycleAmount, income.cadence, income.customInterval, income.customUnit),
+  )
+  if (!income.forecastSmoothingEnabled) {
+    return baselineMonthlyAmount
+  }
+
+  const lookbackMonths = normalizeLookbackMonths(income.forecastSmoothingMonths)
+  const checksByMonth = new Map<string, IncomePaymentCheckEntry>()
+  checks.forEach((entry) => {
+    const existing = checksByMonth.get(entry.cycleMonth)
+    if (!existing || entry.updatedAt > existing.updatedAt) {
+      checksByMonth.set(entry.cycleMonth, entry)
+    }
+  })
+
+  const monthKeys = buildLookbackMonthKeys(anchorMonthKey, lookbackMonths)
+  const total = monthKeys.reduce((sum, monthKey) => {
+    const paymentCheck = checksByMonth.get(monthKey)
+    if (!paymentCheck) {
+      return sum + baselineMonthlyAmount
+    }
+    const cycleAmount = resolveIncomePaymentLogAmount(paymentCheck)
+    return sum + toMonthlyAmount(cycleAmount, income.cadence, income.customInterval, income.customUnit)
+  }, 0)
+
+  return roundCurrency(total / monthKeys.length)
+}
+
+const incomeTableColumnCount = 16
+
 const calculateIncomePaymentReliability = (checks: IncomePaymentCheckEntry[]): IncomePaymentReliability => {
   if (checks.length === 0) {
     return {
@@ -389,6 +459,21 @@ export function IncomeTab({
     return map
   }, [incomePaymentChecks])
 
+  const forecastNormalizedMonthlyIncome = useMemo(
+    () =>
+      roundCurrency(
+        incomes.reduce((sum, entry) => {
+          const checks = paymentChecksByIncomeId.get(entry._id) ?? []
+          return sum + resolveIncomeForecastMonthlyAmount(entry, checks, currentCycleMonth)
+        }, 0),
+      ),
+    [currentCycleMonth, incomes, paymentChecksByIncomeId],
+  )
+  const smoothingEnabledCount = useMemo(
+    () => incomes.filter((entry) => entry.forecastSmoothingEnabled).length,
+    [incomes],
+  )
+
   const overallReliability = useMemo(
     () => calculateIncomePaymentReliability(incomePaymentChecks),
     [incomePaymentChecks],
@@ -567,6 +652,10 @@ export function IncomeTab({
             <p className="panel-value">
               {incomes.length} source{incomes.length === 1 ? '' : 's'} · {formatMoney(monthlyIncome)} / month
             </p>
+            <p className="subnote">
+              Forecast normalized: {formatMoney(forecastNormalizedMonthlyIncome)} / month ({smoothingEnabledCount} source
+              {smoothingEnabledCount === 1 ? '' : 's'} smoothed)
+            </p>
           </div>
         </header>
         <form className="entry-form entry-form--grid" onSubmit={onAddIncome} aria-describedby="income-form-hint">
@@ -692,6 +781,45 @@ export function IncomeTab({
               </select>
             </div>
 
+            <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="income-forecast-smoothing">
+                <input
+                  id="income-forecast-smoothing"
+                  type="checkbox"
+                  checked={incomeForm.forecastSmoothingEnabled}
+                  onChange={(event) =>
+                    setIncomeForm((prev) => ({
+                      ...prev,
+                      forecastSmoothingEnabled: event.target.checked,
+                      forecastSmoothingMonths: prev.forecastSmoothingMonths || '6',
+                    }))
+                  }
+                />
+                Use seasonal smoothing for forecast math
+              </label>
+              <div className="inline-cadence-controls">
+                <label htmlFor="income-forecast-smoothing-months">Lookback (months)</label>
+                <select
+                  id="income-forecast-smoothing-months"
+                  value={incomeForm.forecastSmoothingMonths}
+                  disabled={!incomeForm.forecastSmoothingEnabled}
+                  onChange={(event) =>
+                    setIncomeForm((prev) => ({
+                      ...prev,
+                      forecastSmoothingMonths: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="3">3</option>
+                  <option value="6">6</option>
+                  <option value="9">9</option>
+                  <option value="12">12</option>
+                  <option value="18">18</option>
+                  <option value="24">24</option>
+                </select>
+              </div>
+            </div>
+
             <div className="form-field">
               <label htmlFor="income-destination-account">Default landing account</label>
               <select
@@ -797,6 +925,9 @@ export function IncomeTab({
             {formActualAmount !== undefined
               ? `Actual paid captured as ${formatMoney(formActualAmount)} for expected vs received variance. `
               : 'Add Actual paid amount to track expected vs received variance. '}{' '}
+            {incomeForm.forecastSmoothingEnabled
+              ? `Forecast smoothing enabled with ${incomeForm.forecastSmoothingMonths} month lookback. `
+              : 'Enable forecast smoothing to normalize irregular or seasonal income from payment logs. '}{' '}
             Tip: use <strong>Custom</strong> for 4-week pay cycles and set <strong>Pay date anchor</strong> for
             accurate next payday prediction. Next predicted payday:{' '}
             <strong>{formNextPayday ? toIsoDate(formNextPayday) : 'n/a'}</strong>.
@@ -816,6 +947,9 @@ export function IncomeTab({
             <p className="panel-kicker">Income</p>
             <h2>Current entries</h2>
             <p className="panel-value">{formatMoney(monthlyIncome)} planned net/month</p>
+            <p className="subnote">
+              {formatMoney(forecastNormalizedMonthlyIncome)} forecast-normalized/month from smoothing + payment history.
+            </p>
           </div>
           <div className="panel-actions">
             <input
@@ -862,6 +996,9 @@ export function IncomeTab({
               {formatMoney(monthlyIncome)} planned net/month scheduled.
             </p>
             <p className="subnote">
+              Forecast normalized run-rate {formatMoney(forecastNormalizedMonthlyIncome)} / month.
+            </p>
+            <p className="subnote">
               Actuals tracked on {monthlyBreakdown.trackedCount}/{incomes.length} sources · {untrackedCount} pending
               actual value{untrackedCount === 1 ? '' : 's'}.
             </p>
@@ -904,6 +1041,11 @@ export function IncomeTab({
                   {overallReliability.total} logs · {(overallReliability.onTimeRate * 100).toFixed(0)}% on-time ·{' '}
                   {overallReliability.lateOrMissedStreak} late/missed streak
                 </small>
+              </div>
+              <div>
+                <p>Forecast normalized</p>
+                <strong>{formatMoney(forecastNormalizedMonthlyIncome)}</strong>
+                <small>{smoothingEnabledCount} smoothing-enabled source{smoothingEnabledCount === 1 ? '' : 's'}</small>
               </div>
             </div>
             <section className="income-source-trends" aria-label="Source-level income trends">
@@ -952,6 +1094,7 @@ export function IncomeTab({
                     <th scope="col">Status</th>
                     <th scope="col">Landing account</th>
                     <th scope="col">Frequency</th>
+                    <th scope="col">Forecast smoothing</th>
                     <th scope="col">Day</th>
                     <th scope="col">Anchor</th>
                     <th scope="col">Next payday</th>
@@ -994,6 +1137,12 @@ export function IncomeTab({
                         : undefined
                     const rowPaymentChecks = paymentChecksByIncomeId.get(entry._id) ?? []
                     const rowReliability = calculateIncomePaymentReliability(rowPaymentChecks)
+                    const rowForecastNormalizedMonthly = resolveIncomeForecastMonthlyAmount(
+                      entry,
+                      rowPaymentChecks,
+                      currentCycleMonth,
+                    )
+                    const smoothingLookbackMonths = normalizeLookbackMonths(entry.forecastSmoothingMonths)
                     const latestPaymentCheck = rowPaymentChecks[0] ?? null
                     const currentCycleCheck =
                       rowPaymentChecks.find((paymentCheck) => paymentCheck.cycleMonth === currentCycleMonth) ?? null
@@ -1311,6 +1460,51 @@ export function IncomeTab({
                         </td>
                         <td>
                           {isEditing ? (
+                            <div className="cell-stack">
+                              <label className="checkbox-row">
+                                <input
+                                  type="checkbox"
+                                  checked={incomeEditDraft.forecastSmoothingEnabled}
+                                  onChange={(event) =>
+                                    setIncomeEditDraft((prev) => ({
+                                      ...prev,
+                                      forecastSmoothingEnabled: event.target.checked,
+                                      forecastSmoothingMonths: prev.forecastSmoothingMonths || '6',
+                                    }))
+                                  }
+                                />
+                                Smoothing
+                              </label>
+                              <select
+                                className="inline-select"
+                                value={incomeEditDraft.forecastSmoothingMonths}
+                                disabled={!incomeEditDraft.forecastSmoothingEnabled}
+                                onChange={(event) =>
+                                  setIncomeEditDraft((prev) => ({
+                                    ...prev,
+                                    forecastSmoothingMonths: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="3">3 months</option>
+                                <option value="6">6 months</option>
+                                <option value="9">9 months</option>
+                                <option value="12">12 months</option>
+                                <option value="18">18 months</option>
+                                <option value="24">24 months</option>
+                              </select>
+                            </div>
+                          ) : entry.forecastSmoothingEnabled ? (
+                            <div className="cell-stack">
+                              <span className="pill pill--good">{smoothingLookbackMonths}m lookback</span>
+                              <small>{formatMoney(rowForecastNormalizedMonthly)}/month normalized</small>
+                            </div>
+                          ) : (
+                            <span className="pill pill--neutral">Off</span>
+                          )}
+                        </td>
+                        <td>
+                          {isEditing ? (
                             <input
                               className="inline-input"
                               type="number"
@@ -1415,7 +1609,7 @@ export function IncomeTab({
                         </tr>
                         {isPaymentLogOpen ? (
                           <tr className="table-row--quick">
-                            <td colSpan={14}>
+                            <td colSpan={incomeTableColumnCount}>
                               <div className="income-payment-log-panel">
                                 <div className="income-payment-log-head">
                                   <h3>Payment reliability log</h3>

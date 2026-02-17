@@ -137,6 +137,8 @@ export type IncomeForm = {
   cadence: Cadence
   customInterval: string
   customUnit: CustomCadenceUnit
+  forecastSmoothingEnabled: boolean
+  forecastSmoothingMonths: string
   destinationAccountId: string
   receivedDay: string
   payDateAnchor: string

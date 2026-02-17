@@ -200,6 +200,8 @@ export default defineSchema({
     cadence,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnit),
+    forecastSmoothingEnabled: v.optional(v.boolean()),
+    forecastSmoothingMonths: v.optional(v.number()),
     destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),

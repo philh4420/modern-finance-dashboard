@@ -29,6 +29,8 @@ const initialIncomeForm: IncomeForm = {
   cadence: 'monthly',
   customInterval: '',
   customUnit: 'weeks',
+  forecastSmoothingEnabled: false,
+  forecastSmoothingMonths: '6',
   destinationAccountId: '',
   receivedDay: '',
   payDateAnchor: '',
@@ -46,6 +48,8 @@ const initialIncomeEditDraft: IncomeEditDraft = {
   cadence: 'monthly',
   customInterval: '',
   customUnit: 'weeks',
+  forecastSmoothingEnabled: false,
+  forecastSmoothingMonths: '6',
   destinationAccountId: '',
   receivedDay: '',
   payDateAnchor: '',
@@ -86,6 +90,14 @@ const parseOptionalAccountId = (value: string): Id<'accounts'> | undefined => {
     return undefined
   }
   return trimmed as Id<'accounts'>
+}
+
+const parseForecastSmoothingMonthsInput = (value: string) => {
+  const parsed = parseIntInput(value, 'Forecast smoothing lookback')
+  if (!Number.isInteger(parsed) || parsed < 2 || parsed > 24) {
+    throw new Error('Forecast smoothing lookback must be an integer between 2 and 24 months.')
+  }
+  return parsed
 }
 
 const parseIncomeAmounts = (
@@ -149,6 +161,10 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         ? parseCustomInterval(incomeForm.customInterval)
         : undefined
       const parsedAmounts = parseIncomeAmounts(incomeForm)
+      const forecastSmoothingEnabled = incomeForm.forecastSmoothingEnabled
+      const forecastSmoothingMonths = forecastSmoothingEnabled
+        ? parseForecastSmoothingMonthsInput(incomeForm.forecastSmoothingMonths)
+        : undefined
 
       await addIncome({
         source: incomeForm.source,
@@ -156,6 +172,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         cadence: incomeForm.cadence,
         customInterval,
         customUnit: isCustomCadence(incomeForm.cadence) ? incomeForm.customUnit : undefined,
+        forecastSmoothingEnabled,
+        forecastSmoothingMonths,
         destinationAccountId: parseOptionalAccountId(incomeForm.destinationAccountId),
         receivedDay: incomeForm.receivedDay ? parseIntInput(incomeForm.receivedDay, 'Received day') : undefined,
         payDateAnchor: parseOptionalIsoDateInput(incomeForm.payDateAnchor, 'Pay date anchor'),
@@ -193,6 +211,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
       cadence: entry.cadence,
       customInterval: entry.customInterval ? String(entry.customInterval) : '',
       customUnit: entry.customUnit ?? 'weeks',
+      forecastSmoothingEnabled: entry.forecastSmoothingEnabled ?? false,
+      forecastSmoothingMonths: String(entry.forecastSmoothingMonths ?? 6),
       destinationAccountId: entry.destinationAccountId ? String(entry.destinationAccountId) : '',
       receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
       payDateAnchor: entry.payDateAnchor ?? '',
@@ -209,6 +229,10 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         ? parseCustomInterval(incomeEditDraft.customInterval)
         : undefined
       const parsedAmounts = parseIncomeAmounts(incomeEditDraft)
+      const forecastSmoothingEnabled = incomeEditDraft.forecastSmoothingEnabled
+      const forecastSmoothingMonths = forecastSmoothingEnabled
+        ? parseForecastSmoothingMonthsInput(incomeEditDraft.forecastSmoothingMonths)
+        : undefined
 
       await updateIncome({
         id: incomeEditId,
@@ -217,6 +241,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         cadence: incomeEditDraft.cadence,
         customInterval,
         customUnit: isCustomCadence(incomeEditDraft.cadence) ? incomeEditDraft.customUnit : undefined,
+        forecastSmoothingEnabled,
+        forecastSmoothingMonths,
         destinationAccountId: parseOptionalAccountId(incomeEditDraft.destinationAccountId),
         receivedDay: incomeEditDraft.receivedDay
           ? parseIntInput(incomeEditDraft.receivedDay, 'Received day')

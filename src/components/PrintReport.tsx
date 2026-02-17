@@ -939,6 +939,7 @@ export function PrintReport({
                       <th scope="col">Income Status</th>
                       <th scope="col">Landing Account</th>
                       <th scope="col">Cadence</th>
+                      <th scope="col">Forecast Smoothing</th>
                       <th scope="col">Received</th>
                       <th scope="col">Anchor</th>
                       <th scope="col">Next Payday</th>
@@ -999,6 +1000,11 @@ export function PrintReport({
                               : 'Unassigned'}
                           </td>
                           <td>{income.cadence}</td>
+                          <td>
+                            {income.forecastSmoothingEnabled
+                              ? `${Math.min(Math.max(Math.round(income.forecastSmoothingMonths ?? 6), 2), 24)}m lookback`
+                              : 'Off'}
+                          </td>
                           <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
                           <td>{income.payDateAnchor ?? 'n/a'}</td>
                           <td>{nextPayday ? toIsoDate(nextPayday) : 'n/a'}</td>

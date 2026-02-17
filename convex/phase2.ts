@@ -17,6 +17,8 @@ type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 
 type PurchaseDoc = Doc<'purchases'>
 type TransactionRuleDoc = Doc<'transactionRules'>
+type IncomeDoc = Doc<'incomes'>
+type IncomePaymentCheckDoc = Doc<'incomePaymentChecks'>
 
 type BillRiskLevel = 'good' | 'warning' | 'critical'
 type ForecastRiskLevel = 'healthy' | 'warning' | 'critical'
@@ -196,6 +198,93 @@ const resolveIncomeNetAmount = (entry: {
 const toMonthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 
 const normalizeText = (value: string) => value.trim().toLowerCase()
+
+const monthKeyToDate = (monthKey: string) => {
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+    return null
+  }
+  const year = Number.parseInt(monthKey.slice(0, 4), 10)
+  const month = Number.parseInt(monthKey.slice(5, 7), 10)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null
+  }
+  return new Date(year, month - 1, 1)
+}
+
+const clampForecastSmoothingMonths = (value: number | undefined | null) => {
+  const normalized = Math.round(finiteOrZero(value))
+  return normalized >= 2 && normalized <= 24 ? normalized : 6
+}
+
+const buildLookbackMonthKeys = (anchorMonthKey: string, months: number) => {
+  const anchorDate = monthKeyToDate(anchorMonthKey) ?? new Date()
+  const keys: string[] = []
+  let cursor = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1)
+  for (let index = 0; index < months; index += 1) {
+    keys.push(toMonthKey(cursor))
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1)
+  }
+  return keys
+}
+
+const resolveIncomePaymentCheckAmountForForecast = (
+  paymentCheck: IncomePaymentCheckDoc,
+  fallbackAmount: number,
+) => {
+  if (paymentCheck.status === 'missed') {
+    return 0
+  }
+
+  if (typeof paymentCheck.receivedAmount === 'number' && Number.isFinite(paymentCheck.receivedAmount)) {
+    return Math.max(paymentCheck.receivedAmount, 0)
+  }
+
+  if (typeof paymentCheck.expectedAmount === 'number' && Number.isFinite(paymentCheck.expectedAmount)) {
+    return Math.max(paymentCheck.expectedAmount, 0)
+  }
+
+  return Math.max(fallbackAmount, 0)
+}
+
+const resolveIncomeForecastMonthlyAmount = (args: {
+  income: IncomeDoc
+  anchorMonthKey: string
+  paymentChecksByMonth: Map<string, IncomePaymentCheckDoc>
+}) => {
+  const baselineCycleAmount = resolveIncomeNetAmount(args.income)
+  const baselineMonthlyAmount = roundCurrency(
+    toMonthlyAmount(
+      baselineCycleAmount,
+      args.income.cadence,
+      args.income.customInterval ?? undefined,
+      args.income.customUnit ?? undefined,
+    ),
+  )
+
+  if (!args.income.forecastSmoothingEnabled) {
+    return baselineMonthlyAmount
+  }
+
+  const lookbackMonths = clampForecastSmoothingMonths(args.income.forecastSmoothingMonths)
+  const monthKeys = buildLookbackMonthKeys(args.anchorMonthKey, lookbackMonths)
+  const smoothedMonthlyTotal = monthKeys.reduce((sum, monthKey) => {
+    const paymentCheck = args.paymentChecksByMonth.get(monthKey)
+    if (!paymentCheck) {
+      return sum + baselineMonthlyAmount
+    }
+
+    const cycleAmount = resolveIncomePaymentCheckAmountForForecast(paymentCheck, baselineCycleAmount)
+    const monthlyAmount = toMonthlyAmount(
+      cycleAmount,
+      args.income.cadence,
+      args.income.customInterval ?? undefined,
+      args.income.customUnit ?? undefined,
+    )
+    return sum + monthlyAmount
+  }, 0)
+
+  return roundCurrency(smoothedMonthlyTotal / monthKeys.length)
+}
 
 const toMonthlyAmount = (
   amount: number,
@@ -528,6 +617,7 @@ export const getPhase2Data = query({
       purchaseSplits,
       bills,
       incomes,
+      incomePaymentChecks,
       cards,
       loans,
       accounts,
@@ -566,6 +656,10 @@ export const getPhase2Data = query({
         .collect(),
       ctx.db
         .query('incomes')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('incomePaymentChecks')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .collect(),
       ctx.db
@@ -700,6 +794,29 @@ export const getPhase2Data = query({
         sum + toMonthlyAmount(resolveIncomeNetAmount(income), income.cadence, income.customInterval, income.customUnit),
       0,
     )
+
+    const incomeChecksByIncomeId = new Map<string, Map<string, IncomePaymentCheckDoc>>()
+    incomePaymentChecks.forEach((entry) => {
+      const incomeId = String(entry.incomeId)
+      const checksByMonth = incomeChecksByIncomeId.get(incomeId) ?? new Map<string, IncomePaymentCheckDoc>()
+      const existing = checksByMonth.get(entry.cycleMonth)
+      if (!existing || entry.updatedAt > existing.updatedAt) {
+        checksByMonth.set(entry.cycleMonth, entry)
+      }
+      incomeChecksByIncomeId.set(incomeId, checksByMonth)
+    })
+
+    const monthlyIncomeForForecast = incomes.reduce((sum, income) => {
+      const paymentChecksByMonth = incomeChecksByIncomeId.get(String(income._id)) ?? new Map<string, IncomePaymentCheckDoc>()
+      return (
+        sum +
+        resolveIncomeForecastMonthlyAmount({
+          income,
+          anchorMonthKey: monthKey,
+          paymentChecksByMonth,
+        })
+      )
+    }, 0)
     const autoAllocationPlan = buildAutoAllocationPlan(monthlyIncome, incomeAllocationRules)
     const monthlyBills = bills.reduce(
       (sum, bill) => sum + toMonthlyAmount(bill.amount, bill.cadence, bill.customInterval, bill.customUnit),
@@ -719,7 +836,7 @@ export const getPhase2Data = query({
     const recentPurchases = purchases.filter((purchase) => new Date(`${purchase.purchaseDate}T00:00:00`) >= ninetyDayWindowStart)
     const averageDailySpend = recentPurchases.reduce((sum, purchase) => sum + purchase.amount, 0) / 90
     const monthlySpendEstimate = averageDailySpend * 30
-    const monthlyNet = monthlyIncome - monthlyCommitments - monthlySpendEstimate
+    const monthlyNet = monthlyIncomeForForecast - monthlyCommitments - monthlySpendEstimate
 
     const liquidReserves = accounts.reduce((sum, account) => {
       if (!account.liquid) {

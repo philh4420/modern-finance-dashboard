@@ -203,6 +203,29 @@ const resolveIncomeNetAmount = (entry: {
   return Math.max(finiteOrZero(entry.amount), 0)
 }
 
+const normalizeIncomeForecastSmoothing = (
+  enabled: boolean | undefined | null,
+  lookbackMonths: number | undefined | null,
+) => {
+  const forecastSmoothingEnabled = enabled === true
+  if (!forecastSmoothingEnabled) {
+    return {
+      forecastSmoothingEnabled: false,
+      forecastSmoothingMonths: undefined,
+    }
+  }
+
+  const normalizedMonths = Math.round(finiteOrZero(lookbackMonths))
+  if (!Number.isFinite(normalizedMonths) || normalizedMonths < 2 || normalizedMonths > 24) {
+    throw new Error('Forecast smoothing lookback must be an integer between 2 and 24 months.')
+  }
+
+  return {
+    forecastSmoothingEnabled: true,
+    forecastSmoothingMonths: normalizedMonths,
+  }
+}
+
 const normalizeCardMinimumPaymentType = (
   value: CardMinimumPaymentType | undefined | null,
 ): CardMinimumPaymentType => (value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed')
@@ -1849,6 +1872,8 @@ export const addIncome = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    forecastSmoothingEnabled: v.optional(v.boolean()),
+    forecastSmoothingMonths: v.optional(v.number()),
     destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),
@@ -1898,6 +1923,10 @@ export const addIncome = mutation({
         : Math.max(args.amount, 0)
     validatePositive(resolvedNetAmount, 'Income net amount')
     const payDateAnchor = args.payDateAnchor?.trim() || undefined
+    const forecastSmoothing = normalizeIncomeForecastSmoothing(
+      args.forecastSmoothingEnabled,
+      args.forecastSmoothingMonths ?? 6,
+    )
     const destinationAccountId = await resolveIncomeDestinationAccountId(
       ctx,
       identity.subject,
@@ -1918,6 +1947,8 @@ export const addIncome = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      forecastSmoothingEnabled: forecastSmoothing.forecastSmoothingEnabled,
+      forecastSmoothingMonths: forecastSmoothing.forecastSmoothingMonths,
       destinationAccountId,
       receivedDay: args.receivedDay,
       payDateAnchor,
@@ -1939,6 +1970,8 @@ export const addIncome = mutation({
         nationalInsuranceAmount: args.nationalInsuranceAmount,
         pensionAmount: args.pensionAmount,
         cadence: args.cadence,
+        forecastSmoothingEnabled: forecastSmoothing.forecastSmoothingEnabled,
+        forecastSmoothingMonths: forecastSmoothing.forecastSmoothingMonths,
         destinationAccountId: destinationAccountId ? String(destinationAccountId) : undefined,
         payDateAnchor,
       },
@@ -1959,6 +1992,8 @@ export const updateIncome = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    forecastSmoothingEnabled: v.optional(v.boolean()),
+    forecastSmoothingMonths: v.optional(v.number()),
     destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),
@@ -2008,6 +2043,12 @@ export const updateIncome = mutation({
         : Math.max(args.amount, 0)
     validatePositive(resolvedNetAmount, 'Income net amount')
     const payDateAnchor = args.payDateAnchor?.trim() || undefined
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Income record not found.')
+    const forecastSmoothing = normalizeIncomeForecastSmoothing(
+      args.forecastSmoothingEnabled ?? existing.forecastSmoothingEnabled ?? false,
+      args.forecastSmoothingMonths ?? existing.forecastSmoothingMonths ?? 6,
+    )
     const destinationAccountId = await resolveIncomeDestinationAccountId(
       ctx,
       identity.subject,
@@ -2015,9 +2056,6 @@ export const updateIncome = mutation({
     )
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
-
-    const existing = await ctx.db.get(args.id)
-    ensureOwned(existing, identity.subject, 'Income record not found.')
 
     await ctx.db.patch(args.id, {
       source: args.source.trim(),
@@ -2030,6 +2068,8 @@ export const updateIncome = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      forecastSmoothingEnabled: forecastSmoothing.forecastSmoothingEnabled,
+      forecastSmoothingMonths: forecastSmoothing.forecastSmoothingMonths,
       destinationAccountId,
       receivedDay: args.receivedDay,
       payDateAnchor,
@@ -2050,6 +2090,8 @@ export const updateIncome = mutation({
         nationalInsuranceAmount: existing.nationalInsuranceAmount,
         pensionAmount: existing.pensionAmount,
         cadence: existing.cadence,
+        forecastSmoothingEnabled: existing.forecastSmoothingEnabled ?? false,
+        forecastSmoothingMonths: existing.forecastSmoothingMonths,
         destinationAccountId: existing.destinationAccountId ? String(existing.destinationAccountId) : undefined,
         payDateAnchor: existing.payDateAnchor,
       },
@@ -2062,6 +2104,8 @@ export const updateIncome = mutation({
         nationalInsuranceAmount: args.nationalInsuranceAmount,
         pensionAmount: args.pensionAmount,
         cadence: args.cadence,
+        forecastSmoothingEnabled: forecastSmoothing.forecastSmoothingEnabled,
+        forecastSmoothingMonths: forecastSmoothing.forecastSmoothingMonths,
         destinationAccountId: destinationAccountId ? String(destinationAccountId) : undefined,
         payDateAnchor,
       },
