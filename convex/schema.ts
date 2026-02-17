@@ -128,6 +128,10 @@ const ledgerEntryType = v.union(
 const cycleSummarySnapshot = v.object({
   monthlyIncome: v.number(),
   monthlyCommitments: v.number(),
+  monthlyBills: v.optional(v.number()),
+  monthlyCardSpend: v.optional(v.number()),
+  monthlyLoanBasePayments: v.optional(v.number()),
+  monthlyLoanSubscriptionCosts: v.optional(v.number()),
   totalLiabilities: v.number(),
   netWorth: v.number(),
   runwayMonths: v.number(),

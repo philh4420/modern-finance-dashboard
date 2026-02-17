@@ -521,6 +521,14 @@ h2 {
   grid-column: span 5;
 }
 
+.panel-commitments {
+  grid-column: span 8;
+  background:
+    radial-gradient(145% 150% at 100% -20%, color-mix(in oklab, var(--tone-warning) 10%, transparent), transparent 64%),
+    radial-gradient(130% 120% at 0% 0%, color-mix(in oklab, var(--tone-finance) 9%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+}
+
 .trust-kpi-grid {
   margin-top: 0.85rem;
   display: grid;
@@ -800,6 +808,146 @@ h2 {
 .debt-focus-target-card small {
   color: var(--text-muted);
   font-size: 0.78rem;
+}
+
+.commitments-trend {
+  margin: 0.72rem 0 0;
+  font-size: 0.92rem;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.commitments-trend--good {
+  color: var(--tone-positive);
+}
+
+.commitments-trend--bad {
+  color: var(--tone-negative);
+}
+
+.commitments-trend--neutral {
+  color: var(--tone-neutral);
+}
+
+.commitments-stack {
+  margin-top: 0.72rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--stroke) 70%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 90%, white 10%);
+  min-height: 0.84rem;
+  overflow: hidden;
+  display: flex;
+}
+
+.commitment-segment {
+  width: var(--segment-width);
+  min-width: 0;
+  transition: width 220ms ease;
+}
+
+.commitment-segment--bills {
+  background: color-mix(in oklab, var(--tone-warning) 72%, black 28%);
+}
+
+.commitment-segment--cards {
+  background: color-mix(in oklab, var(--tone-negative) 68%, black 32%);
+}
+
+.commitment-segment--loans {
+  background: color-mix(in oklab, var(--tone-finance) 70%, black 30%);
+}
+
+.commitment-segment--subscriptions {
+  background: color-mix(in oklab, var(--tone-savings) 72%, black 28%);
+}
+
+.commitments-breakdown-list {
+  margin: 0.68rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.commitments-breakdown-list li {
+  border-radius: 0.88rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.58rem 0.64rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.commitments-breakdown-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.commitments-breakdown-head p {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  font-weight: 650;
+}
+
+.commitments-breakdown-head strong {
+  font-size: 0.96rem;
+}
+
+.commitment-dot {
+  width: 0.56rem;
+  height: 0.56rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.commitment-dot--bills {
+  background: color-mix(in oklab, var(--tone-warning) 78%, black 22%);
+}
+
+.commitment-dot--cards {
+  background: color-mix(in oklab, var(--tone-negative) 74%, black 26%);
+}
+
+.commitment-dot--loans {
+  background: color-mix(in oklab, var(--tone-finance) 74%, black 26%);
+}
+
+.commitment-dot--subscriptions {
+  background: color-mix(in oklab, var(--tone-savings) 78%, black 22%);
+}
+
+.commitments-breakdown-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.58rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.commitments-breakdown-meta small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.commitments-delta {
+  font-size: 0.78rem;
+  font-weight: 640;
+}
+
+.commitments-delta--good {
+  color: var(--tone-positive);
+}
+
+.commitments-delta--bad {
+  color: var(--tone-negative);
+}
+
+.commitments-delta--neutral {
+  color: var(--tone-neutral);
 }
 
 .settings-subtitle {
@@ -2442,6 +2590,7 @@ tbody td {
   .panel-launch,
   .panel-cash-forecast,
   .panel-debt-focus,
+  .panel-commitments,
   .panel-insights,
   .panel-cash-events,
   .panel-categories,

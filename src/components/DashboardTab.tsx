@@ -79,6 +79,13 @@ type DebtFocusCard = {
   projected12MonthInterestCost: number
 }
 
+type CommitmentSlice = {
+  id: 'bills' | 'cards' | 'loans' | 'subscriptions'
+  label: string
+  value: number
+  baselineValue: number | null
+}
+
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
 const toNonNegative = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(value, 0) : 0
@@ -215,6 +222,18 @@ export function DashboardTab({
     return `${sign}${Math.abs(delta).toFixed(0)} pts`
   }
 
+  const formatCommitmentDelta = (delta: number | null) => {
+    if (delta === null) return 'Trend n/a'
+    if (Math.abs(delta) < 0.005) return 'Flat vs last month'
+    const sign = delta >= 0 ? '+' : '-'
+    return `${sign}${formatMoney(Math.abs(delta))} vs last month`
+  }
+
+  const commitmentDeltaTone = (delta: number | null): ExecutiveMetric['tone'] => {
+    if (delta === null || Math.abs(delta) < 0.005) return 'neutral'
+    return delta < 0 ? 'good' : 'bad'
+  }
+
   const baseline = baselineSnapshot?.summary ?? null
   const netPositionDelta = baseline ? summary.netWorth - baseline.netWorth : null
   const baselineProjectedNet = baseline ? baseline.monthlyIncome - baseline.monthlyCommitments : null
@@ -222,6 +241,56 @@ export function DashboardTab({
   const runwayDelta = baseline ? summary.runwayMonths - baseline.runwayMonths : null
   const debtLoadDelta = baseline ? summary.totalLiabilities - baseline.totalLiabilities : null
   const healthDelta = null
+
+  const readOptionalBaselineNumber = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null
+
+  const commitmentSlices = useMemo<CommitmentSlice[]>(
+    () => [
+      {
+        id: 'bills',
+        label: 'Bills',
+        value: summary.monthlyBills,
+        baselineValue: readOptionalBaselineNumber(baseline?.monthlyBills),
+      },
+      {
+        id: 'cards',
+        label: 'Cards',
+        value: summary.monthlyCardSpend,
+        baselineValue: readOptionalBaselineNumber(baseline?.monthlyCardSpend),
+      },
+      {
+        id: 'loans',
+        label: 'Loan payments',
+        value: summary.monthlyLoanBasePayments,
+        baselineValue: readOptionalBaselineNumber(baseline?.monthlyLoanBasePayments),
+      },
+      {
+        id: 'subscriptions',
+        label: 'Subscriptions',
+        value: summary.monthlyLoanSubscriptionCosts,
+        baselineValue: readOptionalBaselineNumber(baseline?.monthlyLoanSubscriptionCosts),
+      },
+    ],
+    [
+      baseline?.monthlyBills,
+      baseline?.monthlyCardSpend,
+      baseline?.monthlyLoanBasePayments,
+      baseline?.monthlyLoanSubscriptionCosts,
+      summary.monthlyBills,
+      summary.monthlyCardSpend,
+      summary.monthlyLoanBasePayments,
+      summary.monthlyLoanSubscriptionCosts,
+    ],
+  )
+
+  const commitmentSliceTotal = useMemo(
+    () => roundCurrency(commitmentSlices.reduce((sum, slice) => sum + slice.value, 0)),
+    [commitmentSlices],
+  )
+
+  const totalCommitmentDelta = baseline ? summary.monthlyCommitments - baseline.monthlyCommitments : null
+  const totalCommitmentTone = commitmentDeltaTone(totalCommitmentDelta)
 
   const executiveMetrics: ExecutiveMetric[] = [
     {
@@ -667,6 +736,62 @@ export function DashboardTab({
               </p>
             </>
           )}
+        </article>
+
+        <article className="panel panel-commitments">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Commitments</p>
+              <h2>Monthly Commitments Breakdown</h2>
+            </div>
+            <p className="panel-value">{formatMoney(summary.monthlyCommitments)}</p>
+          </header>
+          <p className={`commitments-trend commitments-trend--${totalCommitmentTone}`}>
+            {formatCommitmentDelta(totalCommitmentDelta)}
+          </p>
+          <p className="subnote">
+            {baselineSnapshot
+              ? `Compared with ${monthLabel(baselineSnapshot.cycleKey)} close.`
+              : 'Run the monthly cycle again to unlock month-over-month trend context.'}
+          </p>
+          <div
+            className="commitments-stack"
+            role="img"
+            aria-label="Monthly commitments split across bills, cards, loan payments, and subscriptions"
+          >
+            {commitmentSlices.map((slice) => {
+              const width = commitmentSliceTotal > 0 ? (slice.value / commitmentSliceTotal) * 100 : 0
+              return (
+                <span
+                  key={`stack-${slice.id}`}
+                  className={`commitment-segment commitment-segment--${slice.id}`}
+                  style={{ '--segment-width': `${width}%` } as CSSProperties}
+                />
+              )
+            })}
+          </div>
+          <ul className="commitments-breakdown-list">
+            {commitmentSlices.map((slice) => {
+              const share = commitmentSliceTotal > 0 ? slice.value / commitmentSliceTotal : 0
+              const delta = slice.baselineValue === null ? null : slice.value - slice.baselineValue
+              const tone = commitmentDeltaTone(delta)
+              return (
+                <li key={slice.id}>
+                  <div className="commitments-breakdown-head">
+                    <p>
+                      <span className={`commitment-dot commitment-dot--${slice.id}`} />
+                      {slice.label}
+                    </p>
+                    <strong>{formatMoney(slice.value)}</strong>
+                  </div>
+                  <div className="commitments-breakdown-meta">
+                    <small>{formatPercent(share)} of commitments</small>
+                    <span className={`commitments-delta commitments-delta--${tone}`}>{formatCommitmentDelta(delta)}</span>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </article>
 
         <article className="panel panel-health">

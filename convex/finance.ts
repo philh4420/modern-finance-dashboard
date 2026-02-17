@@ -1349,14 +1349,14 @@ const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string
     (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
     0,
   )
-  const monthlyCardPayments = cards.reduce((sum, entry) => sum + estimateCardMonthlyPayment(entry), 0)
+  const monthlyCardSpend = cards.reduce((sum, entry) => sum + estimateCardMonthlyPayment(entry), 0)
   const monthlyLoanBasePayments = loans.reduce(
     (sum, entry) =>
       sum + toMonthlyAmount(finiteOrZero(entry.minimumPayment), entry.cadence, entry.customInterval, entry.customUnit),
     0,
   )
   const monthlyLoanSubscriptionCosts = loans.reduce((sum, entry) => sum + finiteOrZero(entry.subscriptionCost), 0)
-  const monthlyCommitments = monthlyBills + monthlyCardPayments + monthlyLoanBasePayments + monthlyLoanSubscriptionCosts
+  const monthlyCommitments = monthlyBills + monthlyCardSpend + monthlyLoanBasePayments + monthlyLoanSubscriptionCosts
 
   const cardUsedTotal = cards.reduce((sum, entry) => sum + finiteOrZero(entry.usedLimit), 0)
   const totalLoanBalance = loans.reduce((sum, entry) => sum + finiteOrZero(entry.balance), 0)
@@ -1394,6 +1394,10 @@ const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string
   return {
     monthlyIncome: roundCurrency(monthlyIncome),
     monthlyCommitments: roundCurrency(monthlyCommitments),
+    monthlyBills: roundCurrency(monthlyBills),
+    monthlyCardSpend: roundCurrency(monthlyCardSpend),
+    monthlyLoanBasePayments: roundCurrency(monthlyLoanBasePayments),
+    monthlyLoanSubscriptionCosts: roundCurrency(monthlyLoanSubscriptionCosts),
     totalLiabilities: roundCurrency(totalLiabilities),
     netWorth: roundCurrency(netWorth),
     runwayMonths: roundCurrency(runwayMonths),
