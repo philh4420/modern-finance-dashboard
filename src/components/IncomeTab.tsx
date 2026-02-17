@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { Fragment, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type {
   Cadence,
   CustomCadenceUnit,
@@ -7,6 +7,9 @@ import type {
   IncomeEntry,
   IncomeForm,
   IncomeId,
+  IncomePaymentCheckEntry,
+  IncomePaymentCheckId,
+  IncomePaymentStatus,
   CadenceOption,
 } from './financeTypes'
 import {
@@ -32,8 +35,104 @@ const parseOptionalMoneyInput = (value: string) => {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+type IncomePaymentReliability = {
+  total: number
+  onTime: number
+  late: number
+  missed: number
+  onTimeRate: number
+  lateStreak: number
+  missedStreak: number
+  lateOrMissedStreak: number
+  score: number | null
+  lastStatus: IncomePaymentStatus | null
+}
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+const reliabilityStatusLabel = (status: IncomePaymentStatus) => {
+  if (status === 'on_time') return 'On time'
+  if (status === 'late') return 'Late'
+  return 'Missed'
+}
+
+const reliabilityStatusPillClass = (status: IncomePaymentStatus) => {
+  if (status === 'on_time') return 'pill pill--good'
+  if (status === 'late') return 'pill pill--warning'
+  return 'pill pill--critical'
+}
+
+const calculateIncomePaymentReliability = (checks: IncomePaymentCheckEntry[]): IncomePaymentReliability => {
+  if (checks.length === 0) {
+    return {
+      total: 0,
+      onTime: 0,
+      late: 0,
+      missed: 0,
+      onTimeRate: 0,
+      lateStreak: 0,
+      missedStreak: 0,
+      lateOrMissedStreak: 0,
+      score: null,
+      lastStatus: null,
+    }
+  }
+
+  const sorted = [...checks].sort((left, right) => {
+    const byMonth = right.cycleMonth.localeCompare(left.cycleMonth)
+    if (byMonth !== 0) {
+      return byMonth
+    }
+    return right.updatedAt - left.updatedAt
+  })
+
+  const onTime = sorted.filter((entry) => entry.status === 'on_time').length
+  const late = sorted.filter((entry) => entry.status === 'late').length
+  const missed = sorted.filter((entry) => entry.status === 'missed').length
+  const total = sorted.length
+  const onTimeRate = total > 0 ? onTime / total : 0
+
+  const streakFor = (status: IncomePaymentStatus) => {
+    let streak = 0
+    for (const entry of sorted) {
+      if (entry.status !== status) {
+        break
+      }
+      streak += 1
+    }
+    return streak
+  }
+
+  let lateOrMissedStreak = 0
+  for (const entry of sorted) {
+    if (entry.status === 'on_time') {
+      break
+    }
+    lateOrMissedStreak += 1
+  }
+
+  const lateStreak = streakFor('late')
+  const missedStreak = streakFor('missed')
+  const scorePenalty = lateOrMissedStreak * 12 + missedStreak * 6
+  const score = clamp(Math.round(onTimeRate * 100 - scorePenalty), 0, 100)
+
+  return {
+    total,
+    onTime,
+    late,
+    missed,
+    onTimeRate,
+    lateStreak,
+    missedStreak,
+    lateOrMissedStreak,
+    score,
+    lastStatus: sorted[0]?.status ?? null,
+  }
+}
+
 type IncomeTabProps = {
   incomes: IncomeEntry[]
+  incomePaymentChecks: IncomePaymentCheckEntry[]
   monthlyIncome: number
   incomeForm: IncomeForm
   setIncomeForm: Dispatch<SetStateAction<IncomeForm>>
@@ -45,6 +144,15 @@ type IncomeTabProps = {
   onDeleteIncome: (id: IncomeId) => Promise<void>
   saveIncomeEdit: () => Promise<void>
   startIncomeEdit: (entry: IncomeEntry) => void
+  onUpsertIncomePaymentCheck: (input: {
+    incomeId: IncomeId
+    cycleMonth: string
+    status: IncomePaymentStatus
+    receivedDay: string
+    receivedAmount: string
+    note: string
+  }) => Promise<void>
+  onDeleteIncomePaymentCheck: (id: IncomePaymentCheckId) => Promise<void>
   cadenceOptions: CadenceOption[]
   customCadenceUnitOptions: CustomCadenceUnitOption[]
   isCustomCadence: (cadence: Cadence) => boolean
@@ -54,6 +162,7 @@ type IncomeTabProps = {
 
 export function IncomeTab({
   incomes,
+  incomePaymentChecks,
   monthlyIncome,
   incomeForm,
   setIncomeForm,
@@ -65,6 +174,8 @@ export function IncomeTab({
   onDeleteIncome,
   saveIncomeEdit,
   startIncomeEdit,
+  onUpsertIncomePaymentCheck,
+  onDeleteIncomePaymentCheck,
   cadenceOptions,
   customCadenceUnitOptions,
   isCustomCadence,
@@ -73,6 +184,21 @@ export function IncomeTab({
 }: IncomeTabProps) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<IncomeSortKey>('source_asc')
+  const currentCycleMonth = new Date().toISOString().slice(0, 7)
+  const [paymentLogIncomeId, setPaymentLogIncomeId] = useState<IncomeId | null>(null)
+  const [paymentLogDraft, setPaymentLogDraft] = useState<{
+    cycleMonth: string
+    status: IncomePaymentStatus
+    receivedDay: string
+    receivedAmount: string
+    note: string
+  }>({
+    cycleMonth: currentCycleMonth,
+    status: 'on_time',
+    receivedDay: '',
+    receivedAmount: '',
+    note: '',
+  })
 
   const formGrossAmount = parseOptionalMoneyInput(incomeForm.grossAmount)
   const formTaxAmount = parseOptionalMoneyInput(incomeForm.taxAmount)
@@ -119,6 +245,55 @@ export function IncomeTab({
 
   const trackedVarianceMonthly = roundCurrency(monthlyBreakdown.receivedActual - monthlyBreakdown.expectedTracked)
   const untrackedCount = Math.max(incomes.length - monthlyBreakdown.trackedCount, 0)
+
+  const paymentChecksByIncomeId = useMemo(() => {
+    const map = new Map<IncomeId, IncomePaymentCheckEntry[]>()
+    incomePaymentChecks.forEach((entry) => {
+      const current = map.get(entry.incomeId as IncomeId) ?? []
+      current.push(entry)
+      map.set(entry.incomeId as IncomeId, current)
+    })
+
+    map.forEach((entries, incomeId) => {
+      const sorted = [...entries].sort((left, right) => {
+        const byMonth = right.cycleMonth.localeCompare(left.cycleMonth)
+        if (byMonth !== 0) {
+          return byMonth
+        }
+        return right.updatedAt - left.updatedAt
+      })
+      map.set(incomeId, sorted)
+    })
+
+    return map
+  }, [incomePaymentChecks])
+
+  const overallReliability = useMemo(
+    () => calculateIncomePaymentReliability(incomePaymentChecks),
+    [incomePaymentChecks],
+  )
+
+  const openPaymentLog = (entry: IncomeEntry) => {
+    setPaymentLogIncomeId(entry._id)
+    setPaymentLogDraft({
+      cycleMonth: currentCycleMonth,
+      status: 'on_time',
+      receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
+      receivedAmount: entry.actualAmount !== undefined ? String(entry.actualAmount) : String(resolveIncomeNetAmount(entry)),
+      note: '',
+    })
+  }
+
+  const closePaymentLog = () => {
+    setPaymentLogIncomeId(null)
+    setPaymentLogDraft({
+      cycleMonth: currentCycleMonth,
+      status: 'on_time',
+      receivedDay: '',
+      receivedAmount: '',
+      note: '',
+    })
+  }
 
   const visibleIncomes = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -469,6 +644,16 @@ export function IncomeTab({
                 </strong>
                 <small>actual - planned for tracked sources</small>
               </div>
+              <div>
+                <p>Reliability score</p>
+                <strong>
+                  {overallReliability.score !== null ? `${overallReliability.score}/100` : 'n/a'}
+                </strong>
+                <small>
+                  {overallReliability.total} logs · {(overallReliability.onTimeRate * 100).toFixed(0)}% on-time ·{' '}
+                  {overallReliability.lateOrMissedStreak} late/missed streak
+                </small>
+              </div>
             </div>
             <div className="table-wrap table-wrap--card">
               <table className="data-table data-table--income" data-testid="income-table">
@@ -481,6 +666,7 @@ export function IncomeTab({
                     <th scope="col">Planned net</th>
                     <th scope="col">Actual paid</th>
                     <th scope="col">Variance</th>
+                    <th scope="col">Reliability</th>
                     <th scope="col">Frequency</th>
                     <th scope="col">Day</th>
                     <th scope="col">Notes</th>
@@ -520,9 +706,14 @@ export function IncomeTab({
                       editActualPaidAmount !== undefined && editPlannedNetAmount !== undefined
                         ? roundCurrency(editActualPaidAmount - editPlannedNetAmount)
                         : undefined
+                    const rowPaymentChecks = paymentChecksByIncomeId.get(entry._id) ?? []
+                    const rowReliability = calculateIncomePaymentReliability(rowPaymentChecks)
+                    const latestPaymentCheck = rowPaymentChecks[0] ?? null
+                    const isPaymentLogOpen = paymentLogIncomeId === entry._id
 
                     return (
-                      <tr key={entry._id} className={isEditing ? 'table-row--editing' : undefined}>
+                      <Fragment key={entry._id}>
+                        <tr className={isEditing ? 'table-row--editing' : undefined}>
                         <td>
                           {isEditing ? (
                             <input
@@ -681,6 +872,29 @@ export function IncomeTab({
                             <span className="pill pill--neutral">n/a</span>
                           )}
                         </td>
+                        <td className="income-reliability-cell">
+                          {rowReliability.total === 0 ? (
+                            <span className="pill pill--neutral">No logs</span>
+                          ) : (
+                            <div className="cell-stack">
+                              <strong>
+                                {rowReliability.score !== null ? `${rowReliability.score}/100` : 'n/a'} reliability
+                              </strong>
+                              <small>
+                                {(rowReliability.onTimeRate * 100).toFixed(0)}% on-time · {rowReliability.total} log
+                                {rowReliability.total === 1 ? '' : 's'}
+                              </small>
+                              <small>
+                                Late streak {rowReliability.lateStreak} · Missed streak {rowReliability.missedStreak}
+                              </small>
+                              {latestPaymentCheck ? (
+                                <span className={reliabilityStatusPillClass(latestPaymentCheck.status)}>
+                                  {latestPaymentCheck.cycleMonth} · {reliabilityStatusLabel(latestPaymentCheck.status)}
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
+                        </td>
                         <td>
                           {isEditing ? (
                             <div className="inline-cadence-controls">
@@ -798,13 +1012,22 @@ export function IncomeTab({
                                 </button>
                               </>
                             ) : (
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn--sm"
-                                onClick={() => startIncomeEdit(entry)}
-                              >
-                                Edit
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn--sm"
+                                  onClick={() => startIncomeEdit(entry)}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn--sm"
+                                  onClick={() => openPaymentLog(entry)}
+                                >
+                                  Log payment
+                                </button>
+                              </>
                             )}
                             <button
                               type="button"
@@ -815,7 +1038,161 @@ export function IncomeTab({
                             </button>
                           </div>
                         </td>
-                      </tr>
+                        </tr>
+                        {isPaymentLogOpen ? (
+                          <tr className="table-row--quick">
+                            <td colSpan={11}>
+                              <div className="income-payment-log-panel">
+                                <div className="income-payment-log-head">
+                                  <h3>Payment reliability log</h3>
+                                  <p>
+                                    Track on-time, late, and missed outcomes by month for <strong>{entry.source}</strong>.
+                                  </p>
+                                </div>
+
+                                <div className="income-payment-log-fields">
+                                  <label className="income-payment-log-field">
+                                    <span>Month</span>
+                                    <input
+                                      type="month"
+                                      value={paymentLogDraft.cycleMonth}
+                                      onChange={(event) =>
+                                        setPaymentLogDraft((prev) => ({
+                                          ...prev,
+                                          cycleMonth: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-payment-log-field">
+                                    <span>Status</span>
+                                    <select
+                                      value={paymentLogDraft.status}
+                                      onChange={(event) => {
+                                        const status = event.target.value as IncomePaymentStatus
+                                        setPaymentLogDraft((prev) => ({
+                                          ...prev,
+                                          status,
+                                          receivedDay: status === 'missed' ? '' : prev.receivedDay,
+                                          receivedAmount: status === 'missed' ? '' : prev.receivedAmount,
+                                        }))
+                                      }}
+                                    >
+                                      <option value="on_time">On time</option>
+                                      <option value="late">Late</option>
+                                      <option value="missed">Missed</option>
+                                    </select>
+                                  </label>
+
+                                  <label className="income-payment-log-field">
+                                    <span>Received day</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      max="31"
+                                      placeholder={entry.receivedDay ? `Expected day ${entry.receivedDay}` : 'Optional'}
+                                      value={paymentLogDraft.receivedDay}
+                                      onChange={(event) =>
+                                        setPaymentLogDraft((prev) => ({
+                                          ...prev,
+                                          receivedDay: event.target.value,
+                                        }))
+                                      }
+                                      disabled={paymentLogDraft.status === 'missed'}
+                                    />
+                                  </label>
+
+                                  <label className="income-payment-log-field">
+                                    <span>Received amount</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      placeholder="Optional"
+                                      value={paymentLogDraft.receivedAmount}
+                                      onChange={(event) =>
+                                        setPaymentLogDraft((prev) => ({
+                                          ...prev,
+                                          receivedAmount: event.target.value,
+                                        }))
+                                      }
+                                      disabled={paymentLogDraft.status === 'missed'}
+                                    />
+                                  </label>
+
+                                  <label className="income-payment-log-field income-payment-log-field--note">
+                                    <span>Note</span>
+                                    <input
+                                      type="text"
+                                      placeholder="Optional context"
+                                      value={paymentLogDraft.note}
+                                      onChange={(event) =>
+                                        setPaymentLogDraft((prev) => ({
+                                          ...prev,
+                                          note: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+                                </div>
+
+                                <p className="income-payment-log-hint">
+                                  If expected day is set and you mark <strong>On time</strong> with a later received day,
+                                  it will be normalized to <strong>Late</strong>.
+                                </p>
+
+                                <div className="income-payment-log-actions">
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary btn--sm"
+                                    onClick={() =>
+                                      void onUpsertIncomePaymentCheck({
+                                        incomeId: entry._id,
+                                        cycleMonth: paymentLogDraft.cycleMonth,
+                                        status: paymentLogDraft.status,
+                                        receivedDay: paymentLogDraft.receivedDay,
+                                        receivedAmount: paymentLogDraft.receivedAmount,
+                                        note: paymentLogDraft.note,
+                                      })
+                                    }
+                                  >
+                                    Save log
+                                  </button>
+                                  <button type="button" className="btn btn-ghost btn--sm" onClick={closePaymentLog}>
+                                    Close
+                                  </button>
+                                </div>
+
+                                {rowPaymentChecks.length > 0 ? (
+                                  <ul className="income-payment-log-history">
+                                    {rowPaymentChecks.slice(0, 6).map((paymentCheck) => (
+                                      <li key={paymentCheck._id}>
+                                        <span className={reliabilityStatusPillClass(paymentCheck.status)}>
+                                          {paymentCheck.cycleMonth} · {reliabilityStatusLabel(paymentCheck.status)}
+                                        </span>
+                                        <small>
+                                          {paymentCheck.receivedDay ? `Day ${paymentCheck.receivedDay}` : 'No day'} ·{' '}
+                                          {paymentCheck.receivedAmount !== undefined
+                                            ? formatMoney(paymentCheck.receivedAmount)
+                                            : 'No amount'}
+                                        </small>
+                                        <button
+                                          type="button"
+                                          className="btn btn-ghost btn--sm"
+                                          onClick={() => void onDeleteIncomePaymentCheck(paymentCheck._id)}
+                                        >
+                                          Remove
+                                        </button>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     )
                   })}
                 </tbody>

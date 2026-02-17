@@ -2378,7 +2378,7 @@ input[type='checkbox'] {
 }
 
 .data-table--income {
-  min-width: 64rem;
+  min-width: 76rem;
 }
 
 table {
@@ -2500,6 +2500,94 @@ tbody td {
   border-top: none;
   padding-top: 0.32rem;
   padding-bottom: 0.74rem;
+}
+
+.income-reliability-cell {
+  min-width: 14.5rem;
+}
+
+.income-payment-log-panel {
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 38%, transparent);
+  padding: 0.72rem 0.78rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.income-payment-log-head h3 {
+  margin: 0;
+  font-size: 0.94rem;
+  letter-spacing: -0.01em;
+}
+
+.income-payment-log-head p {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.income-payment-log-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.income-payment-log-field {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.income-payment-log-field span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.income-payment-log-field--note {
+  grid-column: span 2;
+}
+
+.income-payment-log-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.income-payment-log-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.income-payment-log-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.income-payment-log-history li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  border-top: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  padding-top: 0.44rem;
+}
+
+.income-payment-log-history li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.income-payment-log-history small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
 }
 
 .cards-quick-panel {
@@ -3187,6 +3275,14 @@ tbody td {
     grid-template-columns: 1fr;
   }
 
+  .income-payment-log-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .income-payment-log-field--note {
+    grid-column: 1 / -1;
+  }
+
   .cards-desktop-table {
     display: none;
   }
@@ -3232,6 +3328,10 @@ tbody td {
   }
 
   .cards-mobile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .income-payment-log-fields {
     grid-template-columns: 1fr;
   }
 

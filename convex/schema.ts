@@ -149,6 +149,7 @@ const consentType = v.union(v.literal('diagnostics'), v.literal('analytics'))
 const exportStatus = v.union(v.literal('processing'), v.literal('ready'), v.literal('failed'), v.literal('expired'))
 const deletionJobStatus = v.union(v.literal('running'), v.literal('completed'), v.literal('failed'))
 const cardMinimumPaymentType = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
+const incomePaymentStatus = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
 
 export default defineSchema({
   dashboardStates: defineTable({
@@ -188,6 +189,23 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  incomePaymentChecks: defineTable({
+    userId: v.string(),
+    incomeId: v.id('incomes'),
+    cycleMonth: v.string(),
+    status: incomePaymentStatus,
+    expectedDay: v.optional(v.number()),
+    receivedDay: v.optional(v.number()),
+    expectedAmount: v.number(),
+    receivedAmount: v.optional(v.number()),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_incomeId_cycleMonth', ['userId', 'incomeId', 'cycleMonth'])
+    .index('by_userId_cycleMonth', ['userId', 'cycleMonth']),
   bills: defineTable({
     userId: v.string(),
     name: v.string(),

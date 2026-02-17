@@ -1,7 +1,14 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
-import type { IncomeEditDraft, IncomeEntry, IncomeForm, IncomeId } from '../components/financeTypes'
+import type {
+  IncomeEditDraft,
+  IncomeEntry,
+  IncomeForm,
+  IncomeId,
+  IncomePaymentCheckId,
+  IncomePaymentStatus,
+} from '../components/financeTypes'
 import { isCustomCadence, parseCustomInterval, parseFloatInput, parseIntInput } from '../lib/financeHelpers'
 import type { MutationHandlers } from './useMutationFeedback'
 
@@ -99,6 +106,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
   const addIncome = useMutation(api.finance.addIncome)
   const updateIncome = useMutation(api.finance.updateIncome)
   const removeIncome = useMutation(api.finance.removeIncome)
+  const upsertIncomePaymentCheck = useMutation(api.finance.upsertIncomePaymentCheck)
+  const removeIncomePaymentCheck = useMutation(api.finance.removeIncomePaymentCheck)
 
   const [incomeForm, setIncomeForm] = useState<IncomeForm>(initialIncomeForm)
   const [incomeEditId, setIncomeEditId] = useState<IncomeId | null>(null)
@@ -188,6 +197,43 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
     }
   }
 
+  const onUpsertIncomePaymentCheck = async (input: {
+    incomeId: IncomeId
+    cycleMonth: string
+    status: IncomePaymentStatus
+    receivedDay: string
+    receivedAmount: string
+    note: string
+  }) => {
+    clearError()
+    try {
+      const cycleMonth = input.cycleMonth.trim()
+      if (!/^\d{4}-\d{2}$/.test(cycleMonth)) {
+        throw new Error('Cycle month must use YYYY-MM format.')
+      }
+
+      await upsertIncomePaymentCheck({
+        incomeId: input.incomeId,
+        cycleMonth,
+        status: input.status,
+        receivedDay: input.receivedDay.trim() ? parseIntInput(input.receivedDay, 'Received day') : undefined,
+        receivedAmount: parseOptionalNonNegativeFloat(input.receivedAmount, 'Received amount'),
+        note: input.note.trim() || undefined,
+      })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onDeleteIncomePaymentCheck = async (id: IncomePaymentCheckId) => {
+    clearError()
+    try {
+      await removeIncomePaymentCheck({ id })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
   return {
     incomeForm,
     setIncomeForm,
@@ -199,6 +245,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
     onDeleteIncome,
     startIncomeEdit,
     saveIncomeEdit,
+    onUpsertIncomePaymentCheck,
+    onDeleteIncomePaymentCheck,
     incomes,
   }
 }

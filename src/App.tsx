@@ -143,6 +143,7 @@ function App() {
   const preference = financeState?.data.preference ?? defaultPreference
 
   const incomes = financeState?.data.incomes ?? []
+  const incomePaymentChecks = financeState?.data.incomePaymentChecks ?? []
   const bills = financeState?.data.bills ?? []
   const cards = financeState?.data.cards ?? []
   const loans = financeState?.data.loans ?? []
@@ -354,6 +355,7 @@ function App() {
       summary,
       records: {
         incomes,
+        incomePaymentChecks,
         bills,
         cards,
         loans,
@@ -624,6 +626,7 @@ function App() {
 	        {activeTab === 'income' ? (
 	          <IncomeTab
 	            incomes={incomes}
+              incomePaymentChecks={incomePaymentChecks}
 	            monthlyIncome={summary.monthlyIncome}
 	            incomeForm={incomeSection.incomeForm}
 	            setIncomeForm={incomeSection.setIncomeForm}
@@ -635,6 +638,8 @@ function App() {
             onDeleteIncome={incomeSection.onDeleteIncome}
             saveIncomeEdit={incomeSection.saveIncomeEdit}
             startIncomeEdit={incomeSection.startIncomeEdit}
+            onUpsertIncomePaymentCheck={incomeSection.onUpsertIncomePaymentCheck}
+            onDeleteIncomePaymentCheck={incomeSection.onDeleteIncomePaymentCheck}
             cadenceOptions={cadenceOptions}
             customCadenceUnitOptions={customCadenceUnitOptions}
             isCustomCadence={isCustomCadence}
@@ -888,6 +893,7 @@ function App() {
               kpis={kpisState ?? null}
               monthCloseSnapshots={monthCloseSnapshots}
               incomes={incomes}
+              incomePaymentChecks={incomePaymentChecks}
               bills={bills}
               cards={cards}
               loans={loans}

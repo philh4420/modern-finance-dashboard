@@ -21,6 +21,7 @@ export type InsightSeverity = 'good' | 'warning' | 'critical'
 export type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 export type RuleMatchType = 'contains' | 'exact' | 'starts_with'
 export type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
+export type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 
 export type FinancePreference = {
   currency: string
@@ -57,6 +58,7 @@ export type Summary = {
 }
 
 export type IncomeEntry = Doc<'incomes'>
+export type IncomePaymentCheckEntry = Doc<'incomePaymentChecks'>
 export type BillEntry = Doc<'bills'>
 export type CardEntry = Doc<'cards'>
 export type LoanEntry = Doc<'loans'>
@@ -347,6 +349,7 @@ export type GoalPriorityOption = {
 }
 
 export type IncomeId = Id<'incomes'>
+export type IncomePaymentCheckId = Id<'incomePaymentChecks'>
 export type BillId = Id<'bills'>
 export type CardId = Id<'cards'>
 export type LoanId = Id<'loans'>

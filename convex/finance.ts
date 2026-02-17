@@ -32,6 +32,7 @@ const goalPriorityValidator = v.union(v.literal('low'), v.literal('medium'), v.l
 const cycleRunSourceValidator = v.union(v.literal('manual'), v.literal('automatic'))
 const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
 const cardMinimumPaymentTypeValidator = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
+const incomePaymentStatusValidator = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
@@ -39,6 +40,7 @@ type InsightSeverity = 'good' | 'warning' | 'critical'
 type CycleRunSource = 'manual' | 'automatic'
 type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
+type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 type LedgerEntryType =
   | 'purchase'
   | 'purchase_reversal'
@@ -1461,6 +1463,7 @@ export const getFinanceData = query({
         data: {
           preference: defaultPreference,
           incomes: [],
+          incomePaymentChecks: [],
           bills: [],
           cards: [],
           loans: [],
@@ -1483,6 +1486,7 @@ export const getFinanceData = query({
     const [
       preference,
       incomes,
+      incomePaymentChecks,
       bills,
       cards,
       loans,
@@ -1501,6 +1505,11 @@ export const getFinanceData = query({
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .collect(),
+      ctx.db
+        .query('incomePaymentChecks')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(240),
       ctx.db
         .query('bills')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -1665,6 +1674,7 @@ export const getFinanceData = query({
 
     const timestamps = [
       ...incomes.map((entry) => entry.createdAt),
+      ...incomePaymentChecks.map((entry) => entry.updatedAt ?? entry.createdAt),
       ...bills.map((entry) => entry.createdAt),
       ...cards.map((entry) => entry.createdAt),
       ...loans.map((entry) => entry.createdAt),
@@ -1686,6 +1696,7 @@ export const getFinanceData = query({
       data: {
         preference,
         incomes,
+        incomePaymentChecks,
         bills,
         cards,
         loans,
@@ -1984,6 +1995,13 @@ export const removeIncome = mutation({
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Income record not found.')
 
+    const existingPaymentChecks = await ctx.db
+      .query('incomePaymentChecks')
+      .withIndex('by_userId_incomeId_cycleMonth', (q) => q.eq('userId', identity.subject).eq('incomeId', args.id))
+      .collect()
+
+    await Promise.all(existingPaymentChecks.map((entry) => ctx.db.delete(entry._id)))
+
     await ctx.db.delete(args.id)
 
     await recordFinanceAuditEvent(ctx, {
@@ -1995,6 +2013,141 @@ export const removeIncome = mutation({
         source: existing.source,
         amount: existing.amount,
         cadence: existing.cadence,
+        removedPaymentChecks: existingPaymentChecks.length,
+      },
+    })
+  },
+})
+
+export const upsertIncomePaymentCheck = mutation({
+  args: {
+    incomeId: v.id('incomes'),
+    cycleMonth: v.string(),
+    status: incomePaymentStatusValidator,
+    receivedDay: v.optional(v.number()),
+    receivedAmount: v.optional(v.number()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateStatementMonth(args.cycleMonth, 'Cycle month')
+    validateOptionalText(args.note, 'Payment note', 800)
+
+    if (args.receivedDay !== undefined) {
+      validateDayOfMonth(args.receivedDay, 'Received day')
+    }
+    if (args.receivedAmount !== undefined) {
+      validateNonNegative(args.receivedAmount, 'Received amount')
+    }
+
+    if (args.status === 'missed' && (args.receivedDay !== undefined || args.receivedAmount !== undefined)) {
+      throw new Error('Missed payments cannot include received day or amount.')
+    }
+
+    const income = await ctx.db.get(args.incomeId)
+    ensureOwned(income, identity.subject, 'Income record not found.')
+
+    const expectedDay = income.receivedDay
+    const normalizedStatus: IncomePaymentStatus =
+      args.status === 'on_time' &&
+      expectedDay !== undefined &&
+      args.receivedDay !== undefined &&
+      args.receivedDay > expectedDay
+        ? 'late'
+        : args.status
+
+    const now = Date.now()
+    const expectedAmount = roundCurrency(resolveIncomeNetAmount(income))
+    const existing = await ctx.db
+      .query('incomePaymentChecks')
+      .withIndex('by_userId_incomeId_cycleMonth', (q) =>
+        q.eq('userId', identity.subject).eq('incomeId', args.incomeId).eq('cycleMonth', args.cycleMonth),
+      )
+      .first()
+
+    const nextData = {
+      cycleMonth: args.cycleMonth,
+      status: normalizedStatus,
+      expectedDay,
+      receivedDay: args.status === 'missed' ? undefined : args.receivedDay,
+      expectedAmount,
+      receivedAmount: args.status === 'missed' ? undefined : args.receivedAmount,
+      note: args.note?.trim() || undefined,
+      updatedAt: now,
+    }
+
+    if (existing) {
+      await ctx.db.patch(existing._id, nextData)
+
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'income_payment_check',
+        entityId: String(existing._id),
+        action: 'updated',
+        before: {
+          cycleMonth: existing.cycleMonth,
+          status: existing.status,
+          receivedDay: existing.receivedDay,
+          receivedAmount: existing.receivedAmount,
+          note: existing.note,
+        },
+        after: nextData,
+      })
+
+      return {
+        id: existing._id,
+        status: normalizedStatus,
+      }
+    }
+
+    const createdId = await ctx.db.insert('incomePaymentChecks', {
+      userId: identity.subject,
+      incomeId: args.incomeId,
+      createdAt: now,
+      ...nextData,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'income_payment_check',
+      entityId: String(createdId),
+      action: 'created',
+      after: {
+        incomeId: String(args.incomeId),
+        ...nextData,
+      },
+    })
+
+    return {
+      id: createdId,
+      status: normalizedStatus,
+    }
+  },
+})
+
+export const removeIncomePaymentCheck = mutation({
+  args: {
+    id: v.id('incomePaymentChecks'),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Income payment record not found.')
+
+    await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'income_payment_check',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        incomeId: String(existing.incomeId),
+        cycleMonth: existing.cycleMonth,
+        status: existing.status,
+        receivedDay: existing.receivedDay,
+        receivedAmount: existing.receivedAmount,
       },
     })
   },

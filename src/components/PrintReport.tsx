@@ -8,6 +8,8 @@ import type {
   FinancePreference,
   GoalEntry,
   IncomeEntry,
+  IncomePaymentCheckEntry,
+  IncomePaymentStatus,
   KpiSnapshot,
   LoanEntry,
   MonthCloseSnapshotEntry,
@@ -30,6 +32,7 @@ type PrintReportProps = {
   kpis: KpiSnapshot | null
   monthCloseSnapshots: MonthCloseSnapshotEntry[]
   incomes: IncomeEntry[]
+  incomePaymentChecks: IncomePaymentCheckEntry[]
   bills: BillEntry[]
   cards: CardEntry[]
   loans: LoanEntry[]
@@ -146,6 +149,88 @@ type PayoffCard = {
   utilization: number
   minimumDue: number
   plannedPayment: number
+}
+
+type IncomePaymentReliabilitySummary = {
+  total: number
+  onTime: number
+  late: number
+  missed: number
+  onTimeRate: number
+  lateStreak: number
+  missedStreak: number
+  lateOrMissedStreak: number
+  score: number | null
+  lastStatus: IncomePaymentStatus | null
+}
+
+const incomePaymentStatusLabel = (status: IncomePaymentStatus) => {
+  if (status === 'on_time') return 'On time'
+  if (status === 'late') return 'Late'
+  return 'Missed'
+}
+
+const calculateIncomePaymentReliability = (
+  entries: IncomePaymentCheckEntry[],
+): IncomePaymentReliabilitySummary => {
+  if (entries.length === 0) {
+    return {
+      total: 0,
+      onTime: 0,
+      late: 0,
+      missed: 0,
+      onTimeRate: 0,
+      lateStreak: 0,
+      missedStreak: 0,
+      lateOrMissedStreak: 0,
+      score: null,
+      lastStatus: null,
+    }
+  }
+
+  const sorted = [...entries].sort((left, right) => {
+    const byMonth = right.cycleMonth.localeCompare(left.cycleMonth)
+    if (byMonth !== 0) return byMonth
+    return right.updatedAt - left.updatedAt
+  })
+
+  const onTime = sorted.filter((entry) => entry.status === 'on_time').length
+  const late = sorted.filter((entry) => entry.status === 'late').length
+  const missed = sorted.filter((entry) => entry.status === 'missed').length
+  const total = sorted.length
+  const onTimeRate = total > 0 ? onTime / total : 0
+
+  const streakFor = (status: IncomePaymentStatus) => {
+    let streak = 0
+    for (const entry of sorted) {
+      if (entry.status !== status) break
+      streak += 1
+    }
+    return streak
+  }
+
+  let lateOrMissedStreak = 0
+  for (const entry of sorted) {
+    if (entry.status === 'on_time') break
+    lateOrMissedStreak += 1
+  }
+
+  const lateStreak = streakFor('late')
+  const missedStreak = streakFor('missed')
+  const score = clamp(Math.round(onTimeRate * 100 - lateOrMissedStreak * 12 - missedStreak * 6), 0, 100)
+
+  return {
+    total,
+    onTime,
+    late,
+    missed,
+    onTimeRate,
+    lateStreak,
+    missedStreak,
+    lateOrMissedStreak,
+    score,
+    lastStatus: sorted[0]?.status ?? null,
+  }
 }
 
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
@@ -362,6 +447,7 @@ export function PrintReport({
   kpis,
   monthCloseSnapshots,
   incomes,
+  incomePaymentChecks,
   bills,
   cards,
   loans,
@@ -474,6 +560,14 @@ export function PrintReport({
 
   const avgMonthlyPurchases = rangeMonths > 0 ? roundCurrency(purchasesTotal / rangeMonths) : 0
   const projectedMonthlyNetAfterPurchases = roundCurrency(summary.monthlyIncome - summary.monthlyCommitments - avgMonthlyPurchases)
+  const incomePaymentChecksByIncomeId = incomePaymentChecks.reduce((map, entry) => {
+    const key = String(entry.incomeId)
+    const current = map.get(key) ?? []
+    current.push(entry)
+    map.set(key, current)
+    return map
+  }, new Map<string, IncomePaymentCheckEntry[]>())
+  const overallIncomePaymentReliability = calculateIncomePaymentReliability(incomePaymentChecks)
   const incomeExpectations = incomes.reduce(
     (totals, income) => {
       const plannedNet = resolveIncomeNetAmount(income)
@@ -775,6 +869,29 @@ export function PrintReport({
                   </strong>
                   <small>{incomePendingCount} pending actual value{incomePendingCount === 1 ? '' : 's'}</small>
                 </div>
+                <div className="print-kpi">
+                  <p>Payment reliability score</p>
+                  <strong>
+                    {overallIncomePaymentReliability.score !== null
+                      ? `${overallIncomePaymentReliability.score}/100`
+                      : 'n/a'}
+                  </strong>
+                  <small>
+                    {(overallIncomePaymentReliability.onTimeRate * 100).toFixed(0)}% on-time ·{' '}
+                    {overallIncomePaymentReliability.total} log
+                    {overallIncomePaymentReliability.total === 1 ? '' : 's'}
+                  </small>
+                </div>
+                <div className="print-kpi">
+                  <p>Late/missed streaks</p>
+                  <strong>
+                    {overallIncomePaymentReliability.lateStreak} late ·{' '}
+                    {overallIncomePaymentReliability.missedStreak} missed
+                  </strong>
+                  <small>
+                    Current combined late/missed streak: {overallIncomePaymentReliability.lateOrMissedStreak}
+                  </small>
+                </div>
               </div>
 
               <div className="print-table-wrap">
@@ -787,6 +904,8 @@ export function PrintReport({
                       <th scope="col">Planned Net</th>
                       <th scope="col">Actual Paid</th>
                       <th scope="col">Variance</th>
+                      <th scope="col">Reliability</th>
+                      <th scope="col">Latest Status</th>
                       <th scope="col">Cadence</th>
                       <th scope="col">Received</th>
                       {config.includeNotes ? <th scope="col">Notes</th> : null}
@@ -803,6 +922,8 @@ export function PrintReport({
                           : undefined
                       const varianceAmount =
                         actualPaidAmount !== undefined ? roundCurrency(actualPaidAmount - netAmount) : undefined
+                      const paymentHistory = incomePaymentChecksByIncomeId.get(String(income._id)) ?? []
+                      const reliability = calculateIncomePaymentReliability(paymentHistory)
 
                       return (
                         <tr key={income._id}>
@@ -812,6 +933,16 @@ export function PrintReport({
                           <td className="table-amount">{formatMoney(netAmount)}</td>
                           <td className="table-amount">{actualPaidAmount !== undefined ? formatMoney(actualPaidAmount) : 'n/a'}</td>
                           <td className="table-amount">{varianceAmount !== undefined ? formatMoney(varianceAmount) : 'n/a'}</td>
+                          <td>
+                            {reliability.score !== null
+                              ? `${reliability.score}/100 · ${(reliability.onTimeRate * 100).toFixed(0)}% on-time`
+                              : 'n/a'}
+                          </td>
+                          <td>
+                            {reliability.lastStatus
+                              ? `${incomePaymentStatusLabel(reliability.lastStatus)} · late ${reliability.lateStreak} · missed ${reliability.missedStreak}`
+                              : 'n/a'}
+                          </td>
                           <td>{income.cadence}</td>
                           <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
                           {config.includeNotes ? <td>{income.notes ?? ''}</td> : null}
