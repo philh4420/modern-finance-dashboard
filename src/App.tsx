@@ -146,6 +146,7 @@ function App() {
   const incomePaymentChecks = financeState?.data.incomePaymentChecks ?? []
   const incomeChangeEvents = financeState?.data.incomeChangeEvents ?? []
   const bills = financeState?.data.bills ?? []
+  const billPaymentChecks = financeState?.data.billPaymentChecks ?? []
   const cards = financeState?.data.cards ?? []
   const loans = financeState?.data.loans ?? []
   const purchases = financeState?.data.purchases ?? []
@@ -375,6 +376,7 @@ function App() {
         incomes,
         incomePaymentChecks,
         bills,
+        billPaymentChecks,
         cards,
         loans,
         purchases,
@@ -675,6 +677,7 @@ function App() {
 	          <BillsTab
             accounts={accounts}
 	            bills={bills}
+            billPaymentChecks={billPaymentChecks}
 	            monthlyBills={summary.monthlyBills}
 	            billForm={billsSection.billForm}
 	            setBillForm={billsSection.setBillForm}
@@ -684,6 +687,8 @@ function App() {
             setBillEditDraft={billsSection.setBillEditDraft}
             onAddBill={billsSection.onAddBill}
             onDeleteBill={billsSection.onDeleteBill}
+            onUpsertBillPaymentCheck={billsSection.onUpsertBillPaymentCheck}
+            onDeleteBillPaymentCheck={billsSection.onDeleteBillPaymentCheck}
             saveBillEdit={billsSection.saveBillEdit}
             startBillEdit={billsSection.startBillEdit}
             cadenceOptions={cadenceOptions}

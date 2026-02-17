@@ -260,6 +260,21 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  billPaymentChecks: defineTable({
+    userId: v.string(),
+    billId: v.id('bills'),
+    cycleMonth: v.string(),
+    expectedAmount: v.number(),
+    actualAmount: v.optional(v.number()),
+    varianceAmount: v.optional(v.number()),
+    paidDay: v.optional(v.number()),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_billId_cycleMonth', ['userId', 'billId', 'cycleMonth']),
   cards: defineTable({
     userId: v.string(),
     name: v.string(),

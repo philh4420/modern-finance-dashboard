@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
-import type { BillEditDraft, BillEntry, BillForm, BillId } from '../components/financeTypes'
+import type { BillEditDraft, BillEntry, BillForm, BillId, BillPaymentCheckId } from '../components/financeTypes'
 import { isCustomCadence, parseCustomInterval, parseFloatInput, parseIntInput } from '../lib/financeHelpers'
 import type { MutationHandlers } from './useMutationFeedback'
 
@@ -35,6 +35,8 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
   const addBill = useMutation(api.finance.addBill)
   const updateBill = useMutation(api.finance.updateBill)
   const removeBill = useMutation(api.finance.removeBill)
+  const upsertBillPaymentCheck = useMutation(api.finance.upsertBillPaymentCheck)
+  const removeBillPaymentCheck = useMutation(api.finance.removeBillPaymentCheck)
 
   const [billForm, setBillForm] = useState<BillForm>(initialBillForm)
   const [billEditId, setBillEditId] = useState<BillId | null>(null)
@@ -116,6 +118,45 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
     }
   }
 
+  const onUpsertBillPaymentCheck = async (args: {
+    billId: BillId
+    cycleMonth: string
+    expectedAmount: string
+    actualAmount?: string
+    paidDay?: string
+    note?: string
+  }) => {
+    clearError()
+    try {
+      const expectedAmount = parseFloatInput(args.expectedAmount, 'Planned amount')
+      const actualAmountText = args.actualAmount?.trim() ?? ''
+      const paidDayText = args.paidDay?.trim() ?? ''
+
+      const actualAmount = actualAmountText.length > 0 ? parseFloatInput(actualAmountText, 'Actual paid amount') : undefined
+      const paidDay = paidDayText.length > 0 ? parseIntInput(paidDayText, 'Paid day') : undefined
+
+      await upsertBillPaymentCheck({
+        billId: args.billId,
+        cycleMonth: args.cycleMonth.trim(),
+        expectedAmount,
+        actualAmount,
+        paidDay,
+        note: args.note?.trim() || undefined,
+      })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onDeleteBillPaymentCheck = async (id: BillPaymentCheckId) => {
+    clearError()
+    try {
+      await removeBillPaymentCheck({ id })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
   return {
     billForm,
     setBillForm,
@@ -125,6 +166,8 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
     setBillEditDraft,
     onAddBill,
     onDeleteBill,
+    onUpsertBillPaymentCheck,
+    onDeleteBillPaymentCheck,
     startBillEdit,
     saveBillEdit,
     bills,

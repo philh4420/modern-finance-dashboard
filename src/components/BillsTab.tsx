@@ -1,10 +1,12 @@
-import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { Fragment, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type {
   AccountEntry,
   BillEditDraft,
   BillEntry,
   BillForm,
   BillId,
+  BillPaymentCheckEntry,
+  BillPaymentCheckId,
   Cadence,
   CadenceOption,
   CustomCadenceUnit,
@@ -75,9 +77,26 @@ const isVariableBill = (entry: BillEntry) => {
   return entry.cadence === 'custom' || entry.cadence === 'weekly' || entry.cadence === 'biweekly'
 }
 
+const formatVarianceTrendLabel = (variance: number) => {
+  if (variance > 0.005) return 'above plan trend'
+  if (variance < -0.005) return 'below plan trend'
+  return 'on-plan trend'
+}
+
+type BillPaymentLogDraft = {
+  cycleMonth: string
+  expectedAmount: string
+  actualAmount: string
+  paidDay: string
+  note: string
+}
+
+const billTableColumnCount = 8
+
 type BillsTabProps = {
   accounts: AccountEntry[]
   bills: BillEntry[]
+  billPaymentChecks: BillPaymentCheckEntry[]
   monthlyBills: number
   billForm: BillForm
   setBillForm: Dispatch<SetStateAction<BillForm>>
@@ -87,6 +106,15 @@ type BillsTabProps = {
   setBillEditDraft: Dispatch<SetStateAction<BillEditDraft>>
   onAddBill: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
   onDeleteBill: (id: BillId) => Promise<void>
+  onUpsertBillPaymentCheck: (args: {
+    billId: BillId
+    cycleMonth: string
+    expectedAmount: string
+    actualAmount?: string
+    paidDay?: string
+    note?: string
+  }) => Promise<void>
+  onDeleteBillPaymentCheck: (id: BillPaymentCheckId) => Promise<void>
   saveBillEdit: () => Promise<void>
   startBillEdit: (entry: BillEntry) => void
   cadenceOptions: CadenceOption[]
@@ -99,6 +127,7 @@ type BillsTabProps = {
 export function BillsTab({
   accounts,
   bills,
+  billPaymentChecks,
   monthlyBills,
   billForm,
   setBillForm,
@@ -108,6 +137,8 @@ export function BillsTab({
   setBillEditDraft,
   onAddBill,
   onDeleteBill,
+  onUpsertBillPaymentCheck,
+  onDeleteBillPaymentCheck,
   saveBillEdit,
   startBillEdit,
   cadenceOptions,
@@ -119,10 +150,52 @@ export function BillsTab({
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<BillSortKey>('name_asc')
   const [timelineWindowDays, setTimelineWindowDays] = useState<14 | 30>(14)
+  const [paymentLogBillId, setPaymentLogBillId] = useState<BillId | null>(null)
+  const [paymentLogDraft, setPaymentLogDraft] = useState<BillPaymentLogDraft>(() => ({
+    cycleMonth: new Date().toISOString().slice(0, 7),
+    expectedAmount: '',
+    actualAmount: '',
+    paidDay: '',
+    note: '',
+  }))
   const timelineDateFormatter = useMemo(
     () => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }),
     [],
   )
+
+  const billPaymentChecksByBillId = useMemo(() => {
+    const map = new Map<BillId, BillPaymentCheckEntry[]>()
+    billPaymentChecks.forEach((entry) => {
+      const key = entry.billId as BillId
+      const current = map.get(key) ?? []
+      current.push(entry)
+      map.set(key, current)
+    })
+
+    map.forEach((entries, key) => {
+      const sorted = [...entries].sort((left, right) =>
+        right.cycleMonth.localeCompare(left.cycleMonth, undefined, { sensitivity: 'base' }),
+      )
+      map.set(key, sorted)
+    })
+
+    return map
+  }, [billPaymentChecks])
+
+  const openPaymentLog = (entry: BillEntry) => {
+    setPaymentLogBillId(entry._id)
+    setPaymentLogDraft({
+      cycleMonth: new Date().toISOString().slice(0, 7),
+      expectedAmount: String(entry.amount),
+      actualAmount: '',
+      paidDay: String(entry.dueDay),
+      note: '',
+    })
+  }
+
+  const closePaymentLog = () => {
+    setPaymentLogBillId(null)
+  }
 
   const visibleBills = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -234,6 +307,22 @@ export function BillsTab({
       variableVariancePercent,
     }
   }, [bills, monthlyBills])
+
+  const billVarianceOverview = useMemo(() => {
+    const entriesWithVariance = billPaymentChecks.filter((entry) => typeof entry.varianceAmount === 'number')
+    const recentEntries = [...entriesWithVariance]
+      .sort((left, right) => right.cycleMonth.localeCompare(left.cycleMonth, undefined, { sensitivity: 'base' }))
+      .slice(0, 24)
+
+    const totalVariance = recentEntries.reduce((sum, entry) => sum + (entry.varianceAmount ?? 0), 0)
+    const averageVariance = recentEntries.length > 0 ? totalVariance / recentEntries.length : 0
+
+    return {
+      recentEntries,
+      totalVariance,
+      averageVariance,
+    }
+  }, [billPaymentChecks])
 
   const timelineData = useMemo(() => {
     const today = startOfDay(new Date())
@@ -581,6 +670,27 @@ export function BillsTab({
                     : 'Tag notes with "variable" or use custom/weekly cadence to track variability'}
                 </small>
               </article>
+              <article className="bills-summary-card">
+                <p>Expected vs actual trend</p>
+                <strong
+                  className={
+                    billVarianceOverview.averageVariance > 0.005
+                      ? 'amount-negative'
+                      : billVarianceOverview.averageVariance < -0.005
+                        ? 'amount-positive'
+                        : undefined
+                  }
+                >
+                  {billVarianceOverview.recentEntries.length > 0
+                    ? formatMoney(billVarianceOverview.averageVariance)
+                    : 'n/a'}
+                </strong>
+                <small>
+                  {billVarianceOverview.recentEntries.length > 0
+                    ? `${formatVarianceTrendLabel(billVarianceOverview.averageVariance)} across ${billVarianceOverview.recentEntries.length} logs`
+                    : 'No bill cycle logs yet'}
+                </small>
+              </article>
             </section>
 
             <section className="bills-timeline" aria-label="Bills due-date timeline">
@@ -679,6 +789,7 @@ export function BillsTab({
                       <th scope="col">Due Day</th>
                       <th scope="col">Frequency</th>
                       <th scope="col">Autopay</th>
+                      <th scope="col">Expected vs actual</th>
                       <th scope="col">Notes</th>
                       <th scope="col">Action</th>
                     </tr>
@@ -686,197 +797,436 @@ export function BillsTab({
                   <tbody>
                     {visibleBills.map((entry) => {
                       const isEditing = billEditId === entry._id
+                      const isPaymentLogOpen = paymentLogBillId === entry._id
+                      const rowPaymentChecks = billPaymentChecksByBillId.get(entry._id) ?? []
+                      const latestPaymentCheck = rowPaymentChecks[0] ?? null
+                      const recentVarianceChecks = rowPaymentChecks
+                        .filter((paymentCheck) => typeof paymentCheck.varianceAmount === 'number')
+                        .slice(0, 3)
+                      const averageVariance =
+                        recentVarianceChecks.length > 0
+                          ? recentVarianceChecks.reduce((sum, paymentCheck) => sum + (paymentCheck.varianceAmount ?? 0), 0) /
+                            recentVarianceChecks.length
+                          : 0
 
                       return (
-                        <tr key={entry._id} className={isEditing ? 'table-row--editing' : undefined}>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                className="inline-input"
-                                value={billEditDraft.name}
-                                onChange={(event) =>
-                                  setBillEditDraft((prev) => ({
-                                    ...prev,
-                                    name: event.target.value,
-                                  }))
-                                }
-                              />
-                            ) : (
-                              entry.name
-                            )}
-                          </td>
-                          <td className="table-amount amount-negative">
-                            {isEditing ? (
-                              <input
-                                className="inline-input"
-                                type="number"
-                                inputMode="decimal"
-                                min="0.01"
-                                step="0.01"
-                                value={billEditDraft.amount}
-                                onChange={(event) =>
-                                  setBillEditDraft((prev) => ({
-                                    ...prev,
-                                    amount: event.target.value,
-                                  }))
-                                }
-                              />
-                            ) : (
-                              formatMoney(entry.amount)
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                className="inline-input"
-                                type="number"
-                                inputMode="numeric"
-                                min="1"
-                                max="31"
-                                value={billEditDraft.dueDay}
-                                onChange={(event) =>
-                                  setBillEditDraft((prev) => ({
-                                    ...prev,
-                                    dueDay: event.target.value,
-                                  }))
-                                }
-                              />
-                            ) : (
-                              <span className="pill pill--neutral">Day {entry.dueDay}</span>
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <div className="inline-cadence-controls">
-                                <select
-                                  className="inline-select"
-                                  value={billEditDraft.cadence}
+                        <Fragment key={entry._id}>
+                          <tr className={isEditing ? 'table-row--editing' : undefined}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  value={billEditDraft.name}
                                   onChange={(event) =>
                                     setBillEditDraft((prev) => ({
                                       ...prev,
-                                      cadence: event.target.value as Cadence,
-                                      customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                                      name: event.target.value,
                                     }))
                                   }
-                                >
-                                  {cadenceOptions.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                {isCustomCadence(billEditDraft.cadence) ? (
-                                  <>
-                                    <input
-                                      className="inline-input inline-cadence-number"
-                                      type="number"
-                                      inputMode="numeric"
-                                      min="1"
-                                      step="1"
-                                      value={billEditDraft.customInterval}
-                                      onChange={(event) =>
-                                        setBillEditDraft((prev) => ({
-                                          ...prev,
-                                          customInterval: event.target.value,
-                                        }))
-                                      }
-                                    />
-                                    <select
-                                      className="inline-select inline-cadence-unit"
-                                      value={billEditDraft.customUnit}
-                                      onChange={(event) =>
-                                        setBillEditDraft((prev) => ({
-                                          ...prev,
-                                          customUnit: event.target.value as CustomCadenceUnit,
-                                        }))
+                                />
+                              ) : (
+                                entry.name
+                              )}
+                            </td>
+                            <td className="table-amount amount-negative">
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={billEditDraft.amount}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      amount: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                formatMoney(entry.amount)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  inputMode="numeric"
+                                  min="1"
+                                  max="31"
+                                  value={billEditDraft.dueDay}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      dueDay: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                <span className="pill pill--neutral">Day {entry.dueDay}</span>
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <div className="inline-cadence-controls">
+                                  <select
+                                    className="inline-select"
+                                    value={billEditDraft.cadence}
+                                    onChange={(event) =>
+                                      setBillEditDraft((prev) => ({
+                                        ...prev,
+                                        cadence: event.target.value as Cadence,
+                                        customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                                      }))
+                                    }
+                                  >
+                                    {cadenceOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {isCustomCadence(billEditDraft.cadence) ? (
+                                    <>
+                                      <input
+                                        className="inline-input inline-cadence-number"
+                                        type="number"
+                                        inputMode="numeric"
+                                        min="1"
+                                        step="1"
+                                        value={billEditDraft.customInterval}
+                                        onChange={(event) =>
+                                          setBillEditDraft((prev) => ({
+                                            ...prev,
+                                            customInterval: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                      <select
+                                        className="inline-select inline-cadence-unit"
+                                        value={billEditDraft.customUnit}
+                                        onChange={(event) =>
+                                          setBillEditDraft((prev) => ({
+                                            ...prev,
+                                            customUnit: event.target.value as CustomCadenceUnit,
+                                          }))
+                                        }
+                                      >
+                                        {customCadenceUnitOptions.map((option) => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <span className="pill pill--cadence">
+                                  {cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)}
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  aria-label="Autopay enabled"
+                                  type="checkbox"
+                                  checked={billEditDraft.autopay}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      autopay: event.target.checked,
+                                    }))
+                                  }
+                                />
+                              ) : entry.autopay ? (
+                                <span className="pill pill--good">Autopay</span>
+                              ) : (
+                                <span className="pill pill--neutral">Manual</span>
+                              )}
+                            </td>
+                            <td>
+                              {rowPaymentChecks.length === 0 ? (
+                                <span className="pill pill--neutral">No cycle logs</span>
+                              ) : (
+                                <div className="cell-stack">
+                                  <small>
+                                    {latestPaymentCheck?.cycleMonth ?? 'Latest'} · planned{' '}
+                                    {formatMoney(latestPaymentCheck?.expectedAmount ?? entry.amount)}
+                                  </small>
+                                  <small>
+                                    actual{' '}
+                                    {latestPaymentCheck?.actualAmount !== undefined
+                                      ? formatMoney(latestPaymentCheck.actualAmount)
+                                      : 'n/a'}
+                                  </small>
+                                  {latestPaymentCheck?.varianceAmount !== undefined ? (
+                                    <small
+                                      className={
+                                        latestPaymentCheck.varianceAmount > 0
+                                          ? 'amount-negative'
+                                          : latestPaymentCheck.varianceAmount < 0
+                                            ? 'amount-positive'
+                                            : undefined
                                       }
                                     >
-                                      {customCadenceUnitOptions.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                          {option.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </>
-                                ) : null}
-                              </div>
-                            ) : (
-                              <span className="pill pill--cadence">
-                                {cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)}
-                              </span>
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                aria-label="Autopay enabled"
-                                type="checkbox"
-                                checked={billEditDraft.autopay}
-                                onChange={(event) =>
-                                  setBillEditDraft((prev) => ({
-                                    ...prev,
-                                    autopay: event.target.checked,
-                                  }))
-                                }
-                              />
-                            ) : entry.autopay ? (
-                              <span className="pill pill--good">Autopay</span>
-                            ) : (
-                              <span className="pill pill--neutral">Manual</span>
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                className="inline-input"
-                                value={billEditDraft.notes}
-                                onChange={(event) =>
-                                  setBillEditDraft((prev) => ({
-                                    ...prev,
-                                    notes: event.target.value,
-                                  }))
-                                }
-                              />
-                            ) : (
-                              <span className="cell-truncate" title={entry.notes ?? ''}>
-                                {entry.notes ?? '-'}
-                              </span>
-                            )}
-                          </td>
-                          <td>
-                            <div className="row-actions">
+                                      variance {formatMoney(latestPaymentCheck.varianceAmount)}
+                                    </small>
+                                  ) : (
+                                    <small>variance n/a</small>
+                                  )}
+                                  {recentVarianceChecks.length > 1 ? (
+                                    <small
+                                      className={
+                                        averageVariance > 0.005
+                                          ? 'amount-negative'
+                                          : averageVariance < -0.005
+                                            ? 'amount-positive'
+                                            : undefined
+                                      }
+                                    >
+                                      {recentVarianceChecks.length}-cycle avg {formatMoney(averageVariance)}
+                                    </small>
+                                  ) : null}
+                                </div>
+                              )}
+                            </td>
+                            <td>
                               {isEditing ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    className="btn btn-secondary btn--sm"
-                                    onClick={() => void saveBillEdit()}
-                                  >
-                                    Save
-                                  </button>
-                                  <button type="button" className="btn btn-ghost btn--sm" onClick={() => setBillEditId(null)}>
-                                    Cancel
-                                  </button>
-                                </>
+                                <input
+                                  className="inline-input"
+                                  value={billEditDraft.notes}
+                                  onChange={(event) =>
+                                    setBillEditDraft((prev) => ({
+                                      ...prev,
+                                      notes: event.target.value,
+                                    }))
+                                  }
+                                />
                               ) : (
+                                <span className="cell-truncate" title={entry.notes ?? ''}>
+                                  {entry.notes ?? '-'}
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn btn-secondary btn--sm"
+                                      onClick={() => void saveBillEdit()}
+                                    >
+                                      Save
+                                    </button>
+                                    <button type="button" className="btn btn-ghost btn--sm" onClick={() => setBillEditId(null)}>
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn btn-secondary btn--sm"
+                                      onClick={() => {
+                                        closePaymentLog()
+                                        startBillEdit(entry)
+                                      }}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost btn--sm"
+                                      onClick={() => (isPaymentLogOpen ? closePaymentLog() : openPaymentLog(entry))}
+                                    >
+                                      {isPaymentLogOpen ? 'Close log' : 'Log cycle'}
+                                    </button>
+                                  </>
+                                )}
                                 <button
                                   type="button"
-                                  className="btn btn-secondary btn--sm"
-                                  onClick={() => startBillEdit(entry)}
+                                  className="btn btn-ghost btn--sm"
+                                  onClick={() => {
+                                    if (paymentLogBillId === entry._id) {
+                                      closePaymentLog()
+                                    }
+                                    void onDeleteBill(entry._id)
+                                  }}
                                 >
-                                  Edit
+                                  Remove
                                 </button>
-                              )}
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn--sm"
-                                onClick={() => void onDeleteBill(entry._id)}
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
+                              </div>
+                            </td>
+                          </tr>
+                          {isPaymentLogOpen ? (
+                            <tr className="table-row--quick">
+                              <td colSpan={billTableColumnCount}>
+                                <div className="income-payment-log-panel bill-cycle-log-panel">
+                                  <div className="income-payment-log-head">
+                                    <h3>Expected vs actual cycle log</h3>
+                                    <p>
+                                      Capture planned and actual bill payments by cycle for <strong>{entry.name}</strong>.
+                                    </p>
+                                  </div>
+
+                                  <div className="income-payment-log-fields">
+                                    <label className="income-payment-log-field">
+                                      <span>Cycle month</span>
+                                      <input
+                                        type="month"
+                                        value={paymentLogDraft.cycleMonth}
+                                        onChange={(event) =>
+                                          setPaymentLogDraft((prev) => ({
+                                            ...prev,
+                                            cycleMonth: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                    </label>
+
+                                    <label className="income-payment-log-field">
+                                      <span>Planned amount</span>
+                                      <input
+                                        type="number"
+                                        min="0.01"
+                                        step="0.01"
+                                        inputMode="decimal"
+                                        value={paymentLogDraft.expectedAmount}
+                                        onChange={(event) =>
+                                          setPaymentLogDraft((prev) => ({
+                                            ...prev,
+                                            expectedAmount: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                    </label>
+
+                                    <label className="income-payment-log-field">
+                                      <span>Actual paid</span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        inputMode="decimal"
+                                        placeholder="Optional"
+                                        value={paymentLogDraft.actualAmount}
+                                        onChange={(event) =>
+                                          setPaymentLogDraft((prev) => ({
+                                            ...prev,
+                                            actualAmount: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                    </label>
+
+                                    <label className="income-payment-log-field">
+                                      <span>Paid day</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="31"
+                                        placeholder="Optional"
+                                        value={paymentLogDraft.paidDay}
+                                        onChange={(event) =>
+                                          setPaymentLogDraft((prev) => ({
+                                            ...prev,
+                                            paidDay: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                    </label>
+
+                                    <label className="income-payment-log-field income-payment-log-field--note">
+                                      <span>Note</span>
+                                      <input
+                                        type="text"
+                                        placeholder="Optional context"
+                                        value={paymentLogDraft.note}
+                                        onChange={(event) =>
+                                          setPaymentLogDraft((prev) => ({
+                                            ...prev,
+                                            note: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                    </label>
+                                  </div>
+
+                                  <p className="income-payment-log-hint">
+                                    Variance is saved as <strong>actual - planned</strong>; positive means over plan, negative means under plan.
+                                  </p>
+
+                                  <div className="income-payment-log-actions">
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary btn--sm"
+                                      onClick={() =>
+                                        void onUpsertBillPaymentCheck({
+                                          billId: entry._id,
+                                          cycleMonth: paymentLogDraft.cycleMonth,
+                                          expectedAmount: paymentLogDraft.expectedAmount,
+                                          actualAmount: paymentLogDraft.actualAmount,
+                                          paidDay: paymentLogDraft.paidDay,
+                                          note: paymentLogDraft.note,
+                                        })
+                                      }
+                                    >
+                                      Save cycle log
+                                    </button>
+                                    <button type="button" className="btn btn-ghost btn--sm" onClick={closePaymentLog}>
+                                      Close
+                                    </button>
+                                  </div>
+
+                                  {rowPaymentChecks.length > 0 ? (
+                                    <ul className="income-payment-log-history">
+                                      {rowPaymentChecks.slice(0, 8).map((paymentCheck) => (
+                                        <li key={paymentCheck._id}>
+                                          <span className="pill pill--neutral">{paymentCheck.cycleMonth}</span>
+                                          <small>
+                                            planned {formatMoney(paymentCheck.expectedAmount)} · actual{' '}
+                                            {paymentCheck.actualAmount !== undefined
+                                              ? formatMoney(paymentCheck.actualAmount)
+                                              : 'n/a'}
+                                          </small>
+                                          <small
+                                            className={
+                                              paymentCheck.varianceAmount !== undefined
+                                                ? paymentCheck.varianceAmount > 0
+                                                  ? 'amount-negative'
+                                                  : paymentCheck.varianceAmount < 0
+                                                    ? 'amount-positive'
+                                                    : undefined
+                                                : undefined
+                                            }
+                                          >
+                                            variance{' '}
+                                            {paymentCheck.varianceAmount !== undefined
+                                              ? formatMoney(paymentCheck.varianceAmount)
+                                              : 'n/a'}{' '}
+                                            · {paymentCheck.paidDay ? `day ${paymentCheck.paidDay}` : 'no paid day'}
+                                          </small>
+                                          <button
+                                            type="button"
+                                            className="btn btn-ghost btn--sm"
+                                            onClick={() => void onDeleteBillPaymentCheck(paymentCheck._id)}
+                                          >
+                                            Remove
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
                       )
                     })}
                   </tbody>

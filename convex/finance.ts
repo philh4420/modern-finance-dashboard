@@ -1551,6 +1551,7 @@ export const getFinanceData = query({
           incomePaymentChecks: [],
           incomeChangeEvents: [],
           bills: [],
+          billPaymentChecks: [],
           cards: [],
           loans: [],
           purchases: [],
@@ -1575,6 +1576,7 @@ export const getFinanceData = query({
       incomePaymentChecks,
       incomeChangeEvents,
       bills,
+      billPaymentChecks,
       cards,
       loans,
       purchases,
@@ -1607,6 +1609,11 @@ export const getFinanceData = query({
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .collect(),
+      ctx.db
+        .query('billPaymentChecks')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(360),
       ctx.db
         .query('cards')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -1769,6 +1776,7 @@ export const getFinanceData = query({
       ...incomePaymentChecks.map((entry) => entry.updatedAt ?? entry.createdAt),
       ...incomeChangeEvents.map((entry) => entry.createdAt),
       ...bills.map((entry) => entry.createdAt),
+      ...billPaymentChecks.map((entry) => entry.updatedAt ?? entry.createdAt),
       ...cards.map((entry) => entry.createdAt),
       ...loans.map((entry) => entry.createdAt),
       ...purchases.map((entry) => entry.createdAt),
@@ -1792,6 +1800,7 @@ export const getFinanceData = query({
         incomePaymentChecks,
         incomeChangeEvents,
         bills,
+        billPaymentChecks,
         cards,
         loans,
         purchases,
@@ -2562,6 +2571,170 @@ export const removeIncomePaymentCheck = mutation({
   },
 })
 
+const upsertBillPaymentCheckRecord = async (
+  ctx: MutationCtx,
+  args: {
+    userId: string
+    input: {
+      billId: Id<'bills'>
+      cycleMonth: string
+      expectedAmount: number
+      actualAmount?: number
+      paidDay?: number
+      note?: string
+    }
+    metadata?: unknown
+  },
+) => {
+  const cycleMonth = args.input.cycleMonth.trim()
+  validateStatementMonth(cycleMonth, 'Cycle month')
+  validatePositive(args.input.expectedAmount, 'Planned amount')
+  validateOptionalText(args.input.note, 'Bill cycle note', 800)
+
+  if (args.input.actualAmount !== undefined) {
+    validateNonNegative(args.input.actualAmount, 'Actual paid amount')
+  }
+  if (args.input.paidDay !== undefined) {
+    validateDayOfMonth(args.input.paidDay, 'Paid day')
+  }
+
+  const bill = await ctx.db.get(args.input.billId)
+  ensureOwned(bill, args.userId, 'Bill record not found.')
+
+  const expectedAmount = roundCurrency(args.input.expectedAmount)
+  const actualAmount =
+    args.input.actualAmount === undefined ? undefined : roundCurrency(Math.max(args.input.actualAmount, 0))
+  const varianceAmount = actualAmount === undefined ? undefined : roundCurrency(actualAmount - expectedAmount)
+  const note = args.input.note?.trim() || undefined
+  const now = Date.now()
+
+  const existing = await ctx.db
+    .query('billPaymentChecks')
+    .withIndex('by_userId_billId_cycleMonth', (q) =>
+      q.eq('userId', args.userId).eq('billId', args.input.billId).eq('cycleMonth', cycleMonth),
+    )
+    .first()
+
+  const nextData = {
+    cycleMonth,
+    expectedAmount,
+    actualAmount,
+    varianceAmount,
+    paidDay: args.input.paidDay,
+    note,
+    updatedAt: now,
+  }
+
+  if (existing) {
+    await ctx.db.patch(existing._id, nextData)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: args.userId,
+      entityType: 'bill_payment_check',
+      entityId: String(existing._id),
+      action: 'updated',
+      before: {
+        billId: String(existing.billId),
+        cycleMonth: existing.cycleMonth,
+        expectedAmount: existing.expectedAmount,
+        actualAmount: existing.actualAmount,
+        varianceAmount: existing.varianceAmount,
+        paidDay: existing.paidDay,
+        note: existing.note,
+      },
+      after: {
+        billId: String(args.input.billId),
+        ...nextData,
+      },
+      metadata: args.metadata,
+    })
+
+    return {
+      id: existing._id,
+      action: 'updated' as const,
+    }
+  }
+
+  const createdId = await ctx.db.insert('billPaymentChecks', {
+    userId: args.userId,
+    billId: args.input.billId,
+    createdAt: now,
+    ...nextData,
+  })
+
+  await recordFinanceAuditEvent(ctx, {
+    userId: args.userId,
+    entityType: 'bill_payment_check',
+    entityId: String(createdId),
+    action: 'created',
+    after: {
+      billId: String(args.input.billId),
+      ...nextData,
+    },
+    metadata: args.metadata,
+  })
+
+  return {
+    id: createdId,
+    action: 'created' as const,
+  }
+}
+
+export const upsertBillPaymentCheck = mutation({
+  args: {
+    billId: v.id('bills'),
+    cycleMonth: v.string(),
+    expectedAmount: v.number(),
+    actualAmount: v.optional(v.number()),
+    paidDay: v.optional(v.number()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const result = await upsertBillPaymentCheckRecord(ctx, {
+      userId: identity.subject,
+      input: args,
+      metadata: {
+        mode: 'single',
+      },
+    })
+
+    return {
+      id: result.id,
+      action: result.action,
+    }
+  },
+})
+
+export const removeBillPaymentCheck = mutation({
+  args: {
+    id: v.id('billPaymentChecks'),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Bill cycle record not found.')
+
+    await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'bill_payment_check',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        billId: String(existing.billId),
+        cycleMonth: existing.cycleMonth,
+        expectedAmount: existing.expectedAmount,
+        actualAmount: existing.actualAmount,
+        varianceAmount: existing.varianceAmount,
+        paidDay: existing.paidDay,
+        note: existing.note,
+      },
+    })
+  },
+})
+
 export const addBill = mutation({
   args: {
     name: v.string(),
@@ -2683,6 +2856,17 @@ export const removeBill = mutation({
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Bill record not found.')
 
+    const existingChecks = await ctx.db
+      .query('billPaymentChecks')
+      .withIndex('by_userId_billId_cycleMonth', (q) =>
+        q.eq('userId', identity.subject).eq('billId', args.id),
+      )
+      .collect()
+
+    if (existingChecks.length > 0) {
+      await Promise.all(existingChecks.map((entry) => ctx.db.delete(entry._id)))
+    }
+
     await ctx.db.delete(args.id)
 
     await recordFinanceAuditEvent(ctx, {
@@ -2695,6 +2879,7 @@ export const removeBill = mutation({
         amount: existing.amount,
         dueDay: existing.dueDay,
         cadence: existing.cadence,
+        removedCycleLogs: existingChecks.length,
       },
     })
   },
