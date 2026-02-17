@@ -96,12 +96,83 @@ type NetWorthCategory = {
   baselineValue: number | null
 }
 
+type RiskSeverity = 'critical' | 'warning' | 'watch'
+
+type RiskCenterAlert = {
+  id: string
+  severity: RiskSeverity
+  source: 'due_soon' | 'utilization' | 'payment_interest' | 'reconciliation'
+  title: string
+  detail: string
+  daysAway?: number
+}
+
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
 const toNonNegative = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(value, 0) : 0
 const clampPercent = (value: number) => Math.min(Math.max(value, 0), 100)
 const normalizeCardMinimumPaymentType = (value: CardMinimumPaymentType | undefined | null): CardMinimumPaymentType =>
   value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed'
+const utilizationFor = (used: number, limit: number) => (limit > 0 ? used / limit : 0)
+const toDayOfMonth = (value: number | null | undefined, fallback = 21) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  const rounded = Math.trunc(value)
+  if (rounded < 1) return 1
+  if (rounded > 31) return 31
+  return rounded
+}
+const atMidnight = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate())
+const daysBetween = (from: Date, to: Date) => {
+  const delta = atMidnight(to).getTime() - atMidnight(from).getTime()
+  return Math.max(Math.round(delta / 86_400_000), 0)
+}
+const dueTimingForDay = (dueDay: number) => {
+  const now = new Date()
+  const today = atMidnight(now)
+  const daysInThisMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  const dueThisMonth = new Date(now.getFullYear(), now.getMonth(), Math.min(dueDay, daysInThisMonth))
+  const dueApplied = dueThisMonth <= today
+
+  if (!dueApplied) {
+    return {
+      dueApplied: false,
+      dueInDays: daysBetween(today, dueThisMonth),
+    }
+  }
+
+  const daysInNextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 0).getDate()
+  const nextDueDate = new Date(now.getFullYear(), now.getMonth() + 1, Math.min(dueDay, daysInNextMonth))
+  return {
+    dueApplied: true,
+    dueInDays: daysBetween(today, nextDueDate),
+  }
+}
+const utilizationSeverityFor = (utilization: number): RiskSeverity | null => {
+  if (utilization >= 0.9) return 'critical'
+  if (utilization >= 0.5) return 'warning'
+  if (utilization >= 0.3) return 'watch'
+  return null
+}
+const riskSeverityRank: Record<RiskSeverity, number> = {
+  critical: 3,
+  warning: 2,
+  watch: 1,
+}
+const upcomingEventTypeLabel = (event: UpcomingCashEvent['type']) => {
+  switch (event) {
+    case 'income':
+      return 'Income'
+    case 'bill':
+      return 'Bill'
+    case 'card':
+      return 'Card due'
+    case 'loan':
+      return 'Loan payment'
+    default:
+      return 'Cash event'
+  }
+}
+const formatDueCountdown = (days: number) => (days <= 0 ? 'Due today' : `Due in ${days} day${days === 1 ? '' : 's'}`)
 
 const projectDebtFocusCard = (card: CardEntry): DebtFocusCard => {
   const currentBalance = toNonNegative(card.usedLimit)
@@ -540,18 +611,18 @@ export function DashboardTab({
     return formatPercent(value)
   }
 
-  const upcomingEventTypeLabel = (event: UpcomingCashEvent['type']) => {
-    switch (event) {
-      case 'income':
-        return 'Income'
-      case 'bill':
-        return 'Bill'
-      case 'card':
-        return 'Card due'
-      case 'loan':
-        return 'Loan payment'
+  const riskCenterSourceLabel = (source: RiskCenterAlert['source']) => {
+    switch (source) {
+      case 'due_soon':
+        return 'Due soon'
+      case 'utilization':
+        return 'Utilization'
+      case 'payment_interest':
+        return 'Payment vs interest'
+      case 'reconciliation':
+        return 'Reconciliation'
       default:
-        return 'Cash event'
+        return 'Risk signal'
     }
   }
 
@@ -673,6 +744,135 @@ export function DashboardTab({
     [debtCardsWithBalance],
   )
 
+  const riskCenterAlerts = useMemo<RiskCenterAlert[]>(() => {
+    const alerts: RiskCenterAlert[] = []
+
+    upcomingCashEvents
+      .filter((event) => event.type !== 'income' && event.daysAway <= 14)
+      .forEach((event) => {
+        const severity: RiskSeverity = event.daysAway <= 1 ? 'critical' : event.daysAway <= 3 ? 'warning' : 'watch'
+        alerts.push({
+          id: `due-${event.id}`,
+          severity,
+          source: 'due_soon',
+          title: `${event.label}: ${formatDueCountdown(event.daysAway)}`,
+          detail: `${upcomingEventTypeLabel(event.type)} ${formatMoney(event.amount)} · ${dateLabel.format(
+            new Date(`${event.date}T00:00:00`),
+          )}`,
+          daysAway: event.daysAway,
+        })
+      })
+
+    cards.forEach((card) => {
+      const creditLimit = toNonNegative(card.creditLimit)
+      const currentBalance = toNonNegative(card.usedLimit)
+      const statementBalance = toNonNegative(card.statementBalance ?? card.usedLimit)
+      const pendingCharges = toNonNegative(card.pendingCharges ?? Math.max(currentBalance - statementBalance, 0))
+      const monthlyRate = toNonNegative(card.interestRate) > 0 ? toNonNegative(card.interestRate) / 100 / 12 : 0
+      const minimumPaymentType = normalizeCardMinimumPaymentType(card.minimumPaymentType)
+      const minimumPayment = toNonNegative(card.minimumPayment)
+      const minimumPaymentPercent = clampPercent(toNonNegative(card.minimumPaymentPercent))
+      const extraPayment = toNonNegative(card.extraPayment)
+      const interestAmount = roundCurrency(statementBalance * monthlyRate)
+      const newStatementBalance = roundCurrency(statementBalance + interestAmount)
+      const minimumDueRaw =
+        minimumPaymentType === 'percent_plus_interest'
+          ? statementBalance * (minimumPaymentPercent / 100) + interestAmount
+          : minimumPayment
+      const minimumDue = roundCurrency(Math.min(newStatementBalance, Math.max(minimumDueRaw, 0)))
+      const plannedPayment = roundCurrency(Math.min(newStatementBalance, minimumDue + extraPayment))
+      const dueAdjustedCurrent = roundCurrency(Math.max(newStatementBalance - plannedPayment, 0) + pendingCharges)
+      const dueTiming = dueTimingForDay(toDayOfMonth(card.dueDay, 21))
+      const displayCurrentBalance = dueTiming.dueApplied ? dueAdjustedCurrent : currentBalance
+      const displayAvailableCredit = roundCurrency(creditLimit - displayCurrentBalance)
+      const displayUtilization = utilizationFor(displayCurrentBalance, creditLimit)
+
+      const utilizationSeverity = utilizationSeverityFor(displayUtilization)
+      if (utilizationSeverity) {
+        alerts.push({
+          id: `util-${card._id}`,
+          severity: utilizationSeverity,
+          source: 'utilization',
+          title: `${card.name}: ${formatPercent(displayUtilization)} utilization`,
+          detail: `Threshold >30/50/90 · available credit ${formatMoney(displayAvailableCredit)}`,
+        })
+      }
+
+      if (plannedPayment + 0.01 < interestAmount) {
+        alerts.push({
+          id: `interest-${card._id}`,
+          severity: 'critical',
+          source: 'payment_interest',
+          title: `${card.name}: payment below interest`,
+          detail: `Planned ${formatMoney(plannedPayment)} is below monthly interest ${formatMoney(interestAmount)}.`,
+        })
+      }
+    })
+
+    const pendingReconciliation = Math.max(summary.pendingPurchases, 0)
+    if (pendingReconciliation > 0) {
+      const pendingSeverity: RiskSeverity = pendingReconciliation >= 12 ? 'critical' : pendingReconciliation >= 6 ? 'warning' : 'watch'
+      alerts.push({
+        id: 'reconcile-pending',
+        severity: pendingSeverity,
+        source: 'reconciliation',
+        title: `${pendingReconciliation} purchase${pendingReconciliation === 1 ? '' : 's'} pending reconciliation`,
+        detail: `${summary.reconciledPurchases} reconciled · ${summary.postedPurchases} posted`,
+      })
+    }
+
+    const unreconciledPosted = Math.max(summary.postedPurchases - summary.reconciledPurchases, 0)
+    if (unreconciledPosted > 0 && summary.postedPurchases > 0) {
+      const reconciliationCompletion = summary.reconciledPurchases / summary.postedPurchases
+      const completionSeverity: RiskSeverity =
+        reconciliationCompletion < 0.7 ? 'critical' : reconciliationCompletion < 0.9 ? 'warning' : 'watch'
+
+      alerts.push({
+        id: 'reconcile-gap',
+        severity: completionSeverity,
+        source: 'reconciliation',
+        title: `${unreconciledPosted} posted purchase${unreconciledPosted === 1 ? '' : 's'} not reconciled`,
+        detail: `${formatPercent(reconciliationCompletion)} completion across posted purchases`,
+      })
+    }
+
+    return alerts.sort((left, right) => {
+      const severityDiff = riskSeverityRank[right.severity] - riskSeverityRank[left.severity]
+      if (severityDiff !== 0) return severityDiff
+
+      if (left.source === 'due_soon' && right.source === 'due_soon') {
+        const leftDays = left.daysAway ?? Number.POSITIVE_INFINITY
+        const rightDays = right.daysAway ?? Number.POSITIVE_INFINITY
+        if (leftDays !== rightDays) return leftDays - rightDays
+      }
+
+      return left.title.localeCompare(right.title, undefined, { sensitivity: 'base' })
+    })
+  }, [
+    cards,
+    dateLabel,
+    formatMoney,
+    formatPercent,
+    summary.pendingPurchases,
+    summary.postedPurchases,
+    summary.reconciledPurchases,
+    upcomingCashEvents,
+  ])
+
+  const riskCenterSummary = useMemo(
+    () => ({
+      total: riskCenterAlerts.length,
+      critical: riskCenterAlerts.filter((alert) => alert.severity === 'critical').length,
+      warning: riskCenterAlerts.filter((alert) => alert.severity === 'warning').length,
+      watch: riskCenterAlerts.filter((alert) => alert.severity === 'watch').length,
+      dueSoon: riskCenterAlerts.filter((alert) => alert.source === 'due_soon').length,
+      utilization: riskCenterAlerts.filter((alert) => alert.source === 'utilization').length,
+      paymentVsInterest: riskCenterAlerts.filter((alert) => alert.source === 'payment_interest').length,
+      reconciliation: riskCenterAlerts.filter((alert) => alert.source === 'reconciliation').length,
+    }),
+    [riskCenterAlerts],
+  )
+
   return (
     <>
       <section className="executive-strip" aria-label="Executive summary strip">
@@ -771,6 +971,57 @@ export function DashboardTab({
             </li>
           </ul>
           <p className="subnote">For production CSP enforcement, see docs in `docs/DEPLOYMENT.md`.</p>
+        </article>
+
+        <article className="panel panel-risk-center">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Risk Center</p>
+              <h2>High-Visibility Alerts</h2>
+            </div>
+            <p className="panel-value">{riskCenterSummary.total} active</p>
+          </header>
+          <div className="risk-center-summary-grid">
+            <article className="risk-center-summary-card risk-center-summary-card--critical">
+              <p>Critical</p>
+              <strong>{riskCenterSummary.critical}</strong>
+            </article>
+            <article className="risk-center-summary-card risk-center-summary-card--warning">
+              <p>Warning</p>
+              <strong>{riskCenterSummary.warning}</strong>
+            </article>
+            <article className="risk-center-summary-card risk-center-summary-card--watch">
+              <p>Watch</p>
+              <strong>{riskCenterSummary.watch}</strong>
+            </article>
+            <article className="risk-center-summary-card risk-center-summary-card--signals">
+              <p>Signals</p>
+              <strong>
+                {riskCenterSummary.dueSoon} due · {riskCenterSummary.utilization} util · {riskCenterSummary.paymentVsInterest}{' '}
+                pay/interest · {riskCenterSummary.reconciliation} reconciliation
+              </strong>
+            </article>
+          </div>
+          {riskCenterAlerts.length === 0 ? (
+            <p className="empty-state">No active risk alerts. Due dates, utilization, and reconciliation look healthy right now.</p>
+          ) : (
+            <ul className="risk-center-list">
+              {riskCenterAlerts.slice(0, 14).map((alert) => (
+                <li key={alert.id} className={`risk-center-item risk-center-item--${alert.severity}`}>
+                  <div className="risk-center-item-head">
+                    <p>{alert.title}</p>
+                    <span className={`pill risk-center-pill risk-center-pill--${alert.severity}`}>{alert.severity}</span>
+                  </div>
+                  <small>
+                    {riskCenterSourceLabel(alert.source)} · {alert.detail}
+                  </small>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="subnote">
+            Alerts cover due-soon timelines, utilization tiers (&gt;30/50/90), payment-below-interest, and reconciliation gaps.
+          </p>
         </article>
 
         <article className="panel panel-cash-forecast">

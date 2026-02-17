@@ -513,6 +513,14 @@ h2 {
   grid-column: span 5;
 }
 
+.panel-risk-center {
+  grid-column: span 12;
+  background:
+    radial-gradient(150% 180% at 100% -30%, color-mix(in oklab, var(--tone-negative) 12%, transparent), transparent 66%),
+    radial-gradient(130% 120% at 0% 0%, color-mix(in oklab, var(--tone-warning) 11%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+}
+
 .panel-cash-forecast {
   grid-column: span 7;
 }
@@ -956,6 +964,132 @@ h2 {
 
 .commitments-delta--neutral {
   color: var(--tone-neutral);
+}
+
+.risk-center-summary-grid {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.risk-center-summary-card {
+  border-radius: 0.86rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.55rem 0.62rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.risk-center-summary-card p {
+  margin: 0;
+  font-size: 0.73rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.risk-center-summary-card strong {
+  font-size: 1.06rem;
+  letter-spacing: -0.016em;
+}
+
+.risk-center-summary-card--critical {
+  border-color: color-mix(in oklab, var(--tone-negative) 34%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-negative) 11%, white 89%);
+}
+
+.risk-center-summary-card--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 36%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-warning) 11%, white 89%);
+}
+
+.risk-center-summary-card--watch {
+  border-color: color-mix(in oklab, var(--tone-finance) 34%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 10%, white 90%);
+}
+
+.risk-center-summary-card--signals {
+  border-color: color-mix(in oklab, var(--tone-savings) 30%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-savings) 10%, white 90%);
+}
+
+.risk-center-summary-card--signals strong {
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.risk-center-list {
+  list-style: none;
+  margin: 0.72rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.risk-center-item {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.6rem 0.64rem;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.risk-center-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.risk-center-item-head p {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.risk-center-item small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.risk-center-item--critical {
+  border-color: color-mix(in oklab, var(--tone-negative) 34%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-negative) 8%, white 92%);
+}
+
+.risk-center-item--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 36%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-warning) 8%, white 92%);
+}
+
+.risk-center-item--watch {
+  border-color: color-mix(in oklab, var(--tone-finance) 34%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 8%, white 92%);
+}
+
+.risk-center-pill {
+  text-transform: uppercase;
+}
+
+.risk-center-pill--critical {
+  border-color: color-mix(in oklab, var(--tone-negative) 34%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-negative) 16%, white 84%);
+  color: color-mix(in oklab, var(--tone-negative) 75%, black 25%);
+}
+
+.risk-center-pill--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 36%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-warning) 16%, white 84%);
+  color: color-mix(in oklab, var(--tone-warning) 75%, black 25%);
+}
+
+.risk-center-pill--watch {
+  border-color: color-mix(in oklab, var(--tone-finance) 34%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 14%, white 86%);
+  color: color-mix(in oklab, var(--tone-finance) 74%, black 26%);
 }
 
 .net-worth-trend {
@@ -2760,6 +2894,7 @@ tbody td {
   .panel-health,
   .panel-trust-kpis,
   .panel-launch,
+  .panel-risk-center,
   .panel-cash-forecast,
   .panel-debt-focus,
   .panel-commitments,
@@ -2821,8 +2956,13 @@ tbody td {
 
   .insight-list li,
   .timeline-list li,
-  .forecast-risk-list li {
+  .forecast-risk-list li,
+  .risk-center-item-head {
     flex-direction: column;
+  }
+
+  .risk-center-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .net-worth-summary-grid {
