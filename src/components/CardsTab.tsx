@@ -54,6 +54,7 @@ type CardCycleProjection = {
   displayAvailableCredit: number
   displayUtilization: number
   dueDay: number
+  dueInDays: number
   dueApplied: boolean
   plannedSpend: number
 }
@@ -69,6 +70,15 @@ type PayoffCard = {
   plannedPayment: number
 }
 
+type RiskSeverity = 'watch' | 'warning' | 'critical'
+
+type CardRiskAlert = {
+  id: string
+  severity: RiskSeverity
+  title: string
+  detail: string
+}
+
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
 
 const toNonNegativeNumber = (value: number | undefined | null) =>
@@ -81,6 +91,31 @@ const toDayOfMonth = (value: number | undefined | null, fallback: number) => {
   return fallback
 }
 
+const daysBetween = (from: Date, to: Date) => Math.round((to.getTime() - from.getTime()) / 86400000)
+
+const dueTimingForDay = (dueDay: number) => {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  const daysInThisMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  const dueThisMonth = new Date(now.getFullYear(), now.getMonth(), Math.min(dueDay, daysInThisMonth))
+  const dueApplied = dueThisMonth <= today
+
+  if (!dueApplied) {
+    return {
+      dueApplied: false,
+      dueInDays: daysBetween(today, dueThisMonth),
+    }
+  }
+
+  const daysInNextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 0).getDate()
+  const nextDueDate = new Date(now.getFullYear(), now.getMonth() + 1, Math.min(dueDay, daysInNextMonth))
+  return {
+    dueApplied: true,
+    dueInDays: daysBetween(today, nextDueDate),
+  }
+}
+
 const utilizationFor = (used: number, limit: number) => (limit > 0 ? used / limit : 0)
 const normalizeCardMinimumPaymentType = (value: CardMinimumPaymentType | undefined | null): CardMinimumPaymentType =>
   value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed'
@@ -91,6 +126,15 @@ const describeMinimumConfig = (projection: CardCycleProjection) =>
     : `Fixed ${projection.configuredMinimumPayment.toFixed(2)}`
 const getOverpayPriority = (entry: PayoffCard, strategy: PayoffStrategy) =>
   strategy === 'avalanche' ? entry.apr : -entry.balance
+const formatDueCountdown = (days: number) =>
+  days <= 0 ? 'Due today' : `Due in ${days} day${days === 1 ? '' : 's'}`
+
+const utilizationSeverityFor = (utilization: number): RiskSeverity | null => {
+  if (utilization >= 0.9) return 'critical'
+  if (utilization >= 0.5) return 'warning'
+  if (utilization >= 0.3) return 'watch'
+  return null
+}
 
 const rankPayoffCards = (rows: PayoffCard[], strategy: PayoffStrategy) =>
   [...rows].sort((left, right) => {
@@ -171,7 +215,6 @@ const projectCardCycle = (
     interestRate?: number
     dueDay?: number
   },
-  todayDay: number,
 ): CardCycleProjection => {
   const limit = toNonNegativeNumber(input.creditLimit)
   const currentInput = toNonNegativeNumber(input.usedLimit)
@@ -206,7 +249,8 @@ const projectCardCycle = (
     plannedSpend,
     months: 12,
   })
-  const dueApplied = todayDay >= dueDay
+  const dueTiming = dueTimingForDay(dueDay)
+  const dueApplied = dueTiming.dueApplied
   const displayCurrentBalance = dueApplied ? dueAdjustedCurrent : currentInput
   const displayAvailableCredit = roundCurrency(limit - displayCurrentBalance)
   const displayUtilization = utilizationFor(displayCurrentBalance, limit)
@@ -232,6 +276,7 @@ const projectCardCycle = (
     displayAvailableCredit,
     displayUtilization,
     dueDay,
+    dueInDays: dueTiming.dueInDays,
     dueApplied,
     plannedSpend,
   }
@@ -259,7 +304,6 @@ export function CardsTab({
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<CardSortKey>('name_asc')
   const [payoffStrategy, setPayoffStrategy] = useState<PayoffStrategy>('avalanche')
-  const todayDay = new Date().getDate()
 
   const pillVariantForUtil = (ratio: number) => {
     if (ratio >= 0.9) return 'pill--critical'
@@ -285,10 +329,9 @@ export function CardsTab({
             interestRate: entry.interestRate,
             dueDay: entry.dueDay,
           },
-          todayDay,
         ),
       })),
-    [cards, todayDay],
+    [cards],
   )
 
   const estimatedMinimumDueTotal = useMemo(
@@ -359,6 +402,65 @@ export function CardsTab({
   const extraPaymentsPool = useMemo(
     () => cardRows.reduce((sum, row) => sum + roundCurrency(Math.max(row.projection.extraPayment, 0)), 0),
     [cardRows],
+  )
+
+  const riskAlerts = useMemo<CardRiskAlert[]>(() => {
+    const alerts: CardRiskAlert[] = []
+
+    cardRows.forEach(({ entry, projection }) => {
+      if (projection.displayCurrentBalance > 0 && projection.dueInDays <= 14) {
+        const dueSeverity: RiskSeverity =
+          projection.dueInDays <= 1 ? 'critical' : projection.dueInDays <= 3 ? 'warning' : 'watch'
+        alerts.push({
+          id: `due-${entry._id}`,
+          severity: dueSeverity,
+          title: `${entry.name}: ${formatDueCountdown(projection.dueInDays)}`,
+          detail: `Due day ${projection.dueDay} · planned payment ${formatMoney(projection.plannedPayment)}`,
+        })
+      }
+
+      const utilizationSeverity = utilizationSeverityFor(projection.displayUtilization)
+      if (utilizationSeverity) {
+        alerts.push({
+          id: `util-${entry._id}`,
+          severity: utilizationSeverity,
+          title: `${entry.name}: utilization ${formatPercent(projection.displayUtilization)}`,
+          detail: `Threshold hit (>30/50/90) · available credit ${formatMoney(projection.displayAvailableCredit)}`,
+        })
+      }
+
+      if (projection.plannedPayment + 0.01 < projection.interestAmount) {
+        alerts.push({
+          id: `interest-${entry._id}`,
+          severity: 'critical',
+          title: `${entry.name}: payment below interest`,
+          detail: `Planned ${formatMoney(projection.plannedPayment)} is below interest ${formatMoney(projection.interestAmount)}.`,
+        })
+      }
+    })
+
+    const severityRank: Record<RiskSeverity, number> = {
+      critical: 3,
+      warning: 2,
+      watch: 1,
+    }
+
+    return alerts.sort((left, right) => {
+      const severityDelta = severityRank[right.severity] - severityRank[left.severity]
+      if (severityDelta !== 0) {
+        return severityDelta
+      }
+      return left.title.localeCompare(right.title, undefined, { sensitivity: 'base' })
+    })
+  }, [cardRows, formatMoney, formatPercent])
+
+  const riskSummary = useMemo(
+    () => ({
+      critical: riskAlerts.filter((alert) => alert.severity === 'critical').length,
+      warning: riskAlerts.filter((alert) => alert.severity === 'warning').length,
+      watch: riskAlerts.filter((alert) => alert.severity === 'watch').length,
+    }),
+    [riskAlerts],
   )
 
   const visibleRows = useMemo(() => {
@@ -677,6 +779,32 @@ export function CardsTab({
               {formatMoney(cardUsedTotal)} current / {formatPercent(cardUtilizationPercent / 100)} util
             </p>
 
+            <section className="cards-risk-intel" aria-label="Card risk alerts">
+              <header className="cards-risk-head">
+                <div>
+                  <p className="panel-kicker">Risk alerts</p>
+                  <h3>In-tab monitoring</h3>
+                </div>
+                <p className="subnote">
+                  {riskSummary.critical} critical · {riskSummary.warning} warning · {riskSummary.watch} watch
+                </p>
+              </header>
+
+              {riskAlerts.length === 0 ? (
+                <p className="subnote">No active risk alerts.</p>
+              ) : (
+                <ul className="cards-risk-list">
+                  {riskAlerts.map((alert) => (
+                    <li key={alert.id} className={`cards-risk-item cards-risk-item--${alert.severity}`}>
+                      <span className={`pill cards-risk-pill cards-risk-pill--${alert.severity}`}>{alert.severity}</span>
+                      <strong>{alert.title}</strong>
+                      <small>{alert.detail}</small>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
             <section className="cards-payoff-intel" aria-label="Payoff intelligence">
               <header className="cards-payoff-head">
                 <div>
@@ -820,7 +948,6 @@ export function CardsTab({
                               interestRate: Number.isFinite(draftApr) ? draftApr : undefined,
                               dueDay: Number.isFinite(draftDueDay) ? draftDueDay : undefined,
                             },
-                            todayDay,
                           )
 
                           const rowProjection = isEditing ? editProjection : projection
@@ -1012,6 +1139,7 @@ export function CardsTab({
                                     <small>Extra payment {formatMoney(rowProjection.extraPayment)}</small>
                                     <small>Planned payment {formatMoney(rowProjection.plannedPayment)}</small>
                                     <small>Due day {rowProjection.dueDay}</small>
+                                    <small>{formatDueCountdown(rowProjection.dueInDays)}</small>
                                     <small>{rowProjection.dueApplied ? 'Due applied this month' : 'Due pending this month'}</small>
                                     <small>Statement day {entry.statementDay ?? 1}</small>
                                   </div>
@@ -1165,7 +1293,6 @@ export function CardsTab({
                         interestRate: Number.isFinite(draftApr) ? draftApr : undefined,
                         dueDay: Number.isFinite(draftDueDay) ? draftDueDay : undefined,
                       },
-                      todayDay,
                     )
 
                     const rowProjection = isEditing ? editProjection : projection
@@ -1181,7 +1308,8 @@ export function CardsTab({
                           <div className="cards-mobile-summary-main">
                             <strong>{entry.name}</strong>
                             <small>
-                              {formatMoney(entry.creditLimit)} limit · due day {rowProjection.dueDay}
+                              {formatMoney(entry.creditLimit)} limit · due day {rowProjection.dueDay} ·{' '}
+                              {formatDueCountdown(rowProjection.dueInDays).toLowerCase()}
                             </small>
                           </div>
                           <div className="cards-mobile-summary-metrics">
@@ -1469,6 +1597,10 @@ export function CardsTab({
                               <div>
                                 <span>Due-adjusted current</span>
                                 <strong>{formatMoney(rowProjection.dueAdjustedCurrent)}</strong>
+                              </div>
+                              <div>
+                                <span>Due countdown</span>
+                                <strong>{formatDueCountdown(rowProjection.dueInDays)}</strong>
                               </div>
                             </div>
                           )}

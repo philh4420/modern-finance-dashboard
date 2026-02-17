@@ -1432,6 +1432,102 @@ tbody td {
   gap: 0.4rem;
 }
 
+.cards-risk-intel {
+  margin-top: 0.85rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 82%, transparent);
+  background:
+    radial-gradient(130% 140% at 100% 0%, color-mix(in oklab, var(--tone-negative) 11%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 36%, transparent),
+    0 15px 32px -30px color-mix(in oklab, black 42%, transparent);
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.cards-risk-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: flex-start;
+}
+
+.cards-risk-head h3 {
+  margin: 0.15rem 0 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.cards-risk-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.cards-risk-item {
+  border-radius: 0.86rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.56rem 0.62rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.cards-risk-item strong {
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+
+.cards-risk-item small {
+  color: var(--text-muted);
+  font-size: 0.77rem;
+}
+
+.cards-risk-item--critical {
+  border-color: color-mix(in oklab, var(--tone-negative) 45%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-negative) 9%, white 91%);
+}
+
+.cards-risk-item--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 42%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-warning) 11%, white 89%);
+}
+
+.cards-risk-item--watch {
+  border-color: color-mix(in oklab, var(--tone-finance) 38%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 10%, white 90%);
+}
+
+.cards-risk-pill {
+  width: fit-content;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.67rem;
+}
+
+.cards-risk-pill--critical {
+  border-color: color-mix(in oklab, var(--tone-negative) 45%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-negative) 14%, white 86%);
+  color: color-mix(in oklab, var(--tone-negative) 74%, black 26%);
+}
+
+.cards-risk-pill--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 42%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-warning) 16%, white 84%);
+  color: color-mix(in oklab, var(--tone-warning) 70%, black 30%);
+}
+
+.cards-risk-pill--watch {
+  border-color: color-mix(in oklab, var(--tone-finance) 40%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 14%, white 86%);
+  color: color-mix(in oklab, var(--tone-finance) 72%, black 28%);
+}
+
 .cards-payoff-intel {
   margin-top: 0.85rem;
   border-radius: 1rem;
@@ -1850,6 +1946,14 @@ tbody td {
   }
 
   .cards-payoff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cards-risk-head {
+    flex-direction: column;
+  }
+
+  .cards-risk-list {
     grid-template-columns: 1fr;
   }
 
