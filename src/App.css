@@ -2136,6 +2136,86 @@ h2 {
   grid-template-columns: repeat(12, minmax(0, 1fr));
 }
 
+.income-tab-shell {
+  align-items: stretch;
+  gap: clamp(0.95rem, 1vw, 1.28rem);
+}
+
+.income-tab-shell .panel {
+  padding: clamp(1rem, 0.9vw + 0.52rem, 1.3rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-height: 100%;
+}
+
+.income-tab-shell .panel-header {
+  gap: 1rem;
+}
+
+.income-tab-shell .panel-header > div {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.income-tab-shell .panel-header h2 {
+  margin: 0.06rem 0 0;
+  font-size: clamp(1.12rem, 0.9rem + 0.5vw, 1.42rem);
+  line-height: 1.18;
+  letter-spacing: -0.018em;
+}
+
+.income-tab-shell .panel-kicker {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+.income-tab-shell .panel-value {
+  margin: 0.1rem 0 0;
+  font-size: 1rem;
+  line-height: 1.35;
+  font-weight: 730;
+}
+
+.income-tab-shell .panel-list > .subnote {
+  margin-top: 0.42rem;
+  font-size: 0.86rem;
+  line-height: 1.52;
+  max-width: none;
+}
+
+.income-tab-shell .table-wrap--card {
+  padding-inline: 0.78rem;
+  overflow-x: hidden;
+}
+
+.income-tab-shell .data-table thead th {
+  font-size: 0.72rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.income-tab-shell .data-table tbody td {
+  padding-top: 0.82rem;
+  padding-bottom: 0.82rem;
+}
+
+@media (min-width: 1240px) {
+  .income-tab-shell {
+    grid-template-columns: minmax(24rem, 31rem) minmax(0, 1fr);
+  }
+
+  .income-tab-shell .panel-form,
+  .income-tab-shell .panel-list {
+    grid-column: auto;
+  }
+
+  .income-tab-shell .panel-actions {
+    max-width: 46rem;
+  }
+}
+
 .editor-grid--cards .panel-form {
   grid-column: span 3;
 }
@@ -2246,6 +2326,11 @@ h2 {
   grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
 }
 
+.income-breakdown-summary > div {
+  min-height: 8.55rem;
+  height: 100%;
+}
+
 .bulk-summary>div {
   border-radius: 1rem;
   border: 1px solid color-mix(in oklab, var(--stroke) 75%, transparent);
@@ -2310,6 +2395,7 @@ h2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr));
   gap: 0.52rem;
+  grid-auto-rows: 1fr;
 }
 
 .income-source-trend-card {
@@ -2324,6 +2410,9 @@ h2 {
   padding: 0.62rem 0.66rem;
   display: grid;
   gap: 0.4rem;
+  height: 100%;
+  grid-template-rows: auto 1fr auto;
+  align-content: start;
 }
 
 .income-source-trend-head {
@@ -2577,7 +2666,50 @@ input[type='checkbox'] {
 }
 
 .data-table--income {
-  min-width: 76rem;
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.data-table--income .income-col--source {
+  width: 17%;
+}
+
+.data-table--income .income-col--cashflow {
+  width: 16%;
+}
+
+.data-table--income .income-col--reliability {
+  width: 17%;
+}
+
+.data-table--income .income-col--profile {
+  width: 18%;
+}
+
+.data-table--income .income-col--schedule {
+  width: 12%;
+}
+
+.data-table--income .income-col--notes {
+  width: 10%;
+}
+
+.data-table--income .income-col--actions {
+  width: 10%;
+}
+
+.data-table--income thead th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.data-table--income tbody td {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  padding-inline: 0.14rem;
 }
 
 table {
@@ -2695,6 +2827,16 @@ tbody td {
   gap: 0.4rem;
 }
 
+.row-actions--income {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.row-actions--income .btn {
+  width: 100%;
+  justify-content: center;
+}
+
 .table-row--quick td {
   border-top: none;
   padding-top: 0.32rem;
@@ -2713,6 +2855,94 @@ tbody td {
   padding: 0.72rem 0.78rem;
   display: grid;
   gap: 0.62rem;
+}
+
+.income-edit-panel {
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background:
+    radial-gradient(135% 145% at 100% -10%, color-mix(in oklab, var(--tone-finance) 11%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 36%, transparent);
+  padding: 0.78rem 0.84rem;
+  display: grid;
+  gap: 0.72rem;
+}
+
+.income-edit-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.income-edit-head p {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.income-edit-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.44rem;
+}
+
+.income-edit-summary > div {
+  border-radius: 0.76rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.44rem 0.5rem;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.income-edit-summary p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.income-edit-summary strong {
+  font-size: 0.88rem;
+  letter-spacing: -0.01em;
+}
+
+.income-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.52rem;
+}
+
+.income-edit-field {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.income-edit-field span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.income-edit-field--span2 {
+  grid-column: span 2;
+}
+
+.income-edit-smoothing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 9.5rem);
+  gap: 0.44rem;
+  align-items: center;
+}
+
+.income-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
 .income-payment-log-head h3 {
@@ -3459,6 +3689,14 @@ tbody td {
   .panel-list {
     grid-column: span 12;
   }
+
+  .income-edit-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .income-edit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
@@ -3471,6 +3709,26 @@ tbody td {
     text-align: left;
     max-width: none;
     margin: 0;
+  }
+
+  .income-tab-shell .panel-header {
+    flex-direction: column;
+    gap: 0.58rem;
+  }
+
+  .income-tab-shell .panel-value {
+    text-align: left;
+    max-width: none;
+    margin: 0;
+  }
+
+  .income-tab-shell .table-wrap--card {
+    overflow-x: auto;
+  }
+
+  .data-table--income {
+    min-width: 56rem;
+    table-layout: auto;
   }
 
   .executive-strip {
@@ -3541,6 +3799,31 @@ tbody td {
   }
 
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .row-actions--income {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .row-actions--income .btn {
+    width: auto;
+  }
+
+  .income-edit-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .income-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .income-edit-field--span2 {
+    grid-column: auto;
+  }
+
+  .income-edit-smoothing {
     grid-template-columns: 1fr;
   }
 

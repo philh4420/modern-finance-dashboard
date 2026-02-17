@@ -263,7 +263,7 @@ const resolveIncomeForecastMonthlyAmount = (
   return roundCurrency(total / monthKeys.length)
 }
 
-const incomeTableColumnCount = 16
+const incomeTableColumnCount = 7
 
 const calculateIncomePaymentReliability = (checks: IncomePaymentCheckEntry[]): IncomePaymentReliability => {
   if (checks.length === 0) {
@@ -959,7 +959,7 @@ export function IncomeTab({
   }, [currentCycleMonth, paymentChecksByIncomeId, visibleIncomes])
 
   return (
-    <section className="editor-grid" aria-label="Income management">
+    <section className="editor-grid income-tab-shell" aria-label="Income management">
       <article className="panel panel-form">
         <header className="panel-header">
           <div>
@@ -1631,22 +1631,22 @@ export function IncomeTab({
             <div className="table-wrap table-wrap--card">
               <table className="data-table data-table--income" data-testid="income-table">
                 <caption className="sr-only">Income entries</caption>
+                <colgroup>
+                  <col className="income-col income-col--source" />
+                  <col className="income-col income-col--cashflow" />
+                  <col className="income-col income-col--reliability" />
+                  <col className="income-col income-col--profile" />
+                  <col className="income-col income-col--schedule" />
+                  <col className="income-col income-col--notes" />
+                  <col className="income-col income-col--actions" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th scope="col">Source</th>
-                    <th scope="col">Gross</th>
-                    <th scope="col">Deductions</th>
-                    <th scope="col">Planned net</th>
-                    <th scope="col">Actual paid</th>
-                    <th scope="col">Variance</th>
+                    <th scope="col">Cashflow</th>
                     <th scope="col">Reliability</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Landing account</th>
-                    <th scope="col">Frequency</th>
-                    <th scope="col">Forecast smoothing</th>
-                    <th scope="col">Day</th>
-                    <th scope="col">Anchor</th>
-                    <th scope="col">Next payday</th>
+                    <th scope="col">Profile</th>
+                    <th scope="col">Schedule</th>
                     <th scope="col">Notes</th>
                     <th scope="col">Action</th>
                   </tr>
@@ -1708,484 +1708,536 @@ export function IncomeTab({
                       ? parseOptionalPositiveInt(incomeEditDraft.customInterval)
                       : undefined
                     const nextPayday = nextDateForCadence({
-                      cadence: isEditing ? incomeEditDraft.cadence : entry.cadence,
+                      cadence: entry.cadence,
                       createdAt: entry.createdAt,
-                      dayOfMonth: isEditing ? parseOptionalPositiveInt(incomeEditDraft.receivedDay) : entry.receivedDay,
-                      customInterval: isEditing ? editCustomInterval : entry.customInterval ?? undefined,
-                      customUnit: isEditing
-                        ? isCustomCadence(incomeEditDraft.cadence)
-                          ? incomeEditDraft.customUnit
-                          : undefined
-                        : entry.customUnit ?? undefined,
-                      payDateAnchor: isEditing ? incomeEditDraft.payDateAnchor.trim() || undefined : entry.payDateAnchor,
+                      dayOfMonth: entry.receivedDay,
+                      customInterval: entry.customInterval ?? undefined,
+                      customUnit: entry.customUnit ?? undefined,
+                      payDateAnchor: entry.payDateAnchor,
+                    })
+                    const editNextPayday = nextDateForCadence({
+                      cadence: incomeEditDraft.cadence,
+                      createdAt: entry.createdAt,
+                      dayOfMonth: parseOptionalPositiveInt(incomeEditDraft.receivedDay),
+                      customInterval: editCustomInterval,
+                      customUnit: isCustomCadence(incomeEditDraft.cadence) ? incomeEditDraft.customUnit : undefined,
+                      payDateAnchor: incomeEditDraft.payDateAnchor.trim() || undefined,
                     })
 
                     return (
                       <Fragment key={entry._id}>
                         <tr className={isEditing ? 'table-row--editing' : undefined}>
-                        <td>
-                          {isEditing ? (
-                            <input
-                              className="inline-input"
-                              value={incomeEditDraft.source}
-                              onChange={(event) =>
-                                setIncomeEditDraft((prev) => ({
-                                  ...prev,
-                                  source: event.target.value,
-                                }))
-                              }
-                            />
-                          ) : (
-                            entry.source
-                          )}
-                        </td>
-                        <td className="table-amount">
-                          {isEditing ? (
-                            <input
-                              className="inline-input"
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="Optional"
-                              value={incomeEditDraft.grossAmount}
-                              onChange={(event) =>
-                                setIncomeEditDraft((prev) => ({
-                                  ...prev,
-                                  grossAmount: event.target.value,
-                                }))
-                              }
-                            />
-                          ) : (
+                          <td>
                             <div className="cell-stack">
-                              <strong>{formatMoney(grossAmount)}</strong>
-                              <small>{entryHasBreakdown ? 'gross tracked' : 'from net input'}</small>
+                              <strong>{entry.source}</strong>
+                              <small>Gross {formatMoney(grossAmount)}</small>
+                              {entryHasBreakdown ? (
+                                <small>
+                                  Deductions {formatMoney(deductionTotal)} ({effectiveDeductionRate.toFixed(1)}%)
+                                </small>
+                              ) : (
+                                <small>Using net-only input</small>
+                              )}
                             </div>
-                          )}
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <div className="income-deductions-editor">
-                              <input
-                                className="inline-input"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="Tax"
-                                value={incomeEditDraft.taxAmount}
-                                onChange={(event) =>
-                                  setIncomeEditDraft((prev) => ({
-                                    ...prev,
-                                    taxAmount: event.target.value,
-                                  }))
-                                }
-                              />
-                              <input
-                                className="inline-input"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="NI"
-                                value={incomeEditDraft.nationalInsuranceAmount}
-                                onChange={(event) =>
-                                  setIncomeEditDraft((prev) => ({
-                                    ...prev,
-                                    nationalInsuranceAmount: event.target.value,
-                                  }))
-                                }
-                              />
-                              <input
-                                className="inline-input"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="Pension"
-                                value={incomeEditDraft.pensionAmount}
-                                onChange={(event) =>
-                                  setIncomeEditDraft((prev) => ({
-                                    ...prev,
-                                    pensionAmount: event.target.value,
-                                  }))
-                                }
-                              />
-                            </div>
-                          ) : entryHasBreakdown ? (
-                            <div className="cell-stack">
-                              <strong>{formatMoney(deductionTotal)}</strong>
-                              <small>{effectiveDeductionRate.toFixed(1)}% of gross</small>
-                            </div>
-                          ) : (
-                            <span className="pill pill--neutral">-</span>
-                          )}
-                        </td>
-                        <td className="table-amount amount-positive">
-                          {isEditing ? (
-                            <input
-                              className="inline-input"
-                              type="number"
-                              min="0.01"
-                              step="0.01"
-                              value={incomeEditDraft.amount}
-                              onChange={(event) =>
-                                setIncomeEditDraft((prev) => ({
-                                  ...prev,
-                                  amount: event.target.value,
-                                }))
-                              }
-                            />
-                          ) : (
+                          </td>
+                          <td className="table-amount">
                             <div className="cell-stack">
                               <strong>{formatMoney(netAmount)}</strong>
-                              <small>{entryHasBreakdown ? 'gross - deductions' : 'planned net input'}</small>
+                              <small>{entryHasBreakdown ? 'Gross minus deductions' : 'Planned net input'}</small>
+                              {actualPaidAmount !== undefined ? (
+                                <small>Actual {formatMoney(actualPaidAmount)}</small>
+                              ) : (
+                                <small>Actual not logged</small>
+                              )}
+                              {varianceAmount !== undefined ? (
+                                <small className={varianceAmount < 0 ? 'amount-negative' : 'amount-positive'}>
+                                  Variance {formatMoney(varianceAmount)}
+                                </small>
+                              ) : (
+                                <small>Variance n/a</small>
+                              )}
                             </div>
-                          )}
-                        </td>
-                        <td className="table-amount">
-                          {isEditing ? (
-                            <input
-                              className="inline-input"
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="Optional"
-                              value={incomeEditDraft.actualAmount}
-                              onChange={(event) =>
-                                setIncomeEditDraft((prev) => ({
-                                  ...prev,
-                                  actualAmount: event.target.value,
-                                }))
-                              }
-                            />
-                          ) : actualPaidAmount !== undefined ? (
-                            <div className="cell-stack">
-                              <strong>{formatMoney(actualPaidAmount)}</strong>
-                              <small>logged received</small>
-                            </div>
-                          ) : (
-                            <span className="pill pill--neutral">Not logged</span>
-                          )}
-                        </td>
-                        <td className="table-amount">
-                          {isEditing ? (
-                            editVarianceAmount !== undefined ? (
-                              <span className={editVarianceAmount < 0 ? 'amount-negative' : 'amount-positive'}>
-                                {formatMoney(editVarianceAmount)}
-                              </span>
+                          </td>
+                          <td className="income-reliability-cell">
+                            {rowReliability.total === 0 ? (
+                              <div className="cell-stack">
+                                <span className="pill pill--neutral">No logs</span>
+                                <small>Start logging monthly outcomes to score reliability.</small>
+                              </div>
                             ) : (
-                              <span className="pill pill--neutral">n/a</span>
-                            )
-                          ) : varianceAmount !== undefined ? (
-                            <span className={varianceAmount < 0 ? 'amount-negative' : 'amount-positive'}>
-                              {formatMoney(varianceAmount)}
-                            </span>
-                          ) : (
-                            <span className="pill pill--neutral">n/a</span>
-                          )}
-                        </td>
-                        <td className="income-reliability-cell">
-                          {rowReliability.total === 0 ? (
-                            <span className="pill pill--neutral">No logs</span>
-                          ) : (
+                              <div className="cell-stack">
+                                <strong>
+                                  {rowReliability.score !== null ? `${rowReliability.score}/100` : 'n/a'} reliability
+                                </strong>
+                                <small>
+                                  {(rowReliability.onTimeRate * 100).toFixed(0)}% on-time · {rowReliability.total} log
+                                  {rowReliability.total === 1 ? '' : 's'}
+                                </small>
+                                <small>
+                                  Late streak {rowReliability.lateStreak} · Missed streak {rowReliability.missedStreak}
+                                </small>
+                                {latestPaymentCheck ? (
+                                  <span className={reliabilityStatusPillClass(latestPaymentCheck.status)}>
+                                    {latestPaymentCheck.cycleMonth} · {reliabilityStatusLabel(latestPaymentCheck.status)}
+                                  </span>
+                                ) : null}
+                              </div>
+                            )}
+                          </td>
+                          <td>
                             <div className="cell-stack">
-                              <strong>
-                                {rowReliability.score !== null ? `${rowReliability.score}/100` : 'n/a'} reliability
-                              </strong>
-                              <small>
-                                {(rowReliability.onTimeRate * 100).toFixed(0)}% on-time · {rowReliability.total} log
-                                {rowReliability.total === 1 ? '' : 's'}
-                              </small>
-                              <small>
-                                Late streak {rowReliability.lateStreak} · Missed streak {rowReliability.missedStreak}
-                              </small>
-                              {latestPaymentCheck ? (
-                                <span className={reliabilityStatusPillClass(latestPaymentCheck.status)}>
-                                  {latestPaymentCheck.cycleMonth} · {reliabilityStatusLabel(latestPaymentCheck.status)}
-                                </span>
-                              ) : null}
-                            </div>
-                          )}
-                        </td>
-                        <td>
-                          <div className="cell-stack">
-                            <span className={incomeStatusPillClass(incomeStatus)}>{incomeStatusLabel(incomeStatus)}</span>
-                            <small>
-                              {currentCycleCheck
-                                ? `${currentCycleCheck.cycleMonth} log`
-                                : latestPaymentCheck
-                                  ? 'from latest log'
-                                  : actualPaidAmount !== undefined
-                                    ? 'from actual amount'
-                                    : 'awaiting payment log'}
-                            </small>
-                          </div>
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <select
-                              className="inline-select"
-                              value={incomeEditDraft.destinationAccountId}
-                              onChange={(event) =>
-                                setIncomeEditDraft((prev) => ({
-                                  ...prev,
-                                  destinationAccountId: event.target.value,
-                                }))
-                              }
-                            >
-                              <option value="">Unassigned</option>
-                              {accountOptions.map((account) => (
-                                <option key={account._id} value={String(account._id)}>
-                                  {account.name}
-                                </option>
-                              ))}
-                            </select>
-                          ) : entry.destinationAccountId ? (
-                            accountNameById.has(String(entry.destinationAccountId)) ? (
-                              <span className="pill pill--neutral">
-                                {accountNameById.get(String(entry.destinationAccountId))}
+                              <span className={incomeStatusPillClass(incomeStatus)}>{incomeStatusLabel(incomeStatus)}</span>
+                              {entry.destinationAccountId ? (
+                                accountNameById.has(String(entry.destinationAccountId)) ? (
+                                  <span className="pill pill--neutral">
+                                    {accountNameById.get(String(entry.destinationAccountId))}
+                                  </span>
+                                ) : (
+                                  <span className="pill pill--warning">Missing account</span>
+                                )
+                              ) : (
+                                <span className="pill pill--neutral">Unassigned account</span>
+                              )}
+                              <span className="pill pill--cadence">
+                                {cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)}
                               </span>
-                            ) : (
-                              <span className="pill pill--warning">Missing account</span>
-                            )
-                          ) : (
-                            <span className="pill pill--neutral">Unassigned</span>
-                          )}
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <div className="inline-cadence-controls">
-                              <select
-                                className="inline-select"
-                                value={incomeEditDraft.cadence}
-                                onChange={(event) =>
-                                  setIncomeEditDraft((prev) => ({
-                                    ...prev,
-                                    cadence: event.target.value as Cadence,
-                                    customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
-                                  }))
-                                }
-                              >
-                                {cadenceOptions.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                              {isCustomCadence(incomeEditDraft.cadence) ? (
-                                <>
-                                  <input
-                                    className="inline-input inline-cadence-number"
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    value={incomeEditDraft.customInterval}
-                                    onChange={(event) =>
-                                      setIncomeEditDraft((prev) => ({
-                                        ...prev,
-                                        customInterval: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                  <select
-                                    className="inline-select inline-cadence-unit"
-                                    value={incomeEditDraft.customUnit}
-                                    onChange={(event) =>
-                                      setIncomeEditDraft((prev) => ({
-                                        ...prev,
-                                        customUnit: event.target.value as CustomCadenceUnit,
-                                      }))
-                                    }
-                                  >
-                                    {customCadenceUnitOptions.map((option) => (
-                                      <option key={option.value} value={option.value}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </>
-                              ) : null}
+                              {entry.forecastSmoothingEnabled ? (
+                                <small>
+                                  Smoothing on ({smoothingLookbackMonths}m) · {formatMoney(rowForecastNormalizedMonthly)} / month
+                                </small>
+                              ) : (
+                                <small>Smoothing off</small>
+                              )}
                             </div>
-                          ) : (
-                            <span className="pill pill--cadence">
-                              {cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit)}
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          {isEditing ? (
+                          </td>
+                          <td>
                             <div className="cell-stack">
-                              <label className="checkbox-row">
-                                <input
-                                  type="checkbox"
-                                  checked={incomeEditDraft.forecastSmoothingEnabled}
-                                  onChange={(event) =>
-                                    setIncomeEditDraft((prev) => ({
-                                      ...prev,
-                                      forecastSmoothingEnabled: event.target.checked,
-                                      forecastSmoothingMonths: prev.forecastSmoothingMonths || '6',
-                                    }))
-                                  }
-                                />
-                                Smoothing
-                              </label>
-                              <select
-                                className="inline-select"
-                                value={incomeEditDraft.forecastSmoothingMonths}
-                                disabled={!incomeEditDraft.forecastSmoothingEnabled}
-                                onChange={(event) =>
-                                  setIncomeEditDraft((prev) => ({
-                                    ...prev,
-                                    forecastSmoothingMonths: event.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="3">3 months</option>
-                                <option value="6">6 months</option>
-                                <option value="9">9 months</option>
-                                <option value="12">12 months</option>
-                                <option value="18">18 months</option>
-                                <option value="24">24 months</option>
-                              </select>
+                              <span className="pill pill--neutral">{entry.receivedDay ? `Day ${entry.receivedDay}` : 'No day'}</span>
+                              <small>Anchor {entry.payDateAnchor ?? '-'}</small>
+                              <span className="pill pill--neutral">{nextPayday ? toIsoDate(nextPayday) : 'Next n/a'}</span>
                             </div>
-                          ) : entry.forecastSmoothingEnabled ? (
-                            <div className="cell-stack">
-                              <span className="pill pill--good">{smoothingLookbackMonths}m lookback</span>
-                              <small>{formatMoney(rowForecastNormalizedMonthly)}/month normalized</small>
-                            </div>
-                          ) : (
-                            <span className="pill pill--neutral">Off</span>
-                          )}
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <input
-                              className="inline-input"
-                              type="number"
-                              min="1"
-                              max="31"
-                              value={incomeEditDraft.receivedDay}
-                              onChange={(event) =>
-                                setIncomeEditDraft((prev) => ({
-                                  ...prev,
-                                  receivedDay: event.target.value,
-                                }))
-                              }
-                            />
-                          ) : (
-                            <span className="pill pill--neutral">{entry.receivedDay ? `Day ${entry.receivedDay}` : '-'}</span>
-                          )}
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <input
-                              className="inline-input"
-                              type="date"
-                              value={incomeEditDraft.payDateAnchor}
-                              onChange={(event) =>
-                                setIncomeEditDraft((prev) => ({
-                                  ...prev,
-                                  payDateAnchor: event.target.value,
-                                }))
-                              }
-                            />
-                          ) : (
-                            <span className="pill pill--neutral">{entry.payDateAnchor ?? '-'}</span>
-                          )}
-                        </td>
-                        <td>
-                          <span className="pill pill--neutral">{nextPayday ? toIsoDate(nextPayday) : 'n/a'}</span>
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <div className="cell-stack">
-                              <input
-                                className="inline-input"
-                                placeholder="Employer note"
-                                value={incomeEditDraft.employerNote}
-                                onChange={(event) =>
-                                  setIncomeEditDraft((prev) => ({
-                                    ...prev,
-                                    employerNote: event.target.value,
-                                  }))
-                                }
-                              />
-                              <input
-                                className="inline-input"
-                                placeholder="General notes"
-                                value={incomeEditDraft.notes}
-                                onChange={(event) =>
-                                  setIncomeEditDraft((prev) => ({
-                                    ...prev,
-                                    notes: event.target.value,
-                                  }))
-                                }
-                              />
-                            </div>
-                          ) : (
+                          </td>
+                          <td>
                             <div className="cell-stack">
                               {entry.employerNote ? (
                                 <small className="cell-truncate" title={entry.employerNote}>
                                   Employer: {entry.employerNote}
                                 </small>
-                              ) : null}
+                              ) : (
+                                <small>Employer note: -</small>
+                              )}
                               <span className="cell-truncate" title={entry.notes ?? ''}>
                                 {entry.notes ?? '-'}
                               </span>
                             </div>
-                          )}
-                        </td>
-                        <td>
-                          <div className="row-actions">
-                            {isEditing ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className="btn btn-secondary btn--sm"
-                                  onClick={() => void saveIncomeEdit()}
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost btn--sm"
-                                  onClick={() => setIncomeEditId(null)}
-                                >
-                                  Cancel
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  className="btn btn-secondary btn--sm"
-                                  onClick={() => startIncomeEdit(entry)}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost btn--sm"
-                                  onClick={() => openPaymentLog(entry)}
-                                >
-                                  Log payment
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost btn--sm"
-                                  onClick={() => (isChangeTrackerOpen ? closeChangeTracker() : openChangeTracker(entry))}
-                                >
-                                  {isChangeTrackerOpen ? 'Close change' : 'Track change'}
-                                </button>
-                              </>
-                            )}
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn--sm"
-                              onClick={() => void onDeleteIncome(entry._id)}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </td>
+                          </td>
+                          <td>
+                            <div className="row-actions row-actions--income">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary btn--sm"
+                                    onClick={() => void saveIncomeEdit()}
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn--sm"
+                                    onClick={() => setIncomeEditId(null)}
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary btn--sm"
+                                    onClick={() => startIncomeEdit(entry)}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn--sm"
+                                    onClick={() => openPaymentLog(entry)}
+                                  >
+                                    Log payment
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn--sm"
+                                    onClick={() => (isChangeTrackerOpen ? closeChangeTracker() : openChangeTracker(entry))}
+                                  >
+                                    {isChangeTrackerOpen ? 'Close change' : 'Track change'}
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn--sm"
+                                onClick={() => void onDeleteIncome(entry._id)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </td>
                         </tr>
+                        {isEditing ? (
+                          <tr className="table-row--quick table-row--edit">
+                            <td colSpan={incomeTableColumnCount}>
+                              <div className="income-edit-panel">
+                                <div className="income-edit-head">
+                                  <h3>Edit income source</h3>
+                                  <p>
+                                    Update full income details for <strong>{entry.source}</strong> in a full-width editor.
+                                  </p>
+                                </div>
+                                <div className="income-edit-summary">
+                                  <div>
+                                    <p>Planned net preview</p>
+                                    <strong>
+                                      {editPlannedNetAmount !== undefined ? formatMoney(editPlannedNetAmount) : 'n/a'}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <p>Actual preview</p>
+                                    <strong>
+                                      {editActualPaidAmount !== undefined ? formatMoney(editActualPaidAmount) : 'Not logged'}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <p>Variance preview</p>
+                                    <strong className={editVarianceAmount !== undefined ? (editVarianceAmount < 0 ? 'amount-negative' : 'amount-positive') : undefined}>
+                                      {editVarianceAmount !== undefined ? formatMoney(editVarianceAmount) : 'n/a'}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <p>Next payday preview</p>
+                                    <strong>{editNextPayday ? toIsoDate(editNextPayday) : 'n/a'}</strong>
+                                  </div>
+                                </div>
+                                <div className="income-edit-grid">
+                                  <label className="income-edit-field">
+                                    <span>Source</span>
+                                    <input
+                                      className="inline-input"
+                                      value={incomeEditDraft.source}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          source: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>Landing account</span>
+                                    <select
+                                      className="inline-select"
+                                      value={incomeEditDraft.destinationAccountId}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          destinationAccountId: event.target.value,
+                                        }))
+                                      }
+                                    >
+                                      <option value="">Unassigned</option>
+                                      {accountOptions.map((account) => (
+                                        <option key={account._id} value={String(account._id)}>
+                                          {account.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>Gross amount</span>
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      placeholder="Optional"
+                                      value={incomeEditDraft.grossAmount}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          grossAmount: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>Tax deduction</span>
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      placeholder="Optional"
+                                      value={incomeEditDraft.taxAmount}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          taxAmount: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>NI deduction</span>
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      placeholder="Optional"
+                                      value={incomeEditDraft.nationalInsuranceAmount}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          nationalInsuranceAmount: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>Pension deduction</span>
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      placeholder="Optional"
+                                      value={incomeEditDraft.pensionAmount}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          pensionAmount: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>Planned net</span>
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      min="0.01"
+                                      step="0.01"
+                                      value={incomeEditDraft.amount}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          amount: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>Actual paid</span>
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      placeholder="Optional"
+                                      value={incomeEditDraft.actualAmount}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          actualAmount: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field income-edit-field--span2">
+                                    <span>Frequency</span>
+                                    <div className="inline-cadence-controls">
+                                      <select
+                                        className="inline-select"
+                                        value={incomeEditDraft.cadence}
+                                        onChange={(event) =>
+                                          setIncomeEditDraft((prev) => ({
+                                            ...prev,
+                                            cadence: event.target.value as Cadence,
+                                            customInterval: event.target.value === 'custom' ? prev.customInterval || '1' : '',
+                                          }))
+                                        }
+                                      >
+                                        {cadenceOptions.map((option) => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {isCustomCadence(incomeEditDraft.cadence) ? (
+                                        <>
+                                          <input
+                                            className="inline-input inline-cadence-number"
+                                            type="number"
+                                            min="1"
+                                            step="1"
+                                            value={incomeEditDraft.customInterval}
+                                            onChange={(event) =>
+                                              setIncomeEditDraft((prev) => ({
+                                                ...prev,
+                                                customInterval: event.target.value,
+                                              }))
+                                            }
+                                          />
+                                          <select
+                                            className="inline-select inline-cadence-unit"
+                                            value={incomeEditDraft.customUnit}
+                                            onChange={(event) =>
+                                              setIncomeEditDraft((prev) => ({
+                                                ...prev,
+                                                customUnit: event.target.value as CustomCadenceUnit,
+                                              }))
+                                            }
+                                          >
+                                            {customCadenceUnitOptions.map((option) => (
+                                              <option key={option.value} value={option.value}>
+                                                {option.label}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </>
+                                      ) : null}
+                                    </div>
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>Received day</span>
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      min="1"
+                                      max="31"
+                                      value={incomeEditDraft.receivedDay}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          receivedDay: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field">
+                                    <span>Pay date anchor</span>
+                                    <input
+                                      className="inline-input"
+                                      type="date"
+                                      value={incomeEditDraft.payDateAnchor}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          payDateAnchor: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field income-edit-field--span2">
+                                    <span>Forecast smoothing</span>
+                                    <div className="income-edit-smoothing">
+                                      <label className="checkbox-row">
+                                        <input
+                                          type="checkbox"
+                                          checked={incomeEditDraft.forecastSmoothingEnabled}
+                                          onChange={(event) =>
+                                            setIncomeEditDraft((prev) => ({
+                                              ...prev,
+                                              forecastSmoothingEnabled: event.target.checked,
+                                              forecastSmoothingMonths: prev.forecastSmoothingMonths || '6',
+                                            }))
+                                          }
+                                        />
+                                        Smoothing enabled
+                                      </label>
+                                      <select
+                                        className="inline-select"
+                                        value={incomeEditDraft.forecastSmoothingMonths}
+                                        disabled={!incomeEditDraft.forecastSmoothingEnabled}
+                                        onChange={(event) =>
+                                          setIncomeEditDraft((prev) => ({
+                                            ...prev,
+                                            forecastSmoothingMonths: event.target.value,
+                                          }))
+                                        }
+                                      >
+                                        <option value="3">3 months</option>
+                                        <option value="6">6 months</option>
+                                        <option value="9">9 months</option>
+                                        <option value="12">12 months</option>
+                                        <option value="18">18 months</option>
+                                        <option value="24">24 months</option>
+                                      </select>
+                                    </div>
+                                  </label>
+
+                                  <label className="income-edit-field income-edit-field--span2">
+                                    <span>Employer note</span>
+                                    <input
+                                      className="inline-input"
+                                      placeholder="Optional employer or payroll note"
+                                      value={incomeEditDraft.employerNote}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          employerNote: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-edit-field income-edit-field--span2">
+                                    <span>Notes</span>
+                                    <input
+                                      className="inline-input"
+                                      placeholder="Optional general note"
+                                      value={incomeEditDraft.notes}
+                                      onChange={(event) =>
+                                        setIncomeEditDraft((prev) => ({
+                                          ...prev,
+                                          notes: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+                                </div>
+                                <div className="income-edit-actions">
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary btn--sm"
+                                    onClick={() => void saveIncomeEdit()}
+                                  >
+                                    Save income changes
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn--sm"
+                                    onClick={() => setIncomeEditId(null)}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
                         {isPaymentLogOpen ? (
                           <tr className="table-row--quick">
                             <td colSpan={incomeTableColumnCount}>
