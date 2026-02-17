@@ -35,6 +35,7 @@ const initialIncomeForm: IncomeForm = {
   destinationAccountId: '',
   receivedDay: '',
   payDateAnchor: '',
+  employerNote: '',
   notes: '',
 }
 
@@ -54,6 +55,7 @@ const initialIncomeEditDraft: IncomeEditDraft = {
   destinationAccountId: '',
   receivedDay: '',
   payDateAnchor: '',
+  employerNote: '',
   notes: '',
 }
 
@@ -180,6 +182,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         destinationAccountId: parseOptionalAccountId(incomeForm.destinationAccountId),
         receivedDay: incomeForm.receivedDay ? parseIntInput(incomeForm.receivedDay, 'Received day') : undefined,
         payDateAnchor: parseOptionalIsoDateInput(incomeForm.payDateAnchor, 'Pay date anchor'),
+        employerNote: incomeForm.employerNote || undefined,
         notes: incomeForm.notes || undefined,
       })
 
@@ -257,6 +260,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
       destinationAccountId: entry.destinationAccountId ? String(entry.destinationAccountId) : '',
       receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
       payDateAnchor: entry.payDateAnchor ?? '',
+      employerNote: entry.employerNote ?? '',
       notes: entry.notes ?? '',
     })
   }
@@ -289,6 +293,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
           ? parseIntInput(incomeEditDraft.receivedDay, 'Received day')
           : undefined,
         payDateAnchor: parseOptionalIsoDateInput(incomeEditDraft.payDateAnchor, 'Pay date anchor'),
+        employerNote: incomeEditDraft.employerNote || undefined,
         notes: incomeEditDraft.notes || undefined,
       })
       setIncomeEditId(null)
@@ -303,6 +308,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
     status: IncomePaymentStatus
     receivedDay: string
     receivedAmount: string
+    paymentReference: string
+    payslipReference: string
     note: string
   }) => {
     clearError()
@@ -318,6 +325,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         status: input.status,
         receivedDay: input.receivedDay.trim() ? parseIntInput(input.receivedDay, 'Received day') : undefined,
         receivedAmount: parseOptionalNonNegativeFloat(input.receivedAmount, 'Received amount'),
+        paymentReference: input.paymentReference.trim() || undefined,
+        payslipReference: input.payslipReference.trim() || undefined,
         note: input.note.trim() || undefined,
       })
     } catch (error) {

@@ -340,6 +340,8 @@ type IncomeTabProps = {
     status: IncomePaymentStatus
     receivedDay: string
     receivedAmount: string
+    paymentReference: string
+    payslipReference: string
     note: string
   }) => Promise<void>
   onDeleteIncomePaymentCheck: (id: IncomePaymentCheckId) => Promise<void>
@@ -391,12 +393,16 @@ export function IncomeTab({
     status: IncomePaymentStatus
     receivedDay: string
     receivedAmount: string
+    paymentReference: string
+    payslipReference: string
     note: string
   }>({
     cycleMonth: currentCycleMonth,
     status: 'on_time',
     receivedDay: '',
     receivedAmount: '',
+    paymentReference: '',
+    payslipReference: '',
     note: '',
   })
 
@@ -549,6 +555,8 @@ export function IncomeTab({
       status: 'on_time',
       receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
       receivedAmount: entry.actualAmount !== undefined ? String(entry.actualAmount) : String(resolveIncomeNetAmount(entry)),
+      paymentReference: '',
+      payslipReference: '',
       note: '',
     })
   }
@@ -560,6 +568,8 @@ export function IncomeTab({
       status: 'on_time',
       receivedDay: '',
       receivedAmount: '',
+      paymentReference: '',
+      payslipReference: '',
       note: '',
     })
   }
@@ -985,6 +995,17 @@ export function IncomeTab({
                 </div>
               </div>
             ) : null}
+
+            <div className="form-field form-field--span2">
+              <label htmlFor="income-employer-note">Employer note</label>
+              <input
+                id="income-employer-note"
+                type="text"
+                placeholder="Optional payroll / employer context"
+                value={incomeForm.employerNote}
+                onChange={(event) => setIncomeForm((prev) => ({ ...prev, employerNote: event.target.value }))}
+              />
+            </div>
 
             <div className="form-field form-field--span2">
               <label htmlFor="income-notes">Notes</label>
@@ -1637,20 +1658,41 @@ export function IncomeTab({
                         </td>
                         <td>
                           {isEditing ? (
-                            <input
-                              className="inline-input"
-                              value={incomeEditDraft.notes}
-                              onChange={(event) =>
-                                setIncomeEditDraft((prev) => ({
-                                  ...prev,
-                                  notes: event.target.value,
-                                }))
-                              }
-                            />
+                            <div className="cell-stack">
+                              <input
+                                className="inline-input"
+                                placeholder="Employer note"
+                                value={incomeEditDraft.employerNote}
+                                onChange={(event) =>
+                                  setIncomeEditDraft((prev) => ({
+                                    ...prev,
+                                    employerNote: event.target.value,
+                                  }))
+                                }
+                              />
+                              <input
+                                className="inline-input"
+                                placeholder="General notes"
+                                value={incomeEditDraft.notes}
+                                onChange={(event) =>
+                                  setIncomeEditDraft((prev) => ({
+                                    ...prev,
+                                    notes: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
                           ) : (
-                            <span className="cell-truncate" title={entry.notes ?? ''}>
-                              {entry.notes ?? '-'}
-                            </span>
+                            <div className="cell-stack">
+                              {entry.employerNote ? (
+                                <small className="cell-truncate" title={entry.employerNote}>
+                                  Employer: {entry.employerNote}
+                                </small>
+                              ) : null}
+                              <span className="cell-truncate" title={entry.notes ?? ''}>
+                                {entry.notes ?? '-'}
+                              </span>
+                            </div>
                           )}
                         </td>
                         <td>
@@ -1744,6 +1786,8 @@ export function IncomeTab({
                                           status,
                                           receivedDay: status === 'missed' ? '' : prev.receivedDay,
                                           receivedAmount: status === 'missed' ? '' : prev.receivedAmount,
+                                          paymentReference: status === 'missed' ? '' : prev.paymentReference,
+                                          payslipReference: status === 'missed' ? '' : prev.payslipReference,
                                         }))
                                       }}
                                     >
@@ -1789,6 +1833,38 @@ export function IncomeTab({
                                     />
                                   </label>
 
+                                  <label className="income-payment-log-field">
+                                    <span>Payment reference</span>
+                                    <input
+                                      type="text"
+                                      placeholder="Optional bank/payroll ref"
+                                      value={paymentLogDraft.paymentReference}
+                                      onChange={(event) =>
+                                        setPaymentLogDraft((prev) => ({
+                                          ...prev,
+                                          paymentReference: event.target.value,
+                                        }))
+                                      }
+                                      disabled={paymentLogDraft.status === 'missed'}
+                                    />
+                                  </label>
+
+                                  <label className="income-payment-log-field">
+                                    <span>Payslip reference</span>
+                                    <input
+                                      type="text"
+                                      placeholder="Optional payslip ID"
+                                      value={paymentLogDraft.payslipReference}
+                                      onChange={(event) =>
+                                        setPaymentLogDraft((prev) => ({
+                                          ...prev,
+                                          payslipReference: event.target.value,
+                                        }))
+                                      }
+                                      disabled={paymentLogDraft.status === 'missed'}
+                                    />
+                                  </label>
+
                                   <label className="income-payment-log-field income-payment-log-field--note">
                                     <span>Note</span>
                                     <input
@@ -1821,6 +1897,8 @@ export function IncomeTab({
                                         status: paymentLogDraft.status,
                                         receivedDay: paymentLogDraft.receivedDay,
                                         receivedAmount: paymentLogDraft.receivedAmount,
+                                        paymentReference: paymentLogDraft.paymentReference,
+                                        payslipReference: paymentLogDraft.payslipReference,
                                         note: paymentLogDraft.note,
                                       })
                                     }
@@ -1844,6 +1922,15 @@ export function IncomeTab({
                                           {paymentCheck.receivedAmount !== undefined
                                             ? formatMoney(paymentCheck.receivedAmount)
                                             : 'No amount'}
+                                        </small>
+                                        <small>
+                                          {paymentCheck.paymentReference
+                                            ? `Payment ref ${paymentCheck.paymentReference}`
+                                            : 'No payment ref'}{' '}
+                                          ·{' '}
+                                          {paymentCheck.payslipReference
+                                            ? `Payslip ${paymentCheck.payslipReference}`
+                                            : 'No payslip ref'}
                                         </small>
                                         <button
                                           type="button"

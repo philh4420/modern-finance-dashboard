@@ -1897,6 +1897,7 @@ export const addIncome = mutation({
     destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),
+    employerNote: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -1904,6 +1905,7 @@ export const addIncome = mutation({
 
     validateRequiredText(args.source, 'Income source')
     validateFinite(args.amount, 'Income net amount')
+    validateOptionalText(args.employerNote, 'Employer note', 800)
     validateOptionalText(args.notes, 'Notes', 2000)
     if (args.actualAmount !== undefined) {
       validateNonNegative(args.actualAmount, 'Income actual paid amount')
@@ -1943,6 +1945,7 @@ export const addIncome = mutation({
         : Math.max(args.amount, 0)
     validatePositive(resolvedNetAmount, 'Income net amount')
     const payDateAnchor = args.payDateAnchor?.trim() || undefined
+    const employerNote = args.employerNote?.trim() || undefined
     const forecastSmoothing = normalizeIncomeForecastSmoothing(
       args.forecastSmoothingEnabled,
       args.forecastSmoothingMonths ?? 6,
@@ -1972,6 +1975,7 @@ export const addIncome = mutation({
       destinationAccountId,
       receivedDay: args.receivedDay,
       payDateAnchor,
+      employerNote,
       notes: args.notes?.trim() || undefined,
       createdAt: Date.now(),
     })
@@ -1994,6 +1998,7 @@ export const addIncome = mutation({
         forecastSmoothingMonths: forecastSmoothing.forecastSmoothingMonths,
         destinationAccountId: destinationAccountId ? String(destinationAccountId) : undefined,
         payDateAnchor,
+        employerNote,
       },
     })
   },
@@ -2017,6 +2022,7 @@ export const updateIncome = mutation({
     destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),
+    employerNote: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -2024,6 +2030,7 @@ export const updateIncome = mutation({
 
     validateRequiredText(args.source, 'Income source')
     validateFinite(args.amount, 'Income net amount')
+    validateOptionalText(args.employerNote, 'Employer note', 800)
     validateOptionalText(args.notes, 'Notes', 2000)
     if (args.actualAmount !== undefined) {
       validateNonNegative(args.actualAmount, 'Income actual paid amount')
@@ -2063,6 +2070,7 @@ export const updateIncome = mutation({
         : Math.max(args.amount, 0)
     validatePositive(resolvedNetAmount, 'Income net amount')
     const payDateAnchor = args.payDateAnchor?.trim() || undefined
+    const employerNote = args.employerNote?.trim() || undefined
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Income record not found.')
     const forecastSmoothing = normalizeIncomeForecastSmoothing(
@@ -2093,6 +2101,7 @@ export const updateIncome = mutation({
       destinationAccountId,
       receivedDay: args.receivedDay,
       payDateAnchor,
+      employerNote,
       notes: args.notes?.trim() || undefined,
     })
 
@@ -2114,6 +2123,7 @@ export const updateIncome = mutation({
         forecastSmoothingMonths: existing.forecastSmoothingMonths,
         destinationAccountId: existing.destinationAccountId ? String(existing.destinationAccountId) : undefined,
         payDateAnchor: existing.payDateAnchor,
+        employerNote: existing.employerNote,
       },
       after: {
         source: args.source.trim(),
@@ -2128,6 +2138,7 @@ export const updateIncome = mutation({
         forecastSmoothingMonths: forecastSmoothing.forecastSmoothingMonths,
         destinationAccountId: destinationAccountId ? String(destinationAccountId) : undefined,
         payDateAnchor,
+        employerNote,
       },
     })
   },
@@ -2166,6 +2177,7 @@ export const removeIncome = mutation({
         source: existing.source,
         amount: existing.amount,
         cadence: existing.cadence,
+        employerNote: existing.employerNote,
         removedPaymentChecks: existingPaymentChecks.length,
         removedChangeEvents: existingChangeEvents.length,
       },
@@ -2294,12 +2306,16 @@ export const upsertIncomePaymentCheck = mutation({
     status: incomePaymentStatusValidator,
     receivedDay: v.optional(v.number()),
     receivedAmount: v.optional(v.number()),
+    paymentReference: v.optional(v.string()),
+    payslipReference: v.optional(v.string()),
     note: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
 
     validateStatementMonth(args.cycleMonth, 'Cycle month')
+    validateOptionalText(args.paymentReference, 'Payment reference', 120)
+    validateOptionalText(args.payslipReference, 'Payslip reference', 120)
     validateOptionalText(args.note, 'Payment note', 800)
 
     if (args.receivedDay !== undefined) {
@@ -2341,6 +2357,8 @@ export const upsertIncomePaymentCheck = mutation({
       receivedDay: args.status === 'missed' ? undefined : args.receivedDay,
       expectedAmount,
       receivedAmount: args.status === 'missed' ? undefined : args.receivedAmount,
+      paymentReference: args.status === 'missed' ? undefined : args.paymentReference?.trim() || undefined,
+      payslipReference: args.status === 'missed' ? undefined : args.payslipReference?.trim() || undefined,
       note: args.note?.trim() || undefined,
       updatedAt: now,
     }
@@ -2358,6 +2376,8 @@ export const upsertIncomePaymentCheck = mutation({
           status: existing.status,
           receivedDay: existing.receivedDay,
           receivedAmount: existing.receivedAmount,
+          paymentReference: existing.paymentReference,
+          payslipReference: existing.payslipReference,
           note: existing.note,
         },
         after: nextData,
@@ -2416,6 +2436,8 @@ export const removeIncomePaymentCheck = mutation({
         status: existing.status,
         receivedDay: existing.receivedDay,
         receivedAmount: existing.receivedAmount,
+        paymentReference: existing.paymentReference,
+        payslipReference: existing.payslipReference,
       },
     })
   },

@@ -144,6 +144,7 @@ export type IncomeForm = {
   destinationAccountId: string
   receivedDay: string
   payDateAnchor: string
+  employerNote: string
   notes: string
 }
 

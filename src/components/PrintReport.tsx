@@ -979,7 +979,7 @@ export function PrintReport({
                       <th scope="col">Received</th>
                       <th scope="col">Anchor</th>
                       <th scope="col">Next Payday</th>
-                      {config.includeNotes ? <th scope="col">Notes</th> : null}
+                      {config.includeNotes ? <th scope="col">Notes / refs</th> : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -995,6 +995,8 @@ export function PrintReport({
                         actualPaidAmount !== undefined ? roundCurrency(actualPaidAmount - netAmount) : undefined
                       const paymentHistory = incomePaymentChecksByIncomeId.get(String(income._id)) ?? []
                       const reliability = calculateIncomePaymentReliability(paymentHistory)
+                      const latestPaymentEntry =
+                        [...paymentHistory].sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null
                       const currentCycleCheck =
                         paymentHistory.find((entry) => entry.cycleMonth === currentCycleMonth) ?? null
                       const incomeStatus = resolveIncomeStatusTag({
@@ -1010,6 +1012,18 @@ export function PrintReport({
                         customUnit: income.customUnit ?? undefined,
                         payDateAnchor: income.payDateAnchor,
                       })
+                      const notesAndReferences = [
+                        income.employerNote ? `Employer: ${income.employerNote}` : null,
+                        latestPaymentEntry?.paymentReference
+                          ? `Payment ref: ${latestPaymentEntry.paymentReference}`
+                          : null,
+                        latestPaymentEntry?.payslipReference
+                          ? `Payslip ref: ${latestPaymentEntry.payslipReference}`
+                          : null,
+                        income.notes ? `Note: ${income.notes}` : null,
+                      ]
+                        .filter((value): value is string => Boolean(value))
+                        .join(' | ')
 
                       return (
                         <tr key={income._id}>
@@ -1044,7 +1058,7 @@ export function PrintReport({
                           <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
                           <td>{income.payDateAnchor ?? 'n/a'}</td>
                           <td>{nextPayday ? toIsoDate(nextPayday) : 'n/a'}</td>
-                          {config.includeNotes ? <td>{income.notes ?? ''}</td> : null}
+                          {config.includeNotes ? <td>{notesAndReferences}</td> : null}
                         </tr>
                       )
                     })}

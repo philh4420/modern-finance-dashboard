@@ -206,6 +206,7 @@ export default defineSchema({
     destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),
+    employerNote: v.optional(v.string()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
   })
@@ -221,6 +222,8 @@ export default defineSchema({
     receivedDay: v.optional(v.number()),
     expectedAmount: v.number(),
     receivedAmount: v.optional(v.number()),
+    paymentReference: v.optional(v.string()),
+    payslipReference: v.optional(v.string()),
     note: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
