@@ -517,6 +517,10 @@ h2 {
   grid-column: span 7;
 }
 
+.panel-debt-focus {
+  grid-column: span 5;
+}
+
 .trust-kpi-grid {
   margin-top: 0.85rem;
   display: grid;
@@ -726,6 +730,76 @@ h2 {
   color: var(--text-muted);
   font-size: 0.78rem;
   display: block;
+}
+
+.debt-focus-summary {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.debt-focus-summary-card {
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  padding: 0.68rem 0.74rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.debt-focus-summary-card p {
+  margin: 0;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.debt-focus-summary-card strong {
+  font-size: 1.14rem;
+  letter-spacing: -0.015em;
+}
+
+.debt-focus-summary-card small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.debt-focus-target-grid {
+  margin-top: 0.72rem;
+  display: grid;
+  gap: 0.58rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.debt-focus-target-card {
+  border-radius: 0.92rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background:
+    radial-gradient(135% 140% at 100% -20%, color-mix(in oklab, var(--tone-finance) 12%, transparent), transparent 62%),
+    color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.7rem 0.76rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.debt-focus-target-label {
+  margin: 0;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.debt-focus-target-card strong {
+  font-size: 1.02rem;
+  letter-spacing: -0.012em;
+}
+
+.debt-focus-target-card small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
 }
 
 .settings-subtitle {
@@ -2367,6 +2441,7 @@ tbody td {
   .panel-trust-kpis,
   .panel-launch,
   .panel-cash-forecast,
+  .panel-debt-focus,
   .panel-insights,
   .panel-cash-events,
   .panel-categories,
@@ -2483,6 +2558,11 @@ tbody td {
   }
 
   .cards-mobile-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .debt-focus-summary,
+  .debt-focus-target-grid {
     grid-template-columns: 1fr;
   }
 }

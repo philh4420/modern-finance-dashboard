@@ -1,6 +1,8 @@
 import { useMemo, type CSSProperties } from 'react'
 import type {
   Cadence,
+  CardEntry,
+  CardMinimumPaymentType,
   CycleAuditLogEntry,
   FinanceAuditEventEntry,
   ForecastWindow,
@@ -23,6 +25,7 @@ type CspMode = 'unknown' | 'none' | 'report-only' | 'enforced'
 
 type DashboardTabProps = {
   dashboardCards: DashboardCard[]
+  cards: CardEntry[]
   summary: Summary
   insights: Insight[]
   upcomingCashEvents: UpcomingCashEvent[]
@@ -64,8 +67,84 @@ type ExecutiveMetric = {
   tone: 'good' | 'bad' | 'neutral'
 }
 
+type DebtFocusCard = {
+  id: string
+  name: string
+  balance: number
+  apr: number
+  monthlyInterest: number
+  minimumDue: number
+  plannedPayment: number
+  projectedNextMonthInterest: number
+  projected12MonthInterestCost: number
+}
+
+const roundCurrency = (value: number) => Math.round(value * 100) / 100
+const toNonNegative = (value: number | null | undefined) =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(value, 0) : 0
+const clampPercent = (value: number) => Math.min(Math.max(value, 0), 100)
+const normalizeCardMinimumPaymentType = (value: CardMinimumPaymentType | undefined | null): CardMinimumPaymentType =>
+  value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed'
+
+const projectDebtFocusCard = (card: CardEntry): DebtFocusCard => {
+  const currentBalance = toNonNegative(card.usedLimit)
+  const statementBalance = toNonNegative(card.statementBalance ?? card.usedLimit)
+  const pendingCharges = toNonNegative(card.pendingCharges ?? Math.max(currentBalance - statementBalance, 0))
+  const apr = toNonNegative(card.interestRate)
+  const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
+  const minimumPaymentType = normalizeCardMinimumPaymentType(card.minimumPaymentType)
+  const minimumPayment = toNonNegative(card.minimumPayment)
+  const minimumPaymentPercent = clampPercent(toNonNegative(card.minimumPaymentPercent))
+  const extraPayment = toNonNegative(card.extraPayment)
+  const plannedSpend = toNonNegative(card.spendPerMonth)
+
+  const currentCycleInterest = statementBalance * monthlyRate
+  const currentDueBalance = statementBalance + currentCycleInterest
+  const minimumDueRaw =
+    minimumPaymentType === 'percent_plus_interest'
+      ? statementBalance * (minimumPaymentPercent / 100) + currentCycleInterest
+      : minimumPayment
+  const minimumDue = Math.min(currentDueBalance, Math.max(minimumDueRaw, 0))
+  const plannedPayment = Math.min(currentDueBalance, minimumDue + extraPayment)
+  const postDueBalance = Math.max(currentDueBalance - plannedPayment, 0) + pendingCharges
+
+  let projectionBalance = roundCurrency(postDueBalance)
+  let projectedNextMonthInterest = 0
+  let projected12MonthInterestCost = 0
+
+  for (let month = 0; month < 12; month += 1) {
+    const interest = projectionBalance * monthlyRate
+    if (month === 0) {
+      projectedNextMonthInterest = interest
+    }
+    projected12MonthInterestCost += interest
+
+    const dueBalance = projectionBalance + interest
+    const monthMinimumDueRaw =
+      minimumPaymentType === 'percent_plus_interest'
+        ? projectionBalance * (minimumPaymentPercent / 100) + interest
+        : minimumPayment
+    const monthMinimumDue = Math.min(dueBalance, Math.max(monthMinimumDueRaw, 0))
+    const monthPlannedPayment = Math.min(dueBalance, monthMinimumDue + extraPayment)
+    projectionBalance = roundCurrency(Math.max(dueBalance - monthPlannedPayment, 0) + plannedSpend)
+  }
+
+  return {
+    id: String(card._id),
+    name: card.name,
+    balance: roundCurrency(Math.max(currentBalance, 0)),
+    apr,
+    monthlyInterest: roundCurrency(Math.max(currentCycleInterest, 0)),
+    minimumDue: roundCurrency(Math.max(minimumDue, 0)),
+    plannedPayment: roundCurrency(Math.max(plannedPayment, 0)),
+    projectedNextMonthInterest: roundCurrency(Math.max(projectedNextMonthInterest, 0)),
+    projected12MonthInterestCost: roundCurrency(Math.max(projected12MonthInterestCost, 0)),
+  }
+}
+
 export function DashboardTab({
   dashboardCards,
+  cards,
   summary,
   insights,
   upcomingCashEvents,
@@ -311,6 +390,47 @@ export function DashboardTab({
 
   const lowCashRiskPoints = forecastPath.filter((point) => point.risk !== 'healthy')
 
+  const debtFocusCards = useMemo(() => cards.map((card) => projectDebtFocusCard(card)), [cards])
+  const debtCardsWithBalance = useMemo(
+    () => debtFocusCards.filter((card) => card.balance > 0.005),
+    [debtFocusCards],
+  )
+
+  const projectedDebtInterestNextMonth = useMemo(
+    () => roundCurrency(debtCardsWithBalance.reduce((sum, card) => sum + card.projectedNextMonthInterest, 0)),
+    [debtCardsWithBalance],
+  )
+  const projectedDebtInterest12Month = useMemo(
+    () => roundCurrency(debtCardsWithBalance.reduce((sum, card) => sum + card.projected12MonthInterestCost, 0)),
+    [debtCardsWithBalance],
+  )
+  const totalCardDebt = useMemo(
+    () => roundCurrency(debtCardsWithBalance.reduce((sum, card) => sum + card.balance, 0)),
+    [debtCardsWithBalance],
+  )
+
+  const avalancheTarget = useMemo(
+    () =>
+      [...debtCardsWithBalance].sort((left, right) => {
+        if (right.apr !== left.apr) return right.apr - left.apr
+        if (right.monthlyInterest !== left.monthlyInterest) return right.monthlyInterest - left.monthlyInterest
+        if (right.balance !== left.balance) return right.balance - left.balance
+        return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+      })[0] ?? null,
+    [debtCardsWithBalance],
+  )
+
+  const snowballTarget = useMemo(
+    () =>
+      [...debtCardsWithBalance].sort((left, right) => {
+        if (left.balance !== right.balance) return left.balance - right.balance
+        if (right.apr !== left.apr) return right.apr - left.apr
+        if (right.monthlyInterest !== left.monthlyInterest) return right.monthlyInterest - left.monthlyInterest
+        return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+      })[0] ?? null,
+    [debtCardsWithBalance],
+  )
+
   return (
     <>
       <section className="executive-strip" aria-label="Executive summary strip">
@@ -492,6 +612,59 @@ export function DashboardTab({
                   </ul>
                 )}
               </div>
+            </>
+          )}
+        </article>
+
+        <article className="panel panel-debt-focus">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Debt Focus</p>
+              <h2>Payoff Intelligence</h2>
+            </div>
+            <p className="panel-value">{formatMoney(totalCardDebt)} total card debt</p>
+          </header>
+          {debtCardsWithBalance.length === 0 ? (
+            <p className="empty-state">No active card balances to optimize. Add card balances to get Avalanche and Snowball targets.</p>
+          ) : (
+            <>
+              <div className="debt-focus-summary">
+                <article className="debt-focus-summary-card">
+                  <p>Projected next-month interest</p>
+                  <strong>{formatMoney(projectedDebtInterestNextMonth)}</strong>
+                </article>
+                <article className="debt-focus-summary-card">
+                  <p>Projected 12-month interest</p>
+                  <strong>{formatMoney(projectedDebtInterest12Month)}</strong>
+                  <small>if payments/spend stay unchanged</small>
+                </article>
+              </div>
+
+              <div className="debt-focus-target-grid">
+                <article className="debt-focus-target-card">
+                  <p className="debt-focus-target-label">Avalanche target</p>
+                  <strong>{avalancheTarget?.name ?? 'n/a'}</strong>
+                  <small>
+                    {avalancheTarget
+                      ? `${formatMoney(avalancheTarget.balance)} balance · ${avalancheTarget.apr.toFixed(2)}% APR · ${formatMoney(avalancheTarget.projectedNextMonthInterest)} next-month interest`
+                      : 'No eligible card'}
+                  </small>
+                </article>
+                <article className="debt-focus-target-card">
+                  <p className="debt-focus-target-label">Snowball target</p>
+                  <strong>{snowballTarget?.name ?? 'n/a'}</strong>
+                  <small>
+                    {snowballTarget
+                      ? `${formatMoney(snowballTarget.balance)} balance · ${snowballTarget.apr.toFixed(2)}% APR · ${formatMoney(snowballTarget.projectedNextMonthInterest)} next-month interest`
+                      : 'No eligible card'}
+                  </small>
+                </article>
+              </div>
+
+              <p className="subnote">
+                Target logic: Avalanche prioritizes highest APR. Snowball prioritizes smallest balance. Both estimates use your current
+                minimum/extra payment setup.
+              </p>
             </>
           )}
         </article>

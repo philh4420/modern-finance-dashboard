@@ -558,6 +558,7 @@ function App() {
         {activeTab === 'dashboard' ? (
           <DashboardTab
             dashboardCards={dashboardCards}
+            cards={cards}
             summary={summary}
             insights={insights}
             upcomingCashEvents={upcomingCashEvents}
