@@ -47,6 +47,9 @@ type CardCycleProjection = {
   minimumDue: number
   plannedPayment: number
   dueAdjustedCurrent: number
+  projectedNextMonthInterest: number
+  projectedUtilizationAfterPayment: number
+  projected12MonthInterestCost: number
   displayCurrentBalance: number
   displayAvailableCredit: number
   displayUtilization: number
@@ -116,6 +119,44 @@ const rankPayoffCards = (rows: PayoffCard[], strategy: PayoffStrategy) =>
     return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
   })
 
+const projectInterestForecast = (input: {
+  statementStart: number
+  monthlyRate: number
+  minimumPaymentType: CardMinimumPaymentType
+  configuredMinimumPayment: number
+  minimumPaymentPercent: number
+  extraPayment: number
+  plannedSpend: number
+  months: number
+}) => {
+  let statementBalance = Math.max(input.statementStart, 0)
+  let nextMonthInterest = 0
+  let totalInterest = 0
+
+  for (let month = 0; month < input.months; month += 1) {
+    const interest = statementBalance * input.monthlyRate
+    if (month === 0) {
+      nextMonthInterest = interest
+    }
+
+    const dueBalance = statementBalance + interest
+    const minimumDueRaw =
+      input.minimumPaymentType === 'percent_plus_interest'
+        ? statementBalance * (input.minimumPaymentPercent / 100) + interest
+        : input.configuredMinimumPayment
+    const minimumDue = Math.min(dueBalance, Math.max(minimumDueRaw, 0))
+    const plannedPayment = Math.min(dueBalance, minimumDue + input.extraPayment)
+    const carriedAfterDue = dueBalance - plannedPayment
+    statementBalance = carriedAfterDue + input.plannedSpend
+    totalInterest += interest
+  }
+
+  return {
+    nextMonthInterest: roundCurrency(nextMonthInterest),
+    totalInterest: roundCurrency(totalInterest),
+  }
+}
+
 const projectCardCycle = (
   input: {
     creditLimit: number
@@ -154,6 +195,17 @@ const projectCardCycle = (
   const minimumDue = roundCurrency(Math.min(newStatementBalance, Math.max(minimumDueRaw, 0)))
   const plannedPayment = roundCurrency(Math.min(newStatementBalance, minimumDue + extraPayment))
   const dueAdjustedCurrent = roundCurrency(Math.max(newStatementBalance - plannedPayment, 0) + pendingCharges)
+  const projectedUtilizationAfterPayment = utilizationFor(dueAdjustedCurrent, limit)
+  const interestForecast = projectInterestForecast({
+    statementStart: dueAdjustedCurrent,
+    monthlyRate,
+    minimumPaymentType,
+    configuredMinimumPayment: minimumPayment,
+    minimumPaymentPercent,
+    extraPayment,
+    plannedSpend,
+    months: 12,
+  })
   const dueApplied = todayDay >= dueDay
   const displayCurrentBalance = dueApplied ? dueAdjustedCurrent : currentInput
   const displayAvailableCredit = roundCurrency(limit - displayCurrentBalance)
@@ -173,6 +225,9 @@ const projectCardCycle = (
     minimumDue,
     plannedPayment,
     dueAdjustedCurrent,
+    projectedNextMonthInterest: interestForecast.nextMonthInterest,
+    projectedUtilizationAfterPayment,
+    projected12MonthInterestCost: interestForecast.totalInterest,
     displayCurrentBalance: roundCurrency(displayCurrentBalance),
     displayAvailableCredit,
     displayUtilization,
@@ -253,12 +308,26 @@ export function CardsTab({
     () => cardRows.reduce((sum, row) => sum + row.projection.displayCurrentBalance, 0),
     [cardRows],
   )
+  const projectedPostPaymentBalanceTotal = useMemo(
+    () => cardRows.reduce((sum, row) => sum + row.projection.dueAdjustedCurrent, 0),
+    [cardRows],
+  )
   const availableCreditTotal = useMemo(
     () => cardRows.reduce((sum, row) => sum + row.projection.displayAvailableCredit, 0),
     [cardRows],
   )
+  const projectedNextMonthInterestTotal = useMemo(
+    () => cardRows.reduce((sum, row) => sum + row.projection.projectedNextMonthInterest, 0),
+    [cardRows],
+  )
+  const projected12MonthInterestTotal = useMemo(
+    () => cardRows.reduce((sum, row) => sum + row.projection.projected12MonthInterestCost, 0),
+    [cardRows],
+  )
 
   const dueAdjustedUtilizationPercent = cardLimitTotal > 0 ? dueAdjustedCurrentTotal / cardLimitTotal : 0
+  const projectedUtilizationAfterPaymentPortfolio =
+    cardLimitTotal > 0 ? projectedPostPaymentBalanceTotal / cardLimitTotal : 0
 
   const payoffCards = useMemo<PayoffCard[]>(
     () =>
@@ -557,6 +626,11 @@ export function CardsTab({
             </p>
             <p className="subnote">
               {formatMoney(newStatementsTotal)} new statements · {formatMoney(plannedPaymentTotal)} total planned payments
+            </p>
+            <p className="subnote">
+              {formatMoney(projectedNextMonthInterestTotal)} projected next-month interest ·{' '}
+              {formatPercent(projectedUtilizationAfterPaymentPortfolio)} projected utilization after payment ·{' '}
+              {formatMoney(projected12MonthInterestTotal)} projected 12-month interest cost
             </p>
           </div>
           <div className="panel-actions">
@@ -985,7 +1059,12 @@ export function CardsTab({
                                       Util {formatPercent(rowProjection.displayUtilization)}
                                     </span>
                                     <small>APR {entry.interestRate !== undefined ? `${entry.interestRate.toFixed(2)}%` : 'n/a'}</small>
-                                    <small>Interest {formatMoney(rowProjection.interestAmount)}</small>
+                                    <small>Current-cycle interest {formatMoney(rowProjection.interestAmount)}</small>
+                                    <small>Projected next-month interest {formatMoney(rowProjection.projectedNextMonthInterest)}</small>
+                                    <small>
+                                      Projected util after payment {formatPercent(rowProjection.projectedUtilizationAfterPayment)}
+                                    </small>
+                                    <small>Projected 12-month interest {formatMoney(rowProjection.projected12MonthInterestCost)}</small>
                                   </div>
                                 )}
                               </td>
@@ -1370,6 +1449,18 @@ export function CardsTab({
                               <div>
                                 <span>Interest</span>
                                 <strong>{formatMoney(rowProjection.interestAmount)}</strong>
+                              </div>
+                              <div>
+                                <span>Next-month interest</span>
+                                <strong>{formatMoney(rowProjection.projectedNextMonthInterest)}</strong>
+                              </div>
+                              <div>
+                                <span>Post-pay util</span>
+                                <strong>{formatPercent(rowProjection.projectedUtilizationAfterPayment)}</strong>
+                              </div>
+                              <div>
+                                <span>12m interest</span>
+                                <strong>{formatMoney(rowProjection.projected12MonthInterestCost)}</strong>
                               </div>
                               <div>
                                 <span>Planned spend</span>
