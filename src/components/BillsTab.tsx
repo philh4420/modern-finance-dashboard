@@ -1,5 +1,6 @@
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type {
+  AccountEntry,
   BillEditDraft,
   BillEntry,
   BillForm,
@@ -9,7 +10,7 @@ import type {
   CustomCadenceUnit,
   CustomCadenceUnitOption,
 } from './financeTypes'
-import { nextDateForCadence } from '../lib/cadenceDates'
+import { nextDateForCadence, toIsoDate } from '../lib/cadenceDates'
 import { toMonthlyAmount } from '../lib/incomeMath'
 
 type BillSortKey = 'name_asc' | 'amount_desc' | 'amount_asc' | 'day_asc' | 'cadence_asc' | 'autopay_first'
@@ -75,6 +76,7 @@ const isVariableBill = (entry: BillEntry) => {
 }
 
 type BillsTabProps = {
+  accounts: AccountEntry[]
   bills: BillEntry[]
   monthlyBills: number
   billForm: BillForm
@@ -95,6 +97,7 @@ type BillsTabProps = {
 }
 
 export function BillsTab({
+  accounts,
   bills,
   monthlyBills,
   billForm,
@@ -115,6 +118,11 @@ export function BillsTab({
 }: BillsTabProps) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<BillSortKey>('name_asc')
+  const [timelineWindowDays, setTimelineWindowDays] = useState<14 | 30>(14)
+  const timelineDateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }),
+    [],
+  )
 
   const visibleBills = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -226,6 +234,126 @@ export function BillsTab({
       variableVariancePercent,
     }
   }, [bills, monthlyBills])
+
+  const timelineData = useMemo(() => {
+    const today = startOfDay(new Date())
+    const timelineMaxDays = 30
+    const liquidBalanceStart = accounts
+      .filter((account) => account.liquid)
+      .reduce((sum, account) => sum + account.balance, 0)
+
+    const events: Array<{
+      id: string
+      billId: BillId
+      name: string
+      dueDate: Date
+      amount: number
+      autopay: boolean
+      cadenceText: string
+      daysAway: number
+    }> = []
+
+    bills.forEach((entry) => {
+      let cursor = today
+      let iterations = 0
+
+      while (iterations < 24) {
+        iterations += 1
+        const nextDueDate = nextDateForCadence({
+          cadence: entry.cadence,
+          createdAt: entry.createdAt,
+          dayOfMonth: entry.dueDay,
+          customInterval: entry.customInterval ?? undefined,
+          customUnit: entry.customUnit ?? undefined,
+          now: cursor,
+        })
+
+        if (!nextDueDate) {
+          break
+        }
+
+        const normalizedDueDate = startOfDay(nextDueDate)
+        const daysAway = Math.round((normalizedDueDate.getTime() - today.getTime()) / msPerDay)
+        if (daysAway < 0) {
+          cursor = new Date(normalizedDueDate.getTime() + msPerDay)
+          continue
+        }
+
+        if (daysAway > timelineMaxDays) {
+          break
+        }
+
+        events.push({
+          id: `${entry._id}-${toIsoDate(normalizedDueDate)}-${iterations}`,
+          billId: entry._id,
+          name: entry.name,
+          dueDate: normalizedDueDate,
+          amount: entry.amount,
+          autopay: entry.autopay,
+          cadenceText: cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit),
+          daysAway,
+        })
+
+        cursor = new Date(normalizedDueDate.getTime() + msPerDay)
+      }
+    })
+
+    const sortedEvents = events.sort((left, right) => {
+      if (left.dueDate.getTime() !== right.dueDate.getTime()) {
+        return left.dueDate.getTime() - right.dueDate.getTime()
+      }
+      if (left.autopay !== right.autopay) {
+        return left.autopay ? -1 : 1
+      }
+      if (left.amount !== right.amount) {
+        return right.amount - left.amount
+      }
+      return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+    })
+
+    const withImpact = sortedEvents.reduce<{
+      runningLiquidBalance: number
+      items: Array<
+        (typeof sortedEvents)[number] & {
+          beforeImpact: number
+          afterImpact: number
+          impactSeverity: 'critical' | 'warning' | 'good'
+        }
+      >
+    }>(
+      (acc, entry) => {
+        const beforeImpact = acc.runningLiquidBalance
+        const afterImpact = beforeImpact - entry.amount
+
+        const item = {
+          ...entry,
+          beforeImpact,
+          afterImpact,
+          impactSeverity:
+            afterImpact < 0
+              ? ('critical' as const)
+              : afterImpact < Math.max(entry.amount * 1.25, monthlyBills * 0.25)
+                ? ('warning' as const)
+                : ('good' as const),
+        }
+
+        return {
+          runningLiquidBalance: afterImpact,
+          items: [...acc.items, item],
+        }
+      },
+      {
+        runningLiquidBalance: liquidBalanceStart,
+        items: [],
+      },
+    ).items
+
+    const visible = withImpact.filter((entry) => entry.daysAway <= timelineWindowDays)
+    return {
+      liquidBalanceStart,
+      visible,
+    }
+  }, [accounts, bills, cadenceLabel, monthlyBills, timelineWindowDays])
 
   return (
     <section className="editor-grid bills-tab-shell" aria-label="Bill management">
@@ -453,6 +581,85 @@ export function BillsTab({
                     : 'Tag notes with "variable" or use custom/weekly cadence to track variability'}
                 </small>
               </article>
+            </section>
+
+            <section className="bills-timeline" aria-label="Bills due-date timeline">
+              <header className="bills-timeline-head">
+                <div>
+                  <h3>Due-date timeline</h3>
+                  <p>
+                    Upcoming due items with amount and liquid-account impact. Starting liquid pool:{' '}
+                    <strong>{formatMoney(timelineData.liquidBalanceStart)}</strong>
+                  </p>
+                </div>
+                <div className="bills-timeline-window-toggle" role="group" aria-label="Timeline window">
+                  <button
+                    type="button"
+                    className={`btn btn-ghost btn--sm ${timelineWindowDays === 14 ? 'bills-timeline-window-btn--active' : ''}`}
+                    onClick={() => setTimelineWindowDays(14)}
+                  >
+                    Next 14 days
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-ghost btn--sm ${timelineWindowDays === 30 ? 'bills-timeline-window-btn--active' : ''}`}
+                    onClick={() => setTimelineWindowDays(30)}
+                  >
+                    Next 30 days
+                  </button>
+                </div>
+              </header>
+
+              {timelineData.visible.length === 0 ? (
+                <p className="subnote">No bills due in the selected window.</p>
+              ) : (
+                <ul className="bills-timeline-list">
+                  {timelineData.visible.map((event) => (
+                    <li key={event.id} className="bills-timeline-item">
+                      <div className="bills-timeline-date">
+                        <strong>{timelineDateFormatter.format(event.dueDate)}</strong>
+                        <small>
+                          {event.daysAway === 0 ? 'Due today' : event.daysAway === 1 ? 'Due in 1 day' : `Due in ${event.daysAway} days`}
+                        </small>
+                      </div>
+                      <div className="bills-timeline-main">
+                        <strong>{event.name}</strong>
+                        <small>
+                          {event.autopay ? 'Autopay' : 'Manual'} · {event.cadenceText}
+                        </small>
+                      </div>
+                      <div className="bills-timeline-amount">
+                        <strong>{formatMoney(event.amount)}</strong>
+                        <small>bill amount</small>
+                      </div>
+                      <div className="bills-timeline-impact">
+                        <strong className={event.afterImpact < 0 ? 'amount-negative' : 'amount-positive'}>
+                          {formatMoney(event.afterImpact)}
+                        </strong>
+                        <small>liquid after due</small>
+                      </div>
+                      <div className="bills-timeline-signal">
+                        <span
+                          className={
+                            event.impactSeverity === 'critical'
+                              ? 'pill pill--critical'
+                              : event.impactSeverity === 'warning'
+                                ? 'pill pill--warning'
+                                : 'pill pill--good'
+                          }
+                        >
+                          {event.impactSeverity === 'critical'
+                            ? 'Low cash risk'
+                            : event.impactSeverity === 'warning'
+                              ? 'Watch cash'
+                              : 'Healthy'}
+                        </span>
+                        <small>Impact {formatMoney(-event.amount)}</small>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
 
             <p className="subnote">

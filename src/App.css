@@ -2383,6 +2383,102 @@ h2 {
     color-mix(in oklab, var(--surface-card) 93%, white 7%);
 }
 
+.bills-timeline {
+  margin-top: 0.72rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 80%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-savings) 11%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
+    0 18px 36px -36px color-mix(in oklab, black 45%, transparent);
+  padding: 0.72rem 0.8rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.bills-timeline-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.bills-timeline-head h3 {
+  margin: 0.12rem 0 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.bills-timeline-head p {
+  margin: 0.18rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.bills-timeline-window-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.bills-timeline-window-btn--active {
+  border-color: color-mix(in oklab, var(--tone-finance) 42%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 14%, white 86%);
+}
+
+.bills-timeline-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.44rem;
+}
+
+.bills-timeline-item {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.54rem 0.62rem;
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 0.85fr) minmax(10rem, 1.2fr) minmax(6rem, 0.8fr) minmax(7.2rem, 0.9fr) minmax(7.2rem, 0.95fr);
+  gap: 0.52rem;
+  align-items: center;
+}
+
+.bills-timeline-date,
+.bills-timeline-main,
+.bills-timeline-amount,
+.bills-timeline-impact,
+.bills-timeline-signal {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.bills-timeline-date strong,
+.bills-timeline-main strong,
+.bills-timeline-amount strong,
+.bills-timeline-impact strong,
+.bills-timeline-signal strong {
+  letter-spacing: -0.01em;
+}
+
+.bills-timeline-date small,
+.bills-timeline-main small,
+.bills-timeline-amount small,
+.bills-timeline-impact small,
+.bills-timeline-signal small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.22;
+}
+
+.bills-timeline-signal .pill {
+  width: fit-content;
+}
+
 .income-breakdown-summary {
   margin-top: 0.72rem;
   grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
@@ -3967,6 +4063,15 @@ tbody td {
   .debt-focus-target-grid {
     grid-template-columns: 1fr;
   }
+
+  .bills-timeline-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .bills-timeline-item {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 620px) {
@@ -4021,6 +4126,10 @@ tbody td {
 
   .forecast-axis-labels span:last-child {
     text-align: left;
+  }
+
+  .bills-timeline-item {
+    grid-template-columns: 1fr;
   }
 }
 

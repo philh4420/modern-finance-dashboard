@@ -673,6 +673,7 @@ function App() {
 
 	        {activeTab === 'bills' ? (
 	          <BillsTab
+            accounts={accounts}
 	            bills={bills}
 	            monthlyBills={summary.monthlyBills}
 	            billForm={billsSection.billForm}
