@@ -957,7 +957,7 @@ export function DashboardTab({
   }
 
   return (
-    <>
+    <div className="dashboard-tab-shell">
       <section className="executive-strip" aria-label="Executive summary strip">
         {executiveMetrics.map((metric) => (
           <article className="executive-card" key={metric.id}>
@@ -1867,6 +1867,6 @@ export function DashboardTab({
         </article>
 
       </section>
-    </>
+    </div>
   )
 }
