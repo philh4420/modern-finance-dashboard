@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
 import { mutation, query, type MutationCtx, type QueryCtx } from './_generated/server'
-import type { Doc } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import { requireIdentity as requireAuthIdentity } from './lib/authz'
 
 const cadenceValidator = v.union(
@@ -1335,6 +1335,20 @@ const recordFinanceAuditEvent = async (ctx: MutationCtx, args: {
   })
 }
 
+const resolveIncomeDestinationAccountId = async (
+  ctx: MutationCtx,
+  userId: string,
+  destinationAccountId: Id<'accounts'> | undefined,
+) => {
+  if (!destinationAccountId) {
+    return undefined
+  }
+
+  const destinationAccount = await ctx.db.get(destinationAccountId)
+  ensureOwned(destinationAccount, userId, 'Destination account not found.')
+  return destinationAccountId
+}
+
 const getPurchaseExpenseAccountCode = (category: string) => `EXPENSE:PURCHASE:${sanitizeLedgerToken(category)}`
 
 const recordPurchaseLedger = async (ctx: MutationCtx, args: {
@@ -1835,6 +1849,7 @@ export const addIncome = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),
     notes: v.optional(v.string()),
@@ -1883,6 +1898,11 @@ export const addIncome = mutation({
         : Math.max(args.amount, 0)
     validatePositive(resolvedNetAmount, 'Income net amount')
     const payDateAnchor = args.payDateAnchor?.trim() || undefined
+    const destinationAccountId = await resolveIncomeDestinationAccountId(
+      ctx,
+      identity.subject,
+      args.destinationAccountId,
+    )
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
@@ -1898,6 +1918,7 @@ export const addIncome = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      destinationAccountId,
       receivedDay: args.receivedDay,
       payDateAnchor,
       notes: args.notes?.trim() || undefined,
@@ -1918,6 +1939,7 @@ export const addIncome = mutation({
         nationalInsuranceAmount: args.nationalInsuranceAmount,
         pensionAmount: args.pensionAmount,
         cadence: args.cadence,
+        destinationAccountId: destinationAccountId ? String(destinationAccountId) : undefined,
         payDateAnchor,
       },
     })
@@ -1937,6 +1959,7 @@ export const updateIncome = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),
     notes: v.optional(v.string()),
@@ -1985,6 +2008,11 @@ export const updateIncome = mutation({
         : Math.max(args.amount, 0)
     validatePositive(resolvedNetAmount, 'Income net amount')
     const payDateAnchor = args.payDateAnchor?.trim() || undefined
+    const destinationAccountId = await resolveIncomeDestinationAccountId(
+      ctx,
+      identity.subject,
+      args.destinationAccountId,
+    )
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
 
@@ -2002,6 +2030,7 @@ export const updateIncome = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      destinationAccountId,
       receivedDay: args.receivedDay,
       payDateAnchor,
       notes: args.notes?.trim() || undefined,
@@ -2021,6 +2050,7 @@ export const updateIncome = mutation({
         nationalInsuranceAmount: existing.nationalInsuranceAmount,
         pensionAmount: existing.pensionAmount,
         cadence: existing.cadence,
+        destinationAccountId: existing.destinationAccountId ? String(existing.destinationAccountId) : undefined,
         payDateAnchor: existing.payDateAnchor,
       },
       after: {
@@ -2032,6 +2062,7 @@ export const updateIncome = mutation({
         nationalInsuranceAmount: args.nationalInsuranceAmount,
         pensionAmount: args.pensionAmount,
         cadence: args.cadence,
+        destinationAccountId: destinationAccountId ? String(destinationAccountId) : undefined,
         payDateAnchor,
       },
     })
@@ -3573,6 +3604,21 @@ export const removeAccount = mutation({
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Account record not found.')
 
+    const mappedIncomeEntries = await ctx.db
+      .query('incomes')
+      .withIndex('by_userId_destinationAccountId', (q) =>
+        q.eq('userId', identity.subject).eq('destinationAccountId', args.id),
+      )
+      .collect()
+
+    await Promise.all(
+      mappedIncomeEntries.map((income) =>
+        ctx.db.patch(income._id, {
+          destinationAccountId: undefined,
+        }),
+      ),
+    )
+
     await ctx.db.delete(args.id)
 
     await recordFinanceAuditEvent(ctx, {
@@ -3585,6 +3631,9 @@ export const removeAccount = mutation({
         type: existing.type,
         balance: existing.balance,
         liquid: existing.liquid,
+      },
+      metadata: {
+        detachedIncomeMappings: mappedIncomeEntries.length,
       },
     })
   },

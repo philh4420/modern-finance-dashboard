@@ -593,6 +593,10 @@ export function PrintReport({
     map.set(key, current)
     return map
   }, new Map<string, IncomePaymentCheckEntry[]>())
+  const accountNameById = accounts.reduce((map, account) => {
+    map.set(String(account._id), account.name)
+    return map
+  }, new Map<string, string>())
   const overallIncomePaymentReliability = calculateIncomePaymentReliability(incomePaymentChecks)
   const incomeExpectations = incomes.reduce(
     (totals, income) => {
@@ -933,6 +937,7 @@ export function PrintReport({
                       <th scope="col">Reliability</th>
                       <th scope="col">Latest Status</th>
                       <th scope="col">Income Status</th>
+                      <th scope="col">Landing Account</th>
                       <th scope="col">Cadence</th>
                       <th scope="col">Received</th>
                       <th scope="col">Anchor</th>
@@ -988,6 +993,11 @@ export function PrintReport({
                               : 'n/a'}
                           </td>
                           <td>{incomeStatusLabel(incomeStatus)}</td>
+                          <td>
+                            {income.destinationAccountId
+                              ? accountNameById.get(String(income.destinationAccountId)) ?? 'Missing account'
+                              : 'Unassigned'}
+                          </td>
                           <td>{income.cadence}</td>
                           <td>{income.receivedDay ? `Day ${income.receivedDay}` : 'n/a'}</td>
                           <td>{income.payDateAnchor ?? 'n/a'}</td>

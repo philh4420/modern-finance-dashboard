@@ -643,6 +643,7 @@ function App() {
 	        {activeTab === 'income' ? (
 	          <IncomeTab
 	            incomes={incomes}
+              accounts={accounts}
               incomePaymentChecks={incomePaymentChecks}
 	            monthlyIncome={summary.monthlyIncome}
 	            incomeForm={incomeSection.incomeForm}

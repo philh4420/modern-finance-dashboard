@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+import type { Id } from '../../convex/_generated/dataModel'
 import type {
   IncomeEditDraft,
   IncomeEntry,
@@ -28,6 +29,7 @@ const initialIncomeForm: IncomeForm = {
   cadence: 'monthly',
   customInterval: '',
   customUnit: 'weeks',
+  destinationAccountId: '',
   receivedDay: '',
   payDateAnchor: '',
   notes: '',
@@ -44,6 +46,7 @@ const initialIncomeEditDraft: IncomeEditDraft = {
   cadence: 'monthly',
   customInterval: '',
   customUnit: 'weeks',
+  destinationAccountId: '',
   receivedDay: '',
   payDateAnchor: '',
   notes: '',
@@ -75,6 +78,14 @@ const parseOptionalIsoDateInput = (value: string, label: string) => {
   }
 
   return trimmed
+}
+
+const parseOptionalAccountId = (value: string): Id<'accounts'> | undefined => {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  return trimmed as Id<'accounts'>
 }
 
 const parseIncomeAmounts = (
@@ -145,6 +156,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         cadence: incomeForm.cadence,
         customInterval,
         customUnit: isCustomCadence(incomeForm.cadence) ? incomeForm.customUnit : undefined,
+        destinationAccountId: parseOptionalAccountId(incomeForm.destinationAccountId),
         receivedDay: incomeForm.receivedDay ? parseIntInput(incomeForm.receivedDay, 'Received day') : undefined,
         payDateAnchor: parseOptionalIsoDateInput(incomeForm.payDateAnchor, 'Pay date anchor'),
         notes: incomeForm.notes || undefined,
@@ -181,6 +193,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
       cadence: entry.cadence,
       customInterval: entry.customInterval ? String(entry.customInterval) : '',
       customUnit: entry.customUnit ?? 'weeks',
+      destinationAccountId: entry.destinationAccountId ? String(entry.destinationAccountId) : '',
       receivedDay: entry.receivedDay ? String(entry.receivedDay) : '',
       payDateAnchor: entry.payDateAnchor ?? '',
       notes: entry.notes ?? '',
@@ -204,6 +217,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         cadence: incomeEditDraft.cadence,
         customInterval,
         customUnit: isCustomCadence(incomeEditDraft.cadence) ? incomeEditDraft.customUnit : undefined,
+        destinationAccountId: parseOptionalAccountId(incomeEditDraft.destinationAccountId),
         receivedDay: incomeEditDraft.receivedDay
           ? parseIntInput(incomeEditDraft.receivedDay, 'Received day')
           : undefined,

@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type {
+  AccountEntry,
   Cadence,
   CustomCadenceUnit,
   CustomCadenceUnitOption,
@@ -24,6 +25,7 @@ import { nextDateForCadence, toIsoDate } from '../lib/cadenceDates'
 
 type IncomeSortKey =
   | 'source_asc'
+  | 'account_asc'
   | 'planned_desc'
   | 'planned_asc'
   | 'actual_desc'
@@ -220,6 +222,7 @@ const calculateIncomePaymentReliability = (checks: IncomePaymentCheckEntry[]): I
 
 type IncomeTabProps = {
   incomes: IncomeEntry[]
+  accounts: AccountEntry[]
   incomePaymentChecks: IncomePaymentCheckEntry[]
   monthlyIncome: number
   incomeForm: IncomeForm
@@ -250,6 +253,7 @@ type IncomeTabProps = {
 
 export function IncomeTab({
   incomes,
+  accounts,
   incomePaymentChecks,
   monthlyIncome,
   incomeForm,
@@ -348,6 +352,20 @@ export function IncomeTab({
 
   const trackedVarianceMonthly = roundCurrency(monthlyBreakdown.receivedActual - monthlyBreakdown.expectedTracked)
   const untrackedCount = Math.max(incomes.length - monthlyBreakdown.trackedCount, 0)
+  const accountNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    accounts.forEach((account) => {
+      map.set(String(account._id), account.name)
+    })
+    return map
+  }, [accounts])
+  const accountOptions = useMemo(
+    () =>
+      [...accounts].sort((left, right) =>
+        left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
+      ),
+    [accounts],
+  )
 
   const paymentChecksByIncomeId = useMemo(() => {
     const map = new Map<IncomeId, IncomePaymentCheckEntry[]>()
@@ -403,7 +421,10 @@ export function IncomeTab({
     const filtered = query
       ? incomes.filter((entry) => {
           const notes = entry.notes ?? ''
-          return `${entry.source} ${notes}`.toLowerCase().includes(query)
+          const destinationAccountName = entry.destinationAccountId
+            ? accountNameById.get(String(entry.destinationAccountId)) ?? ''
+            : ''
+          return `${entry.source} ${notes} ${destinationAccountName}`.toLowerCase().includes(query)
         })
       : incomes.slice()
 
@@ -438,6 +459,15 @@ export function IncomeTab({
       switch (sortKey) {
         case 'source_asc':
           return a.source.localeCompare(b.source, undefined, { sensitivity: 'base' })
+        case 'account_asc': {
+          const accountNameA = a.destinationAccountId
+            ? accountNameById.get(String(a.destinationAccountId)) ?? 'Unassigned'
+            : 'Unassigned'
+          const accountNameB = b.destinationAccountId
+            ? accountNameById.get(String(b.destinationAccountId)) ?? 'Unassigned'
+            : 'Unassigned'
+          return accountNameA.localeCompare(accountNameB, undefined, { sensitivity: 'base' })
+        }
         case 'planned_desc':
           return plannedB - plannedA
         case 'planned_asc':
@@ -462,7 +492,7 @@ export function IncomeTab({
     })
 
     return sorted
-  }, [cadenceLabel, incomes, search, sortKey])
+  }, [accountNameById, cadenceLabel, incomes, search, sortKey])
 
   const sourceTrendCards = useMemo<IncomeSourceTrendCard[]>(() => {
     const now = new Date()
@@ -663,6 +693,27 @@ export function IncomeTab({
             </div>
 
             <div className="form-field">
+              <label htmlFor="income-destination-account">Default landing account</label>
+              <select
+                id="income-destination-account"
+                value={incomeForm.destinationAccountId}
+                onChange={(event) =>
+                  setIncomeForm((prev) => ({
+                    ...prev,
+                    destinationAccountId: event.target.value,
+                  }))
+                }
+              >
+                <option value="">Unassigned cash pool</option>
+                {accountOptions.map((account) => (
+                  <option key={account._id} value={String(account._id)}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
               <label htmlFor="income-day">Received day</label>
               <input
                 id="income-day"
@@ -779,6 +830,7 @@ export function IncomeTab({
               onChange={(event) => setSortKey(event.target.value as IncomeSortKey)}
             >
               <option value="source_asc">Source (A-Z)</option>
+              <option value="account_asc">Landing account</option>
               <option value="planned_desc">Planned net (high-low)</option>
               <option value="planned_asc">Planned net (low-high)</option>
               <option value="actual_desc">Actual paid (high-low)</option>
@@ -898,6 +950,7 @@ export function IncomeTab({
                     <th scope="col">Variance</th>
                     <th scope="col">Reliability</th>
                     <th scope="col">Status</th>
+                    <th scope="col">Landing account</th>
                     <th scope="col">Frequency</th>
                     <th scope="col">Day</th>
                     <th scope="col">Anchor</th>
@@ -1164,6 +1217,37 @@ export function IncomeTab({
                                     : 'awaiting payment log'}
                             </small>
                           </div>
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <select
+                              className="inline-select"
+                              value={incomeEditDraft.destinationAccountId}
+                              onChange={(event) =>
+                                setIncomeEditDraft((prev) => ({
+                                  ...prev,
+                                  destinationAccountId: event.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">Unassigned</option>
+                              {accountOptions.map((account) => (
+                                <option key={account._id} value={String(account._id)}>
+                                  {account.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : entry.destinationAccountId ? (
+                            accountNameById.has(String(entry.destinationAccountId)) ? (
+                              <span className="pill pill--neutral">
+                                {accountNameById.get(String(entry.destinationAccountId))}
+                              </span>
+                            ) : (
+                              <span className="pill pill--warning">Missing account</span>
+                            )
+                          ) : (
+                            <span className="pill pill--neutral">Unassigned</span>
+                          )}
                         </td>
                         <td>
                           {isEditing ? (

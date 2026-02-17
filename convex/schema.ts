@@ -200,13 +200,15 @@ export default defineSchema({
     cadence,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnit),
+    destinationAccountId: v.optional(v.id('accounts')),
     receivedDay: v.optional(v.number()),
     payDateAnchor: v.optional(v.string()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
-    .index('by_userId_createdAt', ['userId', 'createdAt']),
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_destinationAccountId', ['userId', 'destinationAccountId']),
   incomePaymentChecks: defineTable({
     userId: v.string(),
     incomeId: v.id('incomes'),
