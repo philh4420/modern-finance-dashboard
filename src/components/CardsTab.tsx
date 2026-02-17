@@ -11,6 +11,8 @@ type CardSortKey =
   | 'apr_desc'
   | 'due_asc'
 
+type PayoffStrategy = 'avalanche' | 'snowball'
+
 type CardsTabProps = {
   cards: CardEntry[]
   monthlyCardSpend: number
@@ -53,6 +55,17 @@ type CardCycleProjection = {
   plannedSpend: number
 }
 
+type PayoffCard = {
+  id: CardId
+  name: string
+  balance: number
+  apr: number
+  monthlyInterest: number
+  utilization: number
+  minimumDue: number
+  plannedPayment: number
+}
+
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
 
 const toNonNegativeNumber = (value: number | undefined | null) =>
@@ -73,6 +86,35 @@ const describeMinimumConfig = (projection: CardCycleProjection) =>
   projection.minimumPaymentType === 'percent_plus_interest'
     ? `${projection.minimumPaymentPercent.toFixed(2)}% + interest`
     : `Fixed ${projection.configuredMinimumPayment.toFixed(2)}`
+const getOverpayPriority = (entry: PayoffCard, strategy: PayoffStrategy) =>
+  strategy === 'avalanche' ? entry.apr : -entry.balance
+
+const rankPayoffCards = (rows: PayoffCard[], strategy: PayoffStrategy) =>
+  [...rows].sort((left, right) => {
+    if (strategy === 'avalanche') {
+      if (right.apr !== left.apr) {
+        return right.apr - left.apr
+      }
+      if (right.monthlyInterest !== left.monthlyInterest) {
+        return right.monthlyInterest - left.monthlyInterest
+      }
+      if (right.balance !== left.balance) {
+        return right.balance - left.balance
+      }
+    } else {
+      if (left.balance !== right.balance) {
+        return left.balance - right.balance
+      }
+      if (right.apr !== left.apr) {
+        return right.apr - left.apr
+      }
+      if (right.monthlyInterest !== left.monthlyInterest) {
+        return right.monthlyInterest - left.monthlyInterest
+      }
+    }
+
+    return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+  })
 
 const projectCardCycle = (
   input: {
@@ -161,6 +203,7 @@ export function CardsTab({
 }: CardsTabProps) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<CardSortKey>('name_asc')
+  const [payoffStrategy, setPayoffStrategy] = useState<PayoffStrategy>('avalanche')
   const todayDay = new Date().getDate()
 
   const pillVariantForUtil = (ratio: number) => {
@@ -216,6 +259,38 @@ export function CardsTab({
   )
 
   const dueAdjustedUtilizationPercent = cardLimitTotal > 0 ? dueAdjustedCurrentTotal / cardLimitTotal : 0
+
+  const payoffCards = useMemo<PayoffCard[]>(
+    () =>
+      cardRows
+        .map(({ entry, projection }) => {
+          const balance = roundCurrency(Math.max(projection.displayCurrentBalance, 0))
+          const apr = toNonNegativeNumber(entry.interestRate)
+          return {
+            id: entry._id,
+            name: entry.name,
+            balance,
+            apr,
+            monthlyInterest: roundCurrency(projection.interestAmount),
+            utilization: projection.displayUtilization,
+            minimumDue: roundCurrency(projection.minimumDue),
+            plannedPayment: roundCurrency(projection.plannedPayment),
+          }
+        })
+        .filter((entry) => entry.balance > 0),
+    [cardRows],
+  )
+
+  const avalancheRanking = useMemo(() => rankPayoffCards(payoffCards, 'avalanche'), [payoffCards])
+  const snowballRanking = useMemo(() => rankPayoffCards(payoffCards, 'snowball'), [payoffCards])
+  const selectedPayoffRanking = payoffStrategy === 'avalanche' ? avalancheRanking : snowballRanking
+  const selectedPayoffTarget = selectedPayoffRanking[0] ?? null
+  const selectedPayoffBackup = selectedPayoffRanking[1] ?? null
+
+  const extraPaymentsPool = useMemo(
+    () => cardRows.reduce((sum, row) => sum + roundCurrency(Math.max(row.projection.extraPayment, 0)), 0),
+    [cardRows],
+  )
 
   const visibleRows = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -527,6 +602,93 @@ export function CardsTab({
               Pending charges {formatMoney(pendingChargesTotal)} · Available credit {formatMoney(availableCreditTotal)} · Baseline{' '}
               {formatMoney(cardUsedTotal)} current / {formatPercent(cardUtilizationPercent / 100)} util
             </p>
+
+            <section className="cards-payoff-intel" aria-label="Payoff intelligence">
+              <header className="cards-payoff-head">
+                <div>
+                  <p className="panel-kicker">Payoff intelligence</p>
+                  <h3>Avalanche vs snowball</h3>
+                </div>
+                <div className="cards-payoff-toggle" role="tablist" aria-label="Payoff strategy">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={payoffStrategy === 'avalanche'}
+                    className={`btn btn--sm ${payoffStrategy === 'avalanche' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setPayoffStrategy('avalanche')}
+                  >
+                    Avalanche
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={payoffStrategy === 'snowball'}
+                    className={`btn btn--sm ${payoffStrategy === 'snowball' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setPayoffStrategy('snowball')}
+                  >
+                    Snowball
+                  </button>
+                </div>
+              </header>
+
+              {selectedPayoffTarget ? (
+                <div className="cards-payoff-grid">
+                  <article className="cards-payoff-card cards-payoff-card--recommended">
+                    <p>Recommended next card to overpay</p>
+                    <strong>{selectedPayoffTarget.name}</strong>
+                    <small>
+                      {payoffStrategy === 'avalanche' ? 'Highest APR first' : 'Smallest balance first'} · priority{' '}
+                      {getOverpayPriority(selectedPayoffTarget, payoffStrategy).toFixed(2)}
+                    </small>
+                    <small>
+                      {formatMoney(selectedPayoffTarget.balance)} balance · APR {selectedPayoffTarget.apr.toFixed(2)}%
+                    </small>
+                    <small>
+                      {formatMoney(selectedPayoffTarget.minimumDue)} minimum due · {formatMoney(selectedPayoffTarget.plannedPayment)} planned
+                      payment
+                    </small>
+                    <small>
+                      {formatMoney(selectedPayoffTarget.monthlyInterest)} est. monthly interest ·{' '}
+                      {formatPercent(selectedPayoffTarget.utilization)} util
+                    </small>
+                    {selectedPayoffBackup ? (
+                      <small>
+                        Backup target: {selectedPayoffBackup.name} ({formatMoney(selectedPayoffBackup.balance)} /{' '}
+                        {selectedPayoffBackup.apr.toFixed(2)}% APR)
+                      </small>
+                    ) : null}
+                  </article>
+
+                  <article className="cards-payoff-card">
+                    <p>Avalanche target</p>
+                    <strong>{avalancheRanking[0]?.name ?? 'n/a'}</strong>
+                    <small>
+                      {avalancheRanking[0]
+                        ? `${formatMoney(avalancheRanking[0].balance)} · ${avalancheRanking[0].apr.toFixed(2)}% APR`
+                        : 'No open card balances'}
+                    </small>
+                    <small>Optimizes for lower total interest over time.</small>
+                  </article>
+
+                  <article className="cards-payoff-card">
+                    <p>Snowball target</p>
+                    <strong>{snowballRanking[0]?.name ?? 'n/a'}</strong>
+                    <small>
+                      {snowballRanking[0]
+                        ? `${formatMoney(snowballRanking[0].balance)} · ${snowballRanking[0].apr.toFixed(2)}% APR`
+                        : 'No open card balances'}
+                    </small>
+                    <small>Optimizes for faster wins and account count reduction.</small>
+                  </article>
+                </div>
+              ) : (
+                <p className="subnote">All cards are fully paid. No overpay target right now.</p>
+              )}
+
+              <p className="subnote">
+                Current extra-payment pool configured on cards: {formatMoney(extraPaymentsPool)} per month.
+              </p>
+            </section>
 
             {visibleRows.length === 0 ? (
               <p className="empty-state">No cards match your search.</p>

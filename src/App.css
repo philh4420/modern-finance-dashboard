@@ -1432,6 +1432,80 @@ tbody td {
   gap: 0.4rem;
 }
 
+.cards-payoff-intel {
+  margin-top: 0.85rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 80%, transparent);
+  background:
+    radial-gradient(130% 140% at 0% 0%, color-mix(in oklab, var(--tone-finance) 12%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 38%, transparent),
+    0 16px 34px -30px color-mix(in oklab, black 45%, transparent);
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.cards-payoff-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: flex-start;
+}
+
+.cards-payoff-head h3 {
+  margin: 0.15rem 0 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.cards-payoff-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.cards-payoff-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.cards-payoff-card {
+  border-radius: 0.86rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 91%, white 9%);
+  padding: 0.6rem 0.64rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.cards-payoff-card--recommended {
+  border-color: color-mix(in oklab, var(--tone-finance) 45%, var(--stroke));
+  background:
+    radial-gradient(130% 140% at 100% -20%, color-mix(in oklab, var(--tone-savings) 18%, transparent), transparent 60%),
+    color-mix(in oklab, var(--surface-card) 90%, white 10%);
+}
+
+.cards-payoff-card p {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.cards-payoff-card strong {
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.cards-payoff-card small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
 .data-table--cards {
   min-width: 0;
   width: 100%;
@@ -1768,6 +1842,14 @@ tbody td {
   }
 
   .modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cards-payoff-head {
+    flex-direction: column;
+  }
+
+  .cards-payoff-grid {
     grid-template-columns: 1fr;
   }
 
