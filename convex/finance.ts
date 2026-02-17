@@ -1374,6 +1374,17 @@ const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string
     }
     return sum + Math.max(entry.balance, 0)
   }, 0)
+  const assetsByType = accounts.reduce(
+    (acc, entry) => {
+      const positiveBalance = Math.max(entry.balance, 0)
+      if (entry.type === 'checking') acc.checking += positiveBalance
+      if (entry.type === 'savings') acc.savings += positiveBalance
+      if (entry.type === 'investment') acc.investment += positiveBalance
+      if (entry.type === 'cash') acc.cash += positiveBalance
+      return acc
+    },
+    { checking: 0, savings: 0, investment: 0, cash: 0 },
+  )
 
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   const purchasesThisMonth = purchases
@@ -1398,6 +1409,13 @@ const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string
     monthlyCardSpend: roundCurrency(monthlyCardSpend),
     monthlyLoanBasePayments: roundCurrency(monthlyLoanBasePayments),
     monthlyLoanSubscriptionCosts: roundCurrency(monthlyLoanSubscriptionCosts),
+    assetsChecking: roundCurrency(assetsByType.checking),
+    assetsSavings: roundCurrency(assetsByType.savings),
+    assetsInvestment: roundCurrency(assetsByType.investment),
+    assetsCash: roundCurrency(assetsByType.cash),
+    liabilitiesAccountDebt: roundCurrency(accountDebts),
+    liabilitiesCards: roundCurrency(cardUsedTotal),
+    liabilitiesLoans: roundCurrency(totalLoanBalance),
     totalLiabilities: roundCurrency(totalLiabilities),
     netWorth: roundCurrency(netWorth),
     runwayMonths: roundCurrency(runwayMonths),

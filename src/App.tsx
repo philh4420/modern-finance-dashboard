@@ -559,6 +559,7 @@ function App() {
           <DashboardTab
             dashboardCards={dashboardCards}
             cards={cards}
+            accounts={accounts}
             summary={summary}
             insights={insights}
             upcomingCashEvents={upcomingCashEvents}

@@ -529,6 +529,14 @@ h2 {
     color-mix(in oklab, var(--surface-card) 94%, white 6%);
 }
 
+.panel-net-worth-composition {
+  grid-column: span 4;
+  background:
+    radial-gradient(145% 170% at 100% -20%, color-mix(in oklab, var(--tone-savings) 12%, transparent), transparent 64%),
+    radial-gradient(130% 120% at 0% 0%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+}
+
 .trust-kpi-grid {
   margin-top: 0.85rem;
   display: grid;
@@ -948,6 +956,170 @@ h2 {
 
 .commitments-delta--neutral {
   color: var(--tone-neutral);
+}
+
+.net-worth-trend {
+  margin: 0.7rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 670;
+}
+
+.net-worth-trend--good {
+  color: var(--tone-positive);
+}
+
+.net-worth-trend--bad {
+  color: var(--tone-negative);
+}
+
+.net-worth-trend--neutral {
+  color: var(--tone-neutral);
+}
+
+.net-worth-summary-grid {
+  margin-top: 0.65rem;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.net-worth-summary-card {
+  border-radius: 0.86rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.55rem 0.62rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.net-worth-summary-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.net-worth-summary-card strong {
+  font-size: 1.02rem;
+  letter-spacing: -0.012em;
+}
+
+.net-worth-summary-card small {
+  font-size: 0.75rem;
+}
+
+.net-worth-driver {
+  margin-top: 0.52rem;
+}
+
+.net-worth-driver--good {
+  color: var(--tone-positive);
+}
+
+.net-worth-driver--bad {
+  color: var(--tone-negative);
+}
+
+.net-worth-driver--neutral {
+  color: var(--tone-neutral);
+}
+
+.net-worth-group {
+  margin-top: 0.64rem;
+}
+
+.net-worth-group h3 {
+  margin: 0;
+  font-size: 0.88rem;
+  letter-spacing: -0.01em;
+}
+
+.net-worth-list {
+  margin: 0.45rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.44rem;
+}
+
+.net-worth-item {
+  border-radius: 0.82rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 75%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.52rem 0.58rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.net-worth-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.net-worth-item-head p {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 640;
+}
+
+.net-worth-item-head strong {
+  font-size: 0.9rem;
+}
+
+.net-worth-item-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.45rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.net-worth-item-meta small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.net-worth-delta {
+  font-size: 0.75rem;
+  font-weight: 640;
+}
+
+.net-worth-delta--good {
+  color: var(--tone-positive);
+}
+
+.net-worth-delta--bad {
+  color: var(--tone-negative);
+}
+
+.net-worth-delta--neutral {
+  color: var(--tone-neutral);
+}
+
+.net-worth-bar-track {
+  border-radius: 999px;
+  overflow: hidden;
+  min-height: 0.38rem;
+  background: color-mix(in oklab, var(--stroke) 44%, transparent);
+}
+
+.net-worth-bar-fill {
+  display: block;
+  width: var(--composition-width);
+  min-width: 0;
+  min-height: 0.38rem;
+  transition: width 220ms ease;
+}
+
+.net-worth-bar-fill--asset {
+  background: color-mix(in oklab, var(--tone-positive) 74%, black 26%);
+}
+
+.net-worth-bar-fill--liability {
+  background: color-mix(in oklab, var(--tone-negative) 74%, black 26%);
 }
 
 .settings-subtitle {
@@ -2591,6 +2763,7 @@ tbody td {
   .panel-cash-forecast,
   .panel-debt-focus,
   .panel-commitments,
+  .panel-net-worth-composition,
   .panel-insights,
   .panel-cash-events,
   .panel-categories,
@@ -2650,6 +2823,10 @@ tbody td {
   .timeline-list li,
   .forecast-risk-list li {
     flex-direction: column;
+  }
+
+  .net-worth-summary-grid {
+    grid-template-columns: 1fr;
   }
 
   .filter-row {

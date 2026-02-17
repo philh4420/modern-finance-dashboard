@@ -1,5 +1,6 @@
 import { useMemo, type CSSProperties } from 'react'
 import type {
+  AccountEntry,
   Cadence,
   CardEntry,
   CardMinimumPaymentType,
@@ -26,6 +27,7 @@ type CspMode = 'unknown' | 'none' | 'report-only' | 'enforced'
 type DashboardTabProps = {
   dashboardCards: DashboardCard[]
   cards: CardEntry[]
+  accounts: AccountEntry[]
   summary: Summary
   insights: Insight[]
   upcomingCashEvents: UpcomingCashEvent[]
@@ -82,6 +84,14 @@ type DebtFocusCard = {
 type CommitmentSlice = {
   id: 'bills' | 'cards' | 'loans' | 'subscriptions'
   label: string
+  value: number
+  baselineValue: number | null
+}
+
+type NetWorthCategory = {
+  id: string
+  label: string
+  side: 'asset' | 'liability'
   value: number
   baselineValue: number | null
 }
@@ -152,6 +162,7 @@ const projectDebtFocusCard = (card: CardEntry): DebtFocusCard => {
 export function DashboardTab({
   dashboardCards,
   cards,
+  accounts,
   summary,
   insights,
   upcomingCashEvents,
@@ -222,16 +233,27 @@ export function DashboardTab({
     return `${sign}${Math.abs(delta).toFixed(0)} pts`
   }
 
-  const formatCommitmentDelta = (delta: number | null) => {
+  const formatVsLastMonthDelta = (delta: number | null) => {
     if (delta === null) return 'Trend n/a'
     if (Math.abs(delta) < 0.005) return 'Flat vs last month'
     const sign = delta >= 0 ? '+' : '-'
     return `${sign}${formatMoney(Math.abs(delta))} vs last month`
   }
 
-  const commitmentDeltaTone = (delta: number | null): ExecutiveMetric['tone'] => {
+  const deltaTone = (delta: number | null, invertDirection = false): ExecutiveMetric['tone'] => {
     if (delta === null || Math.abs(delta) < 0.005) return 'neutral'
-    return delta < 0 ? 'good' : 'bad'
+    const isPositive = delta > 0
+    if (invertDirection) {
+      return isPositive ? 'bad' : 'good'
+    }
+    return isPositive ? 'good' : 'bad'
+  }
+
+  const netWorthCategoryTone = (category: NetWorthCategory, delta: number | null): ExecutiveMetric['tone'] => {
+    if (category.side === 'asset') {
+      return deltaTone(delta)
+    }
+    return deltaTone(delta, true)
   }
 
   const baseline = baselineSnapshot?.summary ?? null
@@ -290,7 +312,158 @@ export function DashboardTab({
   )
 
   const totalCommitmentDelta = baseline ? summary.monthlyCommitments - baseline.monthlyCommitments : null
-  const totalCommitmentTone = commitmentDeltaTone(totalCommitmentDelta)
+  const totalCommitmentTone = deltaTone(totalCommitmentDelta, true)
+
+  const assetsByType = useMemo(
+    () =>
+      accounts.reduce(
+        (acc, account) => {
+          const positiveBalance = Math.max(account.balance, 0)
+          if (account.type === 'checking') acc.checking += positiveBalance
+          if (account.type === 'savings') acc.savings += positiveBalance
+          if (account.type === 'investment') acc.investment += positiveBalance
+          if (account.type === 'cash') acc.cash += positiveBalance
+          return acc
+        },
+        { checking: 0, savings: 0, investment: 0, cash: 0 },
+      ),
+    [accounts],
+  )
+
+  const accountDebtLiabilities = useMemo(
+    () =>
+      accounts.reduce((sum, account) => {
+        if (account.type === 'debt') return sum + Math.abs(account.balance)
+        return account.balance < 0 ? sum + Math.abs(account.balance) : sum
+      }, 0),
+    [accounts],
+  )
+
+  const netWorthCategories = useMemo<NetWorthCategory[]>(
+    () => [
+      {
+        id: 'asset-checking',
+        label: 'Checking',
+        side: 'asset',
+        value: assetsByType.checking,
+        baselineValue: readOptionalBaselineNumber(baseline?.assetsChecking),
+      },
+      {
+        id: 'asset-savings',
+        label: 'Savings',
+        side: 'asset',
+        value: assetsByType.savings,
+        baselineValue: readOptionalBaselineNumber(baseline?.assetsSavings),
+      },
+      {
+        id: 'asset-investment',
+        label: 'Investment',
+        side: 'asset',
+        value: assetsByType.investment,
+        baselineValue: readOptionalBaselineNumber(baseline?.assetsInvestment),
+      },
+      {
+        id: 'asset-cash',
+        label: 'Cash',
+        side: 'asset',
+        value: assetsByType.cash,
+        baselineValue: readOptionalBaselineNumber(baseline?.assetsCash),
+      },
+      {
+        id: 'liability-account-debt',
+        label: 'Account debt',
+        side: 'liability',
+        value: accountDebtLiabilities,
+        baselineValue: readOptionalBaselineNumber(baseline?.liabilitiesAccountDebt),
+      },
+      {
+        id: 'liability-cards',
+        label: 'Cards',
+        side: 'liability',
+        value: summary.cardUsedTotal,
+        baselineValue: readOptionalBaselineNumber(baseline?.liabilitiesCards),
+      },
+      {
+        id: 'liability-loans',
+        label: 'Loans',
+        side: 'liability',
+        value: summary.totalLoanBalance,
+        baselineValue: readOptionalBaselineNumber(baseline?.liabilitiesLoans),
+      },
+    ],
+    [
+      accountDebtLiabilities,
+      assetsByType.cash,
+      assetsByType.checking,
+      assetsByType.investment,
+      assetsByType.savings,
+      baseline?.assetsCash,
+      baseline?.assetsChecking,
+      baseline?.assetsInvestment,
+      baseline?.assetsSavings,
+      baseline?.liabilitiesAccountDebt,
+      baseline?.liabilitiesCards,
+      baseline?.liabilitiesLoans,
+      summary.cardUsedTotal,
+      summary.totalLoanBalance,
+    ],
+  )
+
+  const assetCategories = useMemo(
+    () => netWorthCategories.filter((category) => category.side === 'asset'),
+    [netWorthCategories],
+  )
+  const liabilityCategories = useMemo(
+    () => netWorthCategories.filter((category) => category.side === 'liability'),
+    [netWorthCategories],
+  )
+
+  const compositionAssetsTotal = useMemo(
+    () => roundCurrency(assetCategories.reduce((sum, category) => sum + category.value, 0)),
+    [assetCategories],
+  )
+  const compositionLiabilitiesTotal = useMemo(
+    () => roundCurrency(liabilityCategories.reduce((sum, category) => sum + category.value, 0)),
+    [liabilityCategories],
+  )
+  const compositionNetWorth = roundCurrency(compositionAssetsTotal - compositionLiabilitiesTotal)
+
+  const baselineAssetsTotal = useMemo(() => {
+    if (assetCategories.some((category) => category.baselineValue === null)) return null
+    return roundCurrency(assetCategories.reduce((sum, category) => sum + (category.baselineValue ?? 0), 0))
+  }, [assetCategories])
+  const baselineLiabilitiesTotal = useMemo(() => {
+    if (liabilityCategories.some((category) => category.baselineValue === null)) return null
+    return roundCurrency(liabilityCategories.reduce((sum, category) => sum + (category.baselineValue ?? 0), 0))
+  }, [liabilityCategories])
+
+  const compositionAssetsDelta = baselineAssetsTotal === null ? null : compositionAssetsTotal - baselineAssetsTotal
+  const compositionLiabilitiesDelta =
+    baselineLiabilitiesTotal === null ? null : compositionLiabilitiesTotal - baselineLiabilitiesTotal
+  const compositionNetWorthDelta =
+    baselineAssetsTotal === null || baselineLiabilitiesTotal === null
+      ? null
+      : compositionNetWorth - (baselineAssetsTotal - baselineLiabilitiesTotal)
+
+  const dominantNetWorthDriver = useMemo(() => {
+    const candidates = netWorthCategories
+      .map((category) => {
+        if (category.baselineValue === null) return null
+        const delta = category.value - category.baselineValue
+        const impact = category.side === 'asset' ? delta : -delta
+        return {
+          ...category,
+          delta,
+          impact,
+        }
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+
+    if (candidates.length === 0) return null
+
+    return [...candidates].sort((left, right) => Math.abs(right.impact) - Math.abs(left.impact))[0] ?? null
+  }, [netWorthCategories])
+  const dominantNetWorthDriverTone = dominantNetWorthDriver ? deltaTone(dominantNetWorthDriver.impact) : 'neutral'
 
   const executiveMetrics: ExecutiveMetric[] = [
     {
@@ -747,7 +920,7 @@ export function DashboardTab({
             <p className="panel-value">{formatMoney(summary.monthlyCommitments)}</p>
           </header>
           <p className={`commitments-trend commitments-trend--${totalCommitmentTone}`}>
-            {formatCommitmentDelta(totalCommitmentDelta)}
+            {formatVsLastMonthDelta(totalCommitmentDelta)}
           </p>
           <p className="subnote">
             {baselineSnapshot
@@ -774,7 +947,7 @@ export function DashboardTab({
             {commitmentSlices.map((slice) => {
               const share = commitmentSliceTotal > 0 ? slice.value / commitmentSliceTotal : 0
               const delta = slice.baselineValue === null ? null : slice.value - slice.baselineValue
-              const tone = commitmentDeltaTone(delta)
+              const tone = deltaTone(delta, true)
               return (
                 <li key={slice.id}>
                   <div className="commitments-breakdown-head">
@@ -786,12 +959,107 @@ export function DashboardTab({
                   </div>
                   <div className="commitments-breakdown-meta">
                     <small>{formatPercent(share)} of commitments</small>
-                    <span className={`commitments-delta commitments-delta--${tone}`}>{formatCommitmentDelta(delta)}</span>
+                    <span className={`commitments-delta commitments-delta--${tone}`}>{formatVsLastMonthDelta(delta)}</span>
                   </div>
                 </li>
               )
             })}
           </ul>
+        </article>
+
+        <article className="panel panel-net-worth-composition">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Net Worth</p>
+              <h2>Composition Drivers</h2>
+            </div>
+            <p className="panel-value">{formatMoney(compositionNetWorth)}</p>
+          </header>
+          <p className={`net-worth-trend net-worth-trend--${deltaTone(compositionNetWorthDelta)}`}>
+            {formatVsLastMonthDelta(compositionNetWorthDelta)}
+          </p>
+          <div className="net-worth-summary-grid">
+            <article className="net-worth-summary-card">
+              <p>Assets total</p>
+              <strong>{formatMoney(compositionAssetsTotal)}</strong>
+              <small className={`net-worth-delta net-worth-delta--${deltaTone(compositionAssetsDelta)}`}>
+                {formatVsLastMonthDelta(compositionAssetsDelta)}
+              </small>
+            </article>
+            <article className="net-worth-summary-card">
+              <p>Liabilities total</p>
+              <strong>{formatMoney(compositionLiabilitiesTotal)}</strong>
+              <small className={`net-worth-delta net-worth-delta--${deltaTone(compositionLiabilitiesDelta, true)}`}>
+                {formatVsLastMonthDelta(compositionLiabilitiesDelta)}
+              </small>
+            </article>
+          </div>
+          {dominantNetWorthDriver ? (
+            <p className={`subnote net-worth-driver net-worth-driver--${dominantNetWorthDriverTone}`}>
+              Primary mover: {dominantNetWorthDriver.label} ({dominantNetWorthDriver.side}){' '}
+              {formatVsLastMonthDelta(dominantNetWorthDriver.impact)} impact on net worth.
+            </p>
+          ) : (
+            <p className="subnote">
+              Run monthly cycle snapshots to unlock driver-level month-over-month impact on net worth.
+            </p>
+          )}
+          <section className="net-worth-group">
+            <h3>Assets by category</h3>
+            <ul className="net-worth-list">
+              {assetCategories.map((category) => {
+                const share = compositionAssetsTotal > 0 ? category.value / compositionAssetsTotal : 0
+                const delta = category.baselineValue === null ? null : category.value - category.baselineValue
+                const tone = netWorthCategoryTone(category, delta)
+                return (
+                  <li key={category.id} className={`net-worth-item net-worth-item--${category.side}`}>
+                    <div className="net-worth-item-head">
+                      <p>{category.label}</p>
+                      <strong>{formatMoney(category.value)}</strong>
+                    </div>
+                    <div className="net-worth-item-meta">
+                      <small>{formatPercent(share)} of assets</small>
+                      <span className={`net-worth-delta net-worth-delta--${tone}`}>{formatVsLastMonthDelta(delta)}</span>
+                    </div>
+                    <div className="net-worth-bar-track">
+                      <span
+                        className={`net-worth-bar-fill net-worth-bar-fill--${category.side}`}
+                        style={{ '--composition-width': `${share * 100}%` } as CSSProperties}
+                      />
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+          <section className="net-worth-group">
+            <h3>Liabilities by category</h3>
+            <ul className="net-worth-list">
+              {liabilityCategories.map((category) => {
+                const share = compositionLiabilitiesTotal > 0 ? category.value / compositionLiabilitiesTotal : 0
+                const delta = category.baselineValue === null ? null : category.value - category.baselineValue
+                const tone = netWorthCategoryTone(category, delta)
+                return (
+                  <li key={category.id} className={`net-worth-item net-worth-item--${category.side}`}>
+                    <div className="net-worth-item-head">
+                      <p>{category.label}</p>
+                      <strong>{formatMoney(category.value)}</strong>
+                    </div>
+                    <div className="net-worth-item-meta">
+                      <small>{formatPercent(share)} of liabilities</small>
+                      <span className={`net-worth-delta net-worth-delta--${tone}`}>{formatVsLastMonthDelta(delta)}</span>
+                    </div>
+                    <div className="net-worth-bar-track">
+                      <span
+                        className={`net-worth-bar-fill net-worth-bar-fill--${category.side}`}
+                        style={{ '--composition-width': `${share * 100}%` } as CSSProperties}
+                      />
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
         </article>
 
         <article className="panel panel-health">
