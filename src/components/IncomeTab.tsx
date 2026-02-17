@@ -56,8 +56,25 @@ type IncomePaymentReliability = {
 }
 
 type IncomeStatusTag = 'confirmed' | 'pending' | 'at_risk' | 'missed'
+type IncomeTrendWindowDays = 30 | 90 | 365
+
+type IncomeSourceTrendWindow = {
+  days: IncomeTrendWindowDays
+  total: number
+  averagePerDay: number
+  entryCount: number
+}
+
+type IncomeSourceTrendCard = {
+  id: IncomeId
+  source: string
+  status: IncomeStatusTag
+  windows: IncomeSourceTrendWindow[]
+  lastLoggedDate: string | null
+}
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const incomeTrendWindowDays: IncomeTrendWindowDays[] = [30, 90, 365]
 
 const reliabilityStatusLabel = (status: IncomePaymentStatus) => {
   if (status === 'on_time') return 'On time'
@@ -104,6 +121,33 @@ const resolveIncomeStatusTag = (args: {
   }
 
   return 'pending'
+}
+
+const resolveIncomePaymentLogAmount = (entry: IncomePaymentCheckEntry) => {
+  if (entry.status === 'missed') {
+    return 0
+  }
+
+  if (typeof entry.receivedAmount === 'number' && Number.isFinite(entry.receivedAmount)) {
+    return Math.max(entry.receivedAmount, 0)
+  }
+
+  return Math.max(entry.expectedAmount, 0)
+}
+
+const toIncomeCycleDate = (cycleMonth: string, day: number) => {
+  if (!/^\d{4}-\d{2}$/.test(cycleMonth)) {
+    return null
+  }
+
+  const year = Number.parseInt(cycleMonth.slice(0, 4), 10)
+  const month = Number.parseInt(cycleMonth.slice(5, 7), 10)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null
+  }
+
+  const daysInMonth = new Date(year, month, 0).getDate()
+  return new Date(year, month - 1, clamp(day, 1, daysInMonth))
 }
 
 const calculateIncomePaymentReliability = (checks: IncomePaymentCheckEntry[]): IncomePaymentReliability => {
@@ -419,6 +463,69 @@ export function IncomeTab({
 
     return sorted
   }, [cadenceLabel, incomes, search, sortKey])
+
+  const sourceTrendCards = useMemo<IncomeSourceTrendCard[]>(() => {
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+    const cards = visibleIncomes.map((entry) => {
+      const checks = paymentChecksByIncomeId.get(entry._id) ?? []
+      const reliability = calculateIncomePaymentReliability(checks)
+      const latestPaymentCheck = checks[0] ?? null
+      const currentCycleCheck = checks.find((paymentCheck) => paymentCheck.cycleMonth === currentCycleMonth) ?? null
+
+      const windows = incomeTrendWindowDays.map((days) => {
+        const cutoff = new Date(today)
+        cutoff.setDate(cutoff.getDate() - (days - 1))
+
+        const entriesInWindow = checks.filter((paymentCheck) => {
+          const eventDay = paymentCheck.receivedDay ?? paymentCheck.expectedDay ?? entry.receivedDay ?? 1
+          const eventDate = toIncomeCycleDate(paymentCheck.cycleMonth, eventDay)
+          return eventDate !== null && eventDate >= cutoff && eventDate <= today
+        })
+
+        const total = roundCurrency(
+          entriesInWindow.reduce((sum, paymentCheck) => sum + resolveIncomePaymentLogAmount(paymentCheck), 0),
+        )
+
+        return {
+          days,
+          total,
+          averagePerDay: roundCurrency(total / days),
+          entryCount: entriesInWindow.length,
+        }
+      })
+
+      const lastLoggedDate =
+        checks
+          .map((paymentCheck) => {
+            const eventDay = paymentCheck.receivedDay ?? paymentCheck.expectedDay ?? entry.receivedDay ?? 1
+            return toIncomeCycleDate(paymentCheck.cycleMonth, eventDay)
+          })
+          .find((eventDate) => eventDate !== null)
+          ?.toISOString()
+          .slice(0, 10) ?? null
+
+      return {
+        id: entry._id,
+        source: entry.source,
+        status: resolveIncomeStatusTag({
+          currentCycleCheck,
+          latestPaymentCheck,
+          reliability,
+          hasActualPaidAmount: typeof entry.actualAmount === 'number' && Number.isFinite(entry.actualAmount),
+        }),
+        windows,
+        lastLoggedDate,
+      }
+    })
+
+    return cards.sort(
+      (left, right) =>
+        right.windows[0].total - left.windows[0].total ||
+        left.source.localeCompare(right.source, undefined, { sensitivity: 'base' }),
+    )
+  }, [currentCycleMonth, paymentChecksByIncomeId, visibleIncomes])
 
   return (
     <section className="editor-grid" aria-label="Income management">
@@ -747,6 +854,37 @@ export function IncomeTab({
                 </small>
               </div>
             </div>
+            <section className="income-source-trends" aria-label="Source-level income trends">
+              <header className="income-source-trends-head">
+                <h3>Source-level trend cards</h3>
+                <p>Rolling totals and daily averages from logged income checks.</p>
+              </header>
+              <div className="income-source-trends-grid">
+                {sourceTrendCards.map((trend) => (
+                  <article key={trend.id} className="income-source-trend-card">
+                    <div className="income-source-trend-head">
+                      <p>{trend.source}</p>
+                      <span className={incomeStatusPillClass(trend.status)}>{incomeStatusLabel(trend.status)}</span>
+                    </div>
+                    <div className="income-source-trend-windows">
+                      {trend.windows.map((window) => (
+                        <div key={`${trend.id}-${window.days}`} className="income-source-trend-window">
+                          <p>{window.days}d</p>
+                          <strong>{formatMoney(window.total)}</strong>
+                          <small>
+                            {formatMoney(window.averagePerDay)}/day · {window.entryCount} log
+                            {window.entryCount === 1 ? '' : 's'}
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                    <small className="income-source-trend-foot">
+                      {trend.lastLoggedDate ? `Last logged ${trend.lastLoggedDate}` : 'No payment logs yet'}
+                    </small>
+                  </article>
+                ))}
+              </div>
+            </section>
             <div className="table-wrap table-wrap--card">
               <table className="data-table data-table--income" data-testid="income-table">
                 <caption className="sr-only">Income entries</caption>
