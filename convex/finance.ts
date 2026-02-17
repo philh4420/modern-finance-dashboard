@@ -31,12 +31,14 @@ const accountTypeValidator = v.union(
 const goalPriorityValidator = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
 const cycleRunSourceValidator = v.union(v.literal('manual'), v.literal('automatic'))
 const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
+const cardMinimumPaymentTypeValidator = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 type InsightSeverity = 'good' | 'warning' | 'critical'
 type CycleRunSource = 'manual' | 'automatic'
 type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
+type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 type LedgerEntryType =
   | 'purchase'
   | 'purchase_reversal'
@@ -158,6 +160,12 @@ const validateDayOfMonth = (value: number, fieldName: string) => {
 
 const finiteOrZero = (value: number | undefined | null) =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0
+
+const normalizeCardMinimumPaymentType = (
+  value: CardMinimumPaymentType | undefined | null,
+): CardMinimumPaymentType => (value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed')
+
+const clampPercent = (value: number) => clamp(value, 0, 100)
 
 const validateRequiredText = (value: string, fieldName: string) => {
   const trimmed = value.trim()
@@ -413,12 +421,46 @@ const nextDateForCadence = (
   return nextDateByMonthCycle(normalizedDay, cycleMonths, anchorDate, today)
 }
 
+const resolveCardPaymentPlan = (args: {
+  statementBalance: number
+  dueBalance: number
+  interestAmount: number
+  minimumPayment: number
+  minimumPaymentType?: CardMinimumPaymentType
+  minimumPaymentPercent?: number
+  extraPayment?: number
+}) => {
+  const minimumPaymentType = normalizeCardMinimumPaymentType(args.minimumPaymentType)
+  const minimumPayment = finiteOrZero(args.minimumPayment)
+  const minimumPaymentPercent = clampPercent(finiteOrZero(args.minimumPaymentPercent))
+  const extraPayment = finiteOrZero(args.extraPayment)
+
+  const minimumDueRaw =
+    minimumPaymentType === 'percent_plus_interest'
+      ? args.statementBalance * (minimumPaymentPercent / 100) + args.interestAmount
+      : minimumPayment
+  const minimumDue = Math.min(args.dueBalance, Math.max(minimumDueRaw, 0))
+  const plannedPayment = Math.min(args.dueBalance, minimumDue + extraPayment)
+
+  return {
+    minimumPaymentType,
+    minimumPayment,
+    minimumPaymentPercent,
+    extraPayment,
+    minimumDue,
+    plannedPayment,
+  }
+}
+
 const applyCardMonthlyLifecycle = (card: CardDoc, cycles: number) => {
   let balance = finiteOrZero(card.usedLimit)
   let statementBalance = finiteOrZero(card.statementBalance ?? card.usedLimit)
   let pendingCharges = finiteOrZero(card.pendingCharges)
   const spendPerMonth = finiteOrZero(card.spendPerMonth)
   const minimumPayment = finiteOrZero(card.minimumPayment)
+  const minimumPaymentType = normalizeCardMinimumPaymentType(card.minimumPaymentType)
+  const minimumPaymentPercent = clampPercent(finiteOrZero(card.minimumPaymentPercent))
+  const extraPayment = finiteOrZero(card.extraPayment)
   const apr = finiteOrZero(card.interestRate)
   const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
   let interestAccrued = 0
@@ -431,7 +473,16 @@ const applyCardMonthlyLifecycle = (card: CardDoc, cycles: number) => {
     interestAccrued += interest
     const dueBalance = statementBalance + interest
     latestStatementBalance = dueBalance
-    const payment = Math.min(dueBalance, minimumPayment)
+    const paymentPlan = resolveCardPaymentPlan({
+      statementBalance,
+      dueBalance,
+      interestAmount: interest,
+      minimumPayment,
+      minimumPaymentType,
+      minimumPaymentPercent,
+      extraPayment,
+    })
+    const payment = paymentPlan.plannedPayment
     const carriedAfterDue = dueBalance - payment
     paymentsApplied += payment
 
@@ -481,6 +532,24 @@ const applyLoanMonthlyLifecycle = (loan: LoanDoc, cycles: number) => {
     interestAccrued: roundCurrency(interestAccrued),
     paymentsApplied: roundCurrency(paymentsApplied),
   }
+}
+
+const estimateCardMonthlyPayment = (card: CardDoc) => {
+  const statementBalance = finiteOrZero(card.statementBalance ?? card.usedLimit)
+  const apr = finiteOrZero(card.interestRate)
+  const interestAmount = statementBalance * (apr > 0 ? apr / 100 / 12 : 0)
+  const dueBalance = statementBalance + interestAmount
+  const paymentPlan = resolveCardPaymentPlan({
+    statementBalance,
+    dueBalance,
+    interestAmount,
+    minimumPayment: finiteOrZero(card.minimumPayment),
+    minimumPaymentType: normalizeCardMinimumPaymentType(card.minimumPaymentType),
+    minimumPaymentPercent: clampPercent(finiteOrZero(card.minimumPaymentPercent)),
+    extraPayment: finiteOrZero(card.extraPayment),
+  })
+
+  return roundCurrency(paymentPlan.plannedPayment)
 }
 
 type CardCycleAggregate = {
@@ -1184,7 +1253,7 @@ const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string
     (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
     0,
   )
-  const monthlyCardPayments = cards.reduce((sum, entry) => sum + finiteOrZero(entry.minimumPayment), 0)
+  const monthlyCardPayments = cards.reduce((sum, entry) => sum + estimateCardMonthlyPayment(entry), 0)
   const monthlyLoanBasePayments = loans.reduce(
     (sum, entry) =>
       sum + toMonthlyAmount(finiteOrZero(entry.minimumPayment), entry.cadence, entry.customInterval, entry.customUnit),
@@ -1359,7 +1428,7 @@ export const getFinanceData = query({
     )
     const monthlyLoanSubscriptionCosts = loans.reduce((sum, entry) => sum + finiteOrZero(entry.subscriptionCost), 0)
     const monthlyLoanPayments = monthlyLoanBasePayments + monthlyLoanSubscriptionCosts
-    const monthlyCardSpend = cards.reduce((sum, entry) => sum + finiteOrZero(entry.minimumPayment), 0)
+    const monthlyCardSpend = cards.reduce((sum, entry) => sum + estimateCardMonthlyPayment(entry), 0)
     const monthlyCommitments = monthlyBills + monthlyCardSpend + monthlyLoanPayments
 
     const cardLimitTotal = cards.reduce((sum, entry) => sum + entry.creditLimit, 0)
@@ -2221,6 +2290,9 @@ export const addCard = mutation({
     statementBalance: v.optional(v.number()),
     pendingCharges: v.optional(v.number()),
     minimumPayment: v.number(),
+    minimumPaymentType: v.optional(cardMinimumPaymentTypeValidator),
+    minimumPaymentPercent: v.optional(v.number()),
+    extraPayment: v.optional(v.number()),
     spendPerMonth: v.number(),
     interestRate: v.optional(v.number()),
     statementDay: v.optional(v.number()),
@@ -2238,7 +2310,20 @@ export const addCard = mutation({
     if (args.pendingCharges !== undefined) {
       validateNonNegative(args.pendingCharges, 'Pending charges')
     }
+    const minimumPaymentType = normalizeCardMinimumPaymentType(args.minimumPaymentType)
     validateNonNegative(args.minimumPayment, 'Minimum payment')
+    if (minimumPaymentType === 'percent_plus_interest') {
+      if (args.minimumPaymentPercent === undefined) {
+        throw new Error('Minimum payment % is required for % + interest cards.')
+      }
+      validateNonNegative(args.minimumPaymentPercent, 'Minimum payment %')
+      if (args.minimumPaymentPercent > 100) {
+        throw new Error('Minimum payment % must be 100 or less.')
+      }
+    }
+    if (args.extraPayment !== undefined) {
+      validateNonNegative(args.extraPayment, 'Extra payment')
+    }
     validateNonNegative(args.spendPerMonth, 'Spend per month')
     if (args.interestRate !== undefined) {
       validateNonNegative(args.interestRate, 'Card APR')
@@ -2254,6 +2339,11 @@ export const addCard = mutation({
     const pendingCharges = args.pendingCharges ?? Math.max(args.usedLimit - statementBalance, 0)
     const statementDay = args.statementDay ?? 1
     const dueDay = args.dueDay ?? 21
+    const minimumPaymentPercent =
+      minimumPaymentType === 'percent_plus_interest'
+        ? clampPercent(finiteOrZero(args.minimumPaymentPercent))
+        : undefined
+    const extraPayment = finiteOrZero(args.extraPayment)
 
     const createdCardId = await ctx.db.insert('cards', {
       userId: identity.subject,
@@ -2263,6 +2353,9 @@ export const addCard = mutation({
       statementBalance,
       pendingCharges,
       minimumPayment: args.minimumPayment,
+      minimumPaymentType,
+      minimumPaymentPercent,
+      extraPayment,
       spendPerMonth: args.spendPerMonth,
       interestRate: args.interestRate,
       statementDay,
@@ -2283,6 +2376,9 @@ export const addCard = mutation({
         statementBalance,
         pendingCharges,
         minimumPayment: args.minimumPayment,
+        minimumPaymentType,
+        minimumPaymentPercent: minimumPaymentPercent ?? 0,
+        extraPayment,
         spendPerMonth: args.spendPerMonth,
         interestRate: args.interestRate ?? 0,
         statementDay,
@@ -2301,6 +2397,9 @@ export const updateCard = mutation({
     statementBalance: v.optional(v.number()),
     pendingCharges: v.optional(v.number()),
     minimumPayment: v.number(),
+    minimumPaymentType: v.optional(cardMinimumPaymentTypeValidator),
+    minimumPaymentPercent: v.optional(v.number()),
+    extraPayment: v.optional(v.number()),
     spendPerMonth: v.number(),
     interestRate: v.optional(v.number()),
     statementDay: v.optional(v.number()),
@@ -2319,6 +2418,15 @@ export const updateCard = mutation({
       validateNonNegative(args.pendingCharges, 'Pending charges')
     }
     validateNonNegative(args.minimumPayment, 'Minimum payment')
+    if (args.minimumPaymentPercent !== undefined) {
+      validateNonNegative(args.minimumPaymentPercent, 'Minimum payment %')
+      if (args.minimumPaymentPercent > 100) {
+        throw new Error('Minimum payment % must be 100 or less.')
+      }
+    }
+    if (args.extraPayment !== undefined) {
+      validateNonNegative(args.extraPayment, 'Extra payment')
+    }
     validateNonNegative(args.spendPerMonth, 'Spend per month')
     if (args.interestRate !== undefined) {
       validateNonNegative(args.interestRate, 'Card APR')
@@ -2337,6 +2445,18 @@ export const updateCard = mutation({
       args.pendingCharges ?? existing.pendingCharges ?? Math.max(args.usedLimit - statementBalance, 0)
     const statementDay = args.statementDay ?? existing.statementDay ?? 1
     const dueDay = args.dueDay ?? existing.dueDay ?? 21
+    const minimumPaymentType = normalizeCardMinimumPaymentType(
+      args.minimumPaymentType ?? existing.minimumPaymentType,
+    )
+    const minimumPaymentPercentCandidate = args.minimumPaymentPercent ?? existing.minimumPaymentPercent
+    if (minimumPaymentType === 'percent_plus_interest' && minimumPaymentPercentCandidate === undefined) {
+      throw new Error('Minimum payment % is required for % + interest cards.')
+    }
+    const minimumPaymentPercent =
+      minimumPaymentType === 'percent_plus_interest'
+        ? clampPercent(finiteOrZero(minimumPaymentPercentCandidate))
+        : undefined
+    const extraPayment = finiteOrZero(args.extraPayment ?? existing.extraPayment)
 
     await ctx.db.patch(args.id, {
       name: args.name.trim(),
@@ -2345,6 +2465,9 @@ export const updateCard = mutation({
       statementBalance,
       pendingCharges,
       minimumPayment: args.minimumPayment,
+      minimumPaymentType,
+      minimumPaymentPercent,
+      extraPayment,
       spendPerMonth: args.spendPerMonth,
       interestRate: args.interestRate,
       statementDay,
@@ -2363,6 +2486,9 @@ export const updateCard = mutation({
         statementBalance: existing.statementBalance ?? existing.usedLimit,
         pendingCharges: existing.pendingCharges ?? Math.max(existing.usedLimit - (existing.statementBalance ?? existing.usedLimit), 0),
         minimumPayment: existing.minimumPayment,
+        minimumPaymentType: normalizeCardMinimumPaymentType(existing.minimumPaymentType),
+        minimumPaymentPercent: finiteOrZero(existing.minimumPaymentPercent),
+        extraPayment: finiteOrZero(existing.extraPayment),
         spendPerMonth: existing.spendPerMonth,
         interestRate: existing.interestRate ?? 0,
         statementDay: existing.statementDay ?? 1,
@@ -2375,6 +2501,9 @@ export const updateCard = mutation({
         statementBalance,
         pendingCharges,
         minimumPayment: args.minimumPayment,
+        minimumPaymentType,
+        minimumPaymentPercent: minimumPaymentPercent ?? 0,
+        extraPayment,
         spendPerMonth: args.spendPerMonth,
         interestRate: args.interestRate ?? 0,
         statementDay,

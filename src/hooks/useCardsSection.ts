@@ -15,7 +15,10 @@ const initialCardForm: CardForm = {
   usedLimit: '',
   statementBalance: '',
   pendingCharges: '',
+  minimumPaymentType: 'fixed',
   minimumPayment: '',
+  minimumPaymentPercent: '',
+  extraPayment: '0',
   spendPerMonth: '',
   interestRate: '',
   statementDay: '1',
@@ -28,7 +31,10 @@ const initialCardEditDraft: CardEditDraft = {
   usedLimit: '',
   statementBalance: '',
   pendingCharges: '',
+  minimumPaymentType: 'fixed',
   minimumPayment: '',
+  minimumPaymentPercent: '',
+  extraPayment: '0',
   spendPerMonth: '',
   interestRate: '',
   statementDay: '1',
@@ -49,6 +55,7 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
     clearError()
 
     try {
+      const minimumPaymentType = cardForm.minimumPaymentType
       await addCard({
         name: cardForm.name,
         creditLimit: parseFloatInput(cardForm.creditLimit, 'Credit limit'),
@@ -59,7 +66,16 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
         pendingCharges: cardForm.pendingCharges
           ? parseFloatInput(cardForm.pendingCharges, 'Pending charges')
           : undefined,
-        minimumPayment: parseFloatInput(cardForm.minimumPayment, 'Minimum payment'),
+        minimumPaymentType,
+        minimumPayment:
+          minimumPaymentType === 'fixed'
+            ? parseFloatInput(cardForm.minimumPayment, 'Minimum payment')
+            : 0,
+        minimumPaymentPercent:
+          minimumPaymentType === 'percent_plus_interest'
+            ? parseFloatInput(cardForm.minimumPaymentPercent, 'Minimum payment %')
+            : undefined,
+        extraPayment: cardForm.extraPayment ? parseFloatInput(cardForm.extraPayment, 'Extra payment') : 0,
         spendPerMonth: parseFloatInput(cardForm.spendPerMonth, 'Spend per month'),
         interestRate: cardForm.interestRate ? parseFloatInput(cardForm.interestRate, 'Card APR') : undefined,
         statementDay: parseIntInput(cardForm.statementDay, 'Statement day'),
@@ -92,7 +108,10 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
       usedLimit: String(entry.usedLimit),
       statementBalance: String(entry.statementBalance ?? entry.usedLimit),
       pendingCharges: String(entry.pendingCharges ?? Math.max(entry.usedLimit - (entry.statementBalance ?? entry.usedLimit), 0)),
+      minimumPaymentType: entry.minimumPaymentType ?? 'fixed',
       minimumPayment: String(entry.minimumPayment),
+      minimumPaymentPercent: entry.minimumPaymentPercent !== undefined ? String(entry.minimumPaymentPercent) : '',
+      extraPayment: String(entry.extraPayment ?? 0),
       spendPerMonth: String(entry.spendPerMonth),
       interestRate: entry.interestRate !== undefined ? String(entry.interestRate) : '',
       statementDay: String(entry.statementDay ?? 1),
@@ -105,6 +124,7 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
 
     clearError()
     try {
+      const minimumPaymentType = cardEditDraft.minimumPaymentType
       await updateCard({
         id: cardEditId,
         name: cardEditDraft.name,
@@ -116,7 +136,16 @@ export const useCardsSection = ({ cards, clearError, handleMutationError }: UseC
         pendingCharges: cardEditDraft.pendingCharges
           ? parseFloatInput(cardEditDraft.pendingCharges, 'Pending charges')
           : undefined,
-        minimumPayment: parseFloatInput(cardEditDraft.minimumPayment, 'Minimum payment'),
+        minimumPaymentType,
+        minimumPayment:
+          minimumPaymentType === 'fixed'
+            ? parseFloatInput(cardEditDraft.minimumPayment, 'Minimum payment')
+            : 0,
+        minimumPaymentPercent:
+          minimumPaymentType === 'percent_plus_interest'
+            ? parseFloatInput(cardEditDraft.minimumPaymentPercent, 'Minimum payment %')
+            : undefined,
+        extraPayment: cardEditDraft.extraPayment ? parseFloatInput(cardEditDraft.extraPayment, 'Extra payment') : 0,
         spendPerMonth: parseFloatInput(cardEditDraft.spendPerMonth, 'Spend per month'),
         interestRate: cardEditDraft.interestRate ? parseFloatInput(cardEditDraft.interestRate, 'Card APR') : undefined,
         statementDay: parseIntInput(cardEditDraft.statementDay, 'Statement day'),

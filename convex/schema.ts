@@ -137,6 +137,7 @@ const consentType = v.union(v.literal('diagnostics'), v.literal('analytics'))
 
 const exportStatus = v.union(v.literal('processing'), v.literal('ready'), v.literal('failed'), v.literal('expired'))
 const deletionJobStatus = v.union(v.literal('running'), v.literal('completed'), v.literal('failed'))
+const cardMinimumPaymentType = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
 
 export default defineSchema({
   dashboardStates: defineTable({
@@ -193,6 +194,9 @@ export default defineSchema({
     statementBalance: v.optional(v.number()),
     pendingCharges: v.optional(v.number()),
     minimumPayment: v.number(),
+    minimumPaymentType: v.optional(cardMinimumPaymentType),
+    minimumPaymentPercent: v.optional(v.number()),
+    extraPayment: v.optional(v.number()),
     spendPerMonth: v.number(),
     interestRate: v.optional(v.number()),
     statementDay: v.optional(v.number()),

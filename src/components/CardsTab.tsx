@@ -1,5 +1,5 @@
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
-import type { CardEditDraft, CardEntry, CardForm, CardId } from './financeTypes'
+import type { CardEditDraft, CardEntry, CardForm, CardId, CardMinimumPaymentType } from './financeTypes'
 
 type CardSortKey =
   | 'name_asc'
@@ -36,9 +36,14 @@ type CardCycleProjection = {
   currentInput: number
   statementInput: number
   pendingCharges: number
+  minimumPaymentType: CardMinimumPaymentType
+  minimumPaymentPercent: number
+  configuredMinimumPayment: number
+  extraPayment: number
   interestAmount: number
   newStatementBalance: number
   minimumDue: number
+  plannedPayment: number
   dueAdjustedCurrent: number
   displayCurrentBalance: number
   displayAvailableCredit: number
@@ -61,6 +66,13 @@ const toDayOfMonth = (value: number | undefined | null, fallback: number) => {
 }
 
 const utilizationFor = (used: number, limit: number) => (limit > 0 ? used / limit : 0)
+const normalizeCardMinimumPaymentType = (value: CardMinimumPaymentType | undefined | null): CardMinimumPaymentType =>
+  value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed'
+const clampPercent = (value: number) => Math.min(Math.max(value, 0), 100)
+const describeMinimumConfig = (projection: CardCycleProjection) =>
+  projection.minimumPaymentType === 'percent_plus_interest'
+    ? `${projection.minimumPaymentPercent.toFixed(2)}% + interest`
+    : `Fixed ${projection.configuredMinimumPayment.toFixed(2)}`
 
 const projectCardCycle = (
   input: {
@@ -69,6 +81,9 @@ const projectCardCycle = (
     statementBalance?: number
     pendingCharges?: number
     minimumPayment: number
+    minimumPaymentType?: CardMinimumPaymentType
+    minimumPaymentPercent?: number
+    extraPayment?: number
     spendPerMonth: number
     interestRate?: number
     dueDay?: number
@@ -80,6 +95,9 @@ const projectCardCycle = (
   const statementInput = toNonNegativeNumber(input.statementBalance ?? input.usedLimit)
   const pendingCharges = toNonNegativeNumber(input.pendingCharges ?? Math.max(currentInput - statementInput, 0))
   const minimumPayment = toNonNegativeNumber(input.minimumPayment)
+  const minimumPaymentType = normalizeCardMinimumPaymentType(input.minimumPaymentType)
+  const minimumPaymentPercent = clampPercent(toNonNegativeNumber(input.minimumPaymentPercent))
+  const extraPayment = toNonNegativeNumber(input.extraPayment)
   const plannedSpend = toNonNegativeNumber(input.spendPerMonth)
   const apr = toNonNegativeNumber(input.interestRate)
   const dueDay = toDayOfMonth(input.dueDay, 21)
@@ -87,8 +105,13 @@ const projectCardCycle = (
   const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
   const interestAmount = roundCurrency(statementInput * monthlyRate)
   const newStatementBalance = roundCurrency(statementInput + interestAmount)
-  const minimumDue = roundCurrency(Math.min(newStatementBalance, minimumPayment))
-  const dueAdjustedCurrent = roundCurrency(Math.max(newStatementBalance - minimumDue, 0) + pendingCharges)
+  const minimumDueRaw =
+    minimumPaymentType === 'percent_plus_interest'
+      ? statementInput * (minimumPaymentPercent / 100) + interestAmount
+      : minimumPayment
+  const minimumDue = roundCurrency(Math.min(newStatementBalance, Math.max(minimumDueRaw, 0)))
+  const plannedPayment = roundCurrency(Math.min(newStatementBalance, minimumDue + extraPayment))
+  const dueAdjustedCurrent = roundCurrency(Math.max(newStatementBalance - plannedPayment, 0) + pendingCharges)
   const dueApplied = todayDay >= dueDay
   const displayCurrentBalance = dueApplied ? dueAdjustedCurrent : currentInput
   const displayAvailableCredit = roundCurrency(limit - displayCurrentBalance)
@@ -99,9 +122,14 @@ const projectCardCycle = (
     currentInput,
     statementInput,
     pendingCharges,
+    minimumPaymentType,
+    minimumPaymentPercent,
+    configuredMinimumPayment: minimumPayment,
+    extraPayment,
     interestAmount,
     newStatementBalance,
     minimumDue,
+    plannedPayment,
     dueAdjustedCurrent,
     displayCurrentBalance: roundCurrency(displayCurrentBalance),
     displayAvailableCredit,
@@ -152,6 +180,9 @@ export function CardsTab({
             statementBalance: entry.statementBalance,
             pendingCharges: entry.pendingCharges,
             minimumPayment: entry.minimumPayment,
+            minimumPaymentType: entry.minimumPaymentType,
+            minimumPaymentPercent: entry.minimumPaymentPercent,
+            extraPayment: entry.extraPayment,
             spendPerMonth: entry.spendPerMonth,
             interestRate: entry.interestRate,
             dueDay: entry.dueDay,
@@ -162,11 +193,14 @@ export function CardsTab({
     [cards, todayDay],
   )
 
-  const minPaymentsTotal = useMemo(
-    () => cards.reduce((sum, entry) => sum + (Number.isFinite(entry.minimumPayment) ? entry.minimumPayment : 0), 0),
-    [cards],
+  const estimatedMinimumDueTotal = useMemo(
+    () => cardRows.reduce((sum, row) => sum + row.projection.minimumDue, 0),
+    [cardRows],
   )
-  const minDueTotal = useMemo(() => cardRows.reduce((sum, row) => sum + row.projection.minimumDue, 0), [cardRows])
+  const plannedPaymentTotal = useMemo(
+    () => cardRows.reduce((sum, row) => sum + row.projection.plannedPayment, 0),
+    [cardRows],
+  )
   const pendingChargesTotal = useMemo(() => cardRows.reduce((sum, row) => sum + row.projection.pendingCharges, 0), [cardRows])
   const newStatementsTotal = useMemo(
     () => cardRows.reduce((sum, row) => sum + row.projection.newStatementBalance, 0),
@@ -199,7 +233,7 @@ export function CardsTab({
         case 'statement_desc':
           return right.newStatementBalance - left.newStatementBalance
         case 'due_payment_desc':
-          return right.minimumDue - left.minimumDue
+          return right.plannedPayment - left.plannedPayment
         case 'util_desc':
           return right.displayUtilization - left.displayUtilization
         case 'limit_desc':
@@ -301,16 +335,68 @@ export function CardsTab({
             </div>
 
             <div className="form-field">
-              <label htmlFor="card-payment">Minimum payment</label>
+              <label htmlFor="card-payment-type">Minimum payment mode</label>
+              <select
+                id="card-payment-type"
+                value={cardForm.minimumPaymentType}
+                onChange={(event) =>
+                  setCardForm((prev) => ({
+                    ...prev,
+                    minimumPaymentType: event.target.value as CardMinimumPaymentType,
+                  }))
+                }
+              >
+                <option value="fixed">Fixed amount</option>
+                <option value="percent_plus_interest">% + interest</option>
+              </select>
+            </div>
+
+            {cardForm.minimumPaymentType === 'fixed' ? (
+              <div className="form-field">
+                <label htmlFor="card-payment">Minimum payment</label>
+                <input
+                  id="card-payment"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={cardForm.minimumPayment}
+                  onChange={(event) => setCardForm((prev) => ({ ...prev, minimumPayment: event.target.value }))}
+                  required
+                />
+              </div>
+            ) : (
+              <div className="form-field">
+                <label htmlFor="card-payment-percent">Minimum % of statement</label>
+                <input
+                  id="card-payment-percent"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={cardForm.minimumPaymentPercent}
+                  onChange={(event) =>
+                    setCardForm((prev) => ({
+                      ...prev,
+                      minimumPaymentPercent: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </div>
+            )}
+
+            <div className="form-field">
+              <label htmlFor="card-extra-payment">Extra payment</label>
               <input
-                id="card-payment"
+                id="card-extra-payment"
                 type="number"
                 inputMode="decimal"
                 min="0"
                 step="0.01"
-                value={cardForm.minimumPayment}
-                onChange={(event) => setCardForm((prev) => ({ ...prev, minimumPayment: event.target.value }))}
-                required
+                value={cardForm.extraPayment}
+                onChange={(event) => setCardForm((prev) => ({ ...prev, extraPayment: event.target.value }))}
               />
             </div>
 
@@ -374,8 +460,8 @@ export function CardsTab({
           </div>
 
           <p id="card-form-hint" className="form-hint">
-            New statement = statement balance + APR monthly interest. On/after due day, current/available/utilization use statement minus
-            minimum due, plus pending charges.
+            New statement = statement balance + APR monthly interest. Payment can be fixed or % + interest, with optional extra payment.
+            On/after due day, current/available/utilization use statement minus planned payment, plus pending charges.
           </p>
 
           <div className="form-actions">
@@ -395,7 +481,7 @@ export function CardsTab({
               {formatMoney(dueAdjustedCurrentTotal)} due-adjusted current · {formatPercent(dueAdjustedUtilizationPercent)} util
             </p>
             <p className="subnote">
-              {formatMoney(newStatementsTotal)} new statements · {formatMoney(minDueTotal)} total minimum due
+              {formatMoney(newStatementsTotal)} new statements · {formatMoney(plannedPaymentTotal)} total planned payments
             </p>
           </div>
           <div className="panel-actions">
@@ -409,7 +495,7 @@ export function CardsTab({
               <option value="name_asc">Name (A-Z)</option>
               <option value="current_desc">Current balance (high-low)</option>
               <option value="statement_desc">New statement (high-low)</option>
-              <option value="due_payment_desc">Min due (high-low)</option>
+              <option value="due_payment_desc">Planned payment (high-low)</option>
               <option value="util_desc">Utilization (high-low)</option>
               <option value="limit_desc">Limit (high-low)</option>
               <option value="apr_desc">APR (high-low)</option>
@@ -434,8 +520,8 @@ export function CardsTab({
         ) : (
           <>
             <p className="subnote">
-              Showing {visibleRows.length} of {cards.length} card{cards.length === 1 ? '' : 's'} · {formatMoney(minPaymentsTotal)}{' '}
-              configured min payments/mo · {formatMoney(monthlyCardSpend)} planned spend/mo
+              Showing {visibleRows.length} of {cards.length} card{cards.length === 1 ? '' : 's'} ·{' '}
+              {formatMoney(estimatedMinimumDueTotal)} estimated minimum due · {formatMoney(monthlyCardSpend)} modeled payments/mo
             </p>
             <p className="subnote">
               Pending charges {formatMoney(pendingChargesTotal)} · Available credit {formatMoney(availableCreditTotal)} · Baseline{' '}
@@ -477,9 +563,12 @@ export function CardsTab({
                           const draftStatementBalance = Number.parseFloat(cardEditDraft.statementBalance)
                           const draftPending = Number.parseFloat(cardEditDraft.pendingCharges)
                           const draftMinPayment = Number.parseFloat(cardEditDraft.minimumPayment)
+                          const draftMinPercent = Number.parseFloat(cardEditDraft.minimumPaymentPercent)
+                          const draftExtraPayment = Number.parseFloat(cardEditDraft.extraPayment)
                           const draftSpend = Number.parseFloat(cardEditDraft.spendPerMonth)
                           const draftApr = Number.parseFloat(cardEditDraft.interestRate)
                           const draftDueDay = Number.parseInt(cardEditDraft.dueDay, 10)
+                          const draftMinimumPaymentType = normalizeCardMinimumPaymentType(cardEditDraft.minimumPaymentType)
 
                           const editProjection = projectCardCycle(
                             {
@@ -488,6 +577,9 @@ export function CardsTab({
                               statementBalance: Number.isFinite(draftStatementBalance) ? draftStatementBalance : undefined,
                               pendingCharges: Number.isFinite(draftPending) ? draftPending : undefined,
                               minimumPayment: Number.isFinite(draftMinPayment) ? draftMinPayment : 0,
+                              minimumPaymentType: draftMinimumPaymentType,
+                              minimumPaymentPercent: Number.isFinite(draftMinPercent) ? draftMinPercent : undefined,
+                              extraPayment: Number.isFinite(draftExtraPayment) ? draftExtraPayment : undefined,
                               spendPerMonth: Number.isFinite(draftSpend) ? draftSpend : 0,
                               interestRate: Number.isFinite(draftApr) ? draftApr : undefined,
                               dueDay: Number.isFinite(draftDueDay) ? draftDueDay : undefined,
@@ -582,18 +674,65 @@ export function CardsTab({
                               <td>
                                 {isEditing ? (
                                   <div className="cell-stack">
+                                    <select
+                                      className="inline-select"
+                                      value={cardEditDraft.minimumPaymentType}
+                                      onChange={(event) =>
+                                        setCardEditDraft((prev) => ({
+                                          ...prev,
+                                          minimumPaymentType: event.target.value as CardMinimumPaymentType,
+                                        }))
+                                      }
+                                    >
+                                      <option value="fixed">Fixed minimum</option>
+                                      <option value="percent_plus_interest">% + interest</option>
+                                    </select>
+                                    {cardEditDraft.minimumPaymentType === 'fixed' ? (
+                                      <input
+                                        className="inline-input"
+                                        type="number"
+                                        inputMode="decimal"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="Minimum payment"
+                                        value={cardEditDraft.minimumPayment}
+                                        onChange={(event) =>
+                                          setCardEditDraft((prev) => ({
+                                            ...prev,
+                                            minimumPayment: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                    ) : (
+                                      <input
+                                        className="inline-input"
+                                        type="number"
+                                        inputMode="decimal"
+                                        min="0"
+                                        max="100"
+                                        step="0.01"
+                                        placeholder="Minimum %"
+                                        value={cardEditDraft.minimumPaymentPercent}
+                                        onChange={(event) =>
+                                          setCardEditDraft((prev) => ({
+                                            ...prev,
+                                            minimumPaymentPercent: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                    )}
                                     <input
                                       className="inline-input"
                                       type="number"
                                       inputMode="decimal"
                                       min="0"
                                       step="0.01"
-                                      placeholder="Minimum payment"
-                                      value={cardEditDraft.minimumPayment}
+                                      placeholder="Extra payment"
+                                      value={cardEditDraft.extraPayment}
                                       onChange={(event) =>
                                         setCardEditDraft((prev) => ({
                                           ...prev,
-                                          minimumPayment: event.target.value,
+                                          extraPayment: event.target.value,
                                         }))
                                       }
                                     />
@@ -633,6 +772,9 @@ export function CardsTab({
                                 ) : (
                                   <div className="cell-stack">
                                     <small>Min due {formatMoney(rowProjection.minimumDue)}</small>
+                                    <small>{describeMinimumConfig(rowProjection)}</small>
+                                    <small>Extra payment {formatMoney(rowProjection.extraPayment)}</small>
+                                    <small>Planned payment {formatMoney(rowProjection.plannedPayment)}</small>
                                     <small>Due day {rowProjection.dueDay}</small>
                                     <small>{rowProjection.dueApplied ? 'Due applied this month' : 'Due pending this month'}</small>
                                     <small>Statement day {entry.statementDay ?? 1}</small>
@@ -705,6 +847,7 @@ export function CardsTab({
                                 ) : (
                                   <div className="cell-stack">
                                     <small>Planned spend {formatMoney(rowProjection.plannedSpend)}</small>
+                                    <small>Planned payment {formatMoney(rowProjection.plannedPayment)}</small>
                                     <small>Due-adjusted current {formatMoney(rowProjection.dueAdjustedCurrent)}</small>
                                   </div>
                                 )}
@@ -760,9 +903,12 @@ export function CardsTab({
                     const draftStatementBalance = Number.parseFloat(cardEditDraft.statementBalance)
                     const draftPending = Number.parseFloat(cardEditDraft.pendingCharges)
                     const draftMinPayment = Number.parseFloat(cardEditDraft.minimumPayment)
+                    const draftMinPercent = Number.parseFloat(cardEditDraft.minimumPaymentPercent)
+                    const draftExtraPayment = Number.parseFloat(cardEditDraft.extraPayment)
                     const draftSpend = Number.parseFloat(cardEditDraft.spendPerMonth)
                     const draftApr = Number.parseFloat(cardEditDraft.interestRate)
                     const draftDueDay = Number.parseInt(cardEditDraft.dueDay, 10)
+                    const draftMinimumPaymentType = normalizeCardMinimumPaymentType(cardEditDraft.minimumPaymentType)
 
                     const editProjection = projectCardCycle(
                       {
@@ -771,6 +917,9 @@ export function CardsTab({
                         statementBalance: Number.isFinite(draftStatementBalance) ? draftStatementBalance : undefined,
                         pendingCharges: Number.isFinite(draftPending) ? draftPending : undefined,
                         minimumPayment: Number.isFinite(draftMinPayment) ? draftMinPayment : 0,
+                        minimumPaymentType: draftMinimumPaymentType,
+                        minimumPaymentPercent: Number.isFinite(draftMinPercent) ? draftMinPercent : undefined,
+                        extraPayment: Number.isFinite(draftExtraPayment) ? draftExtraPayment : undefined,
                         spendPerMonth: Number.isFinite(draftSpend) ? draftSpend : 0,
                         interestRate: Number.isFinite(draftApr) ? draftApr : undefined,
                         dueDay: Number.isFinite(draftDueDay) ? draftDueDay : undefined,
@@ -887,18 +1036,58 @@ export function CardsTab({
                                 />
                               </label>
                               <label className="cards-mobile-edit-field">
-                                <span>Minimum payment</span>
+                                <span>Minimum mode</span>
+                                <select
+                                  className="inline-select"
+                                  value={cardEditDraft.minimumPaymentType}
+                                  onChange={(event) =>
+                                    setCardEditDraft((prev) => ({
+                                      ...prev,
+                                      minimumPaymentType: event.target.value as CardMinimumPaymentType,
+                                    }))
+                                  }
+                                >
+                                  <option value="fixed">Fixed minimum</option>
+                                  <option value="percent_plus_interest">% + interest</option>
+                                </select>
+                              </label>
+                              <label className="cards-mobile-edit-field">
+                                <span>{cardEditDraft.minimumPaymentType === 'fixed' ? 'Minimum payment' : 'Minimum %'}</span>
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0"
+                                  max={cardEditDraft.minimumPaymentType === 'fixed' ? undefined : '100'}
+                                  step="0.01"
+                                  value={
+                                    cardEditDraft.minimumPaymentType === 'fixed'
+                                      ? cardEditDraft.minimumPayment
+                                      : cardEditDraft.minimumPaymentPercent
+                                  }
+                                  onChange={(event) =>
+                                    setCardEditDraft((prev) => ({
+                                      ...prev,
+                                      ...(prev.minimumPaymentType === 'fixed'
+                                        ? { minimumPayment: event.target.value }
+                                        : { minimumPaymentPercent: event.target.value }),
+                                    }))
+                                  }
+                                />
+                              </label>
+                              <label className="cards-mobile-edit-field">
+                                <span>Extra payment</span>
                                 <input
                                   className="inline-input"
                                   type="number"
                                   inputMode="decimal"
                                   min="0"
                                   step="0.01"
-                                  value={cardEditDraft.minimumPayment}
+                                  value={cardEditDraft.extraPayment}
                                   onChange={(event) =>
                                     setCardEditDraft((prev) => ({
                                       ...prev,
-                                      minimumPayment: event.target.value,
+                                      extraPayment: event.target.value,
                                     }))
                                   }
                                 />
@@ -995,6 +1184,18 @@ export function CardsTab({
                               <div>
                                 <span>Min due</span>
                                 <strong>{formatMoney(rowProjection.minimumDue)}</strong>
+                              </div>
+                              <div>
+                                <span>Min config</span>
+                                <strong>{describeMinimumConfig(rowProjection)}</strong>
+                              </div>
+                              <div>
+                                <span>Extra payment</span>
+                                <strong>{formatMoney(rowProjection.extraPayment)}</strong>
+                              </div>
+                              <div>
+                                <span>Planned payment</span>
+                                <strong>{formatMoney(rowProjection.plannedPayment)}</strong>
                               </div>
                               <div>
                                 <span>Available</span>

@@ -376,7 +376,10 @@ export function PrintReport({
                   <th scope="col">Current</th>
                   <th scope="col">Statement</th>
                   <th scope="col">Pending</th>
-                  <th scope="col">Min Payment</th>
+                  <th scope="col">Min Mode</th>
+                  <th scope="col">Min Amount</th>
+                  <th scope="col">Min %</th>
+                  <th scope="col">Extra Pay</th>
                   <th scope="col">Monthly Spend</th>
                   <th scope="col">APR</th>
                   <th scope="col">Statement Day</th>
@@ -391,7 +394,10 @@ export function PrintReport({
                     <td className="table-amount">{formatMoney(card.usedLimit)}</td>
                     <td className="table-amount">{formatMoney(card.statementBalance ?? card.usedLimit)}</td>
                     <td className="table-amount">{formatMoney(card.pendingCharges ?? 0)}</td>
+                    <td>{card.minimumPaymentType === 'percent_plus_interest' ? '% + interest' : 'fixed'}</td>
                     <td className="table-amount">{formatMoney(card.minimumPayment)}</td>
+                    <td>{card.minimumPaymentPercent !== undefined ? `${card.minimumPaymentPercent.toFixed(2)}%` : 'n/a'}</td>
+                    <td className="table-amount">{formatMoney(card.extraPayment ?? 0)}</td>
                     <td className="table-amount">{formatMoney(card.spendPerMonth)}</td>
                     <td>{card.interestRate ? `${card.interestRate.toFixed(2)}%` : 'n/a'}</td>
                     <td>Day {card.statementDay ?? 1}</td>

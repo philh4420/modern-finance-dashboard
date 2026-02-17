@@ -1,5 +1,6 @@
 export type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 export type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
+export type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 
 export type CardCycleInput = {
   usedLimit?: number | null
@@ -7,6 +8,9 @@ export type CardCycleInput = {
   pendingCharges?: number | null
   spendPerMonth?: number | null
   minimumPayment?: number | null
+  minimumPaymentType?: CardMinimumPaymentType | null
+  minimumPaymentPercent?: number | null
+  extraPayment?: number | null
   interestRate?: number | null
 }
 
@@ -23,6 +27,11 @@ export const roundCurrency = (value: number) => Math.round(value * 100) / 100
 
 export const finiteOrZero = (value: number | undefined | null) =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0
+
+const normalizeCardMinimumPaymentType = (value: CardMinimumPaymentType | undefined | null): CardMinimumPaymentType =>
+  value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed'
+
+const clampPercent = (value: number) => Math.min(Math.max(value, 0), 100)
 
 export const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
 
@@ -100,6 +109,9 @@ export const applyCardMonthlyLifecycle = (card: CardCycleInput, cycles: number) 
   let pendingCharges = finiteOrZero(card.pendingCharges)
   const spendPerMonth = finiteOrZero(card.spendPerMonth)
   const minimumPayment = finiteOrZero(card.minimumPayment)
+  const minimumPaymentType = normalizeCardMinimumPaymentType(card.minimumPaymentType)
+  const minimumPaymentPercent = clampPercent(finiteOrZero(card.minimumPaymentPercent))
+  const extraPayment = finiteOrZero(card.extraPayment)
   const apr = finiteOrZero(card.interestRate)
   const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
   let interestAccrued = 0
@@ -112,7 +124,13 @@ export const applyCardMonthlyLifecycle = (card: CardCycleInput, cycles: number) 
     interestAccrued += interest
     const dueBalance = statementBalance + interest
     latestDueBalance = dueBalance
-    const payment = Math.min(dueBalance, minimumPayment)
+
+    const minimumDueRaw =
+      minimumPaymentType === 'percent_plus_interest'
+        ? statementBalance * (minimumPaymentPercent / 100) + interest
+        : minimumPayment
+    const minimumDue = Math.min(dueBalance, Math.max(minimumDueRaw, 0))
+    const payment = Math.min(dueBalance, minimumDue + extraPayment)
     const carriedAfterDue = dueBalance - payment
     paymentsApplied += payment
 

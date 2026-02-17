@@ -20,6 +20,7 @@ export type GoalPriority = 'low' | 'medium' | 'high'
 export type InsightSeverity = 'good' | 'warning' | 'critical'
 export type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 export type RuleMatchType = 'contains' | 'exact' | 'starts_with'
+export type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 
 export type FinancePreference = {
   currency: string
@@ -147,7 +148,10 @@ export type CardForm = {
   usedLimit: string
   statementBalance: string
   pendingCharges: string
+  minimumPaymentType: CardMinimumPaymentType
   minimumPayment: string
+  minimumPaymentPercent: string
+  extraPayment: string
   spendPerMonth: string
   interestRate: string
   statementDay: string

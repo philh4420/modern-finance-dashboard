@@ -42,6 +42,27 @@ describe('financeMath', () => {
     expect(result.spendAdded).toBeCloseTo(100, 2)
   })
 
+  it('applies card lifecycle with percent + interest minimum payment type', () => {
+    const result = applyCardMonthlyLifecycle(
+      {
+        usedLimit: 1000,
+        statementBalance: 1000,
+        pendingCharges: 0,
+        spendPerMonth: 0,
+        minimumPaymentType: 'percent_plus_interest',
+        minimumPaymentPercent: 2,
+        extraPayment: 15,
+        minimumPayment: 0,
+        interestRate: 24,
+      },
+      1,
+    )
+
+    expect(result.dueBalance).toBeCloseTo(1020, 2)
+    expect(result.paymentsApplied).toBeCloseTo(55, 2)
+    expect(result.balance).toBeCloseTo(965, 2)
+  })
+
   it('applies loan lifecycle with apr and amortizing payment', () => {
     const result = applyLoanMonthlyLifecycle(
       {
