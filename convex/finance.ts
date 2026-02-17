@@ -41,6 +41,7 @@ type CycleRunSource = 'manual' | 'automatic'
 type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
+type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
 type LedgerEntryType =
   | 'purchase'
   | 'purchase_reversal'
@@ -201,6 +202,16 @@ const resolveIncomeNetAmount = (entry: {
   }
 
   return Math.max(finiteOrZero(entry.amount), 0)
+}
+
+const resolveIncomeChangeDirection = (deltaAmount: number): IncomeChangeDirection => {
+  if (deltaAmount > 0.000001) {
+    return 'increase'
+  }
+  if (deltaAmount < -0.000001) {
+    return 'decrease'
+  }
+  return 'no_change'
 }
 
 const normalizeIncomeForecastSmoothing = (
@@ -1538,6 +1549,7 @@ export const getFinanceData = query({
           preference: defaultPreference,
           incomes: [],
           incomePaymentChecks: [],
+          incomeChangeEvents: [],
           bills: [],
           cards: [],
           loans: [],
@@ -1561,6 +1573,7 @@ export const getFinanceData = query({
       preference,
       incomes,
       incomePaymentChecks,
+      incomeChangeEvents,
       bills,
       cards,
       loans,
@@ -1584,6 +1597,11 @@ export const getFinanceData = query({
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .take(240),
+      ctx.db
+        .query('incomeChangeEvents')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(320),
       ctx.db
         .query('bills')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -1749,6 +1767,7 @@ export const getFinanceData = query({
     const timestamps = [
       ...incomes.map((entry) => entry.createdAt),
       ...incomePaymentChecks.map((entry) => entry.updatedAt ?? entry.createdAt),
+      ...incomeChangeEvents.map((entry) => entry.createdAt),
       ...bills.map((entry) => entry.createdAt),
       ...cards.map((entry) => entry.createdAt),
       ...loans.map((entry) => entry.createdAt),
@@ -1771,6 +1790,7 @@ export const getFinanceData = query({
         preference,
         incomes,
         incomePaymentChecks,
+        incomeChangeEvents,
         bills,
         cards,
         loans,
@@ -2127,7 +2147,13 @@ export const removeIncome = mutation({
       .withIndex('by_userId_incomeId_cycleMonth', (q) => q.eq('userId', identity.subject).eq('incomeId', args.id))
       .collect()
 
+    const existingChangeEvents = await ctx.db
+      .query('incomeChangeEvents')
+      .withIndex('by_userId_incomeId_effectiveDate', (q) => q.eq('userId', identity.subject).eq('incomeId', args.id))
+      .collect()
+
     await Promise.all(existingPaymentChecks.map((entry) => ctx.db.delete(entry._id)))
+    await Promise.all(existingChangeEvents.map((entry) => ctx.db.delete(entry._id)))
 
     await ctx.db.delete(args.id)
 
@@ -2141,6 +2167,121 @@ export const removeIncome = mutation({
         amount: existing.amount,
         cadence: existing.cadence,
         removedPaymentChecks: existingPaymentChecks.length,
+        removedChangeEvents: existingChangeEvents.length,
+      },
+    })
+  },
+})
+
+export const addIncomeChangeEvent = mutation({
+  args: {
+    incomeId: v.id('incomes'),
+    effectiveDate: v.string(),
+    newAmount: v.number(),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateIsoDate(args.effectiveDate, 'Effective date')
+    validatePositive(args.newAmount, 'New salary amount')
+    validateOptionalText(args.note, 'Change note', 800)
+
+    const todayIso = new Date().toISOString().slice(0, 10)
+    if (args.effectiveDate > todayIso) {
+      throw new Error('Effective date cannot be in the future.')
+    }
+
+    const income = await ctx.db.get(args.incomeId)
+    ensureOwned(income, identity.subject, 'Income record not found.')
+
+    const previousAmount = roundCurrency(resolveIncomeNetAmount(income))
+    const newAmount = roundCurrency(args.newAmount)
+    const deltaAmount = roundCurrency(newAmount - previousAmount)
+    const direction = resolveIncomeChangeDirection(deltaAmount)
+
+    const deductionTotal = computeIncomeDeductionsTotal(income)
+    const hasBreakdown = finiteOrZero(income.grossAmount) > 0 || deductionTotal > 0
+
+    await ctx.db.patch(args.incomeId, {
+      amount: newAmount,
+      grossAmount: hasBreakdown ? roundCurrency(newAmount + deductionTotal) : income.grossAmount,
+    })
+
+    const createdId = await ctx.db.insert('incomeChangeEvents', {
+      userId: identity.subject,
+      incomeId: args.incomeId,
+      effectiveDate: args.effectiveDate,
+      previousAmount,
+      newAmount,
+      deltaAmount,
+      direction,
+      note: args.note?.trim() || undefined,
+      createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'income_change_event',
+      entityId: String(createdId),
+      action: 'created',
+      after: {
+        incomeId: String(args.incomeId),
+        effectiveDate: args.effectiveDate,
+        previousAmount,
+        newAmount,
+        deltaAmount,
+        direction,
+        note: args.note?.trim() || undefined,
+      },
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'income',
+      entityId: String(args.incomeId),
+      action: 'change_tracked',
+      metadata: {
+        effectiveDate: args.effectiveDate,
+        previousAmount,
+        newAmount,
+        deltaAmount,
+        direction,
+      },
+    })
+
+    return {
+      id: createdId,
+      direction,
+      deltaAmount,
+    }
+  },
+})
+
+export const removeIncomeChangeEvent = mutation({
+  args: {
+    id: v.id('incomeChangeEvents'),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Income change event not found.')
+
+    await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'income_change_event',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        incomeId: String(existing.incomeId),
+        effectiveDate: existing.effectiveDate,
+        previousAmount: existing.previousAmount,
+        newAmount: existing.newAmount,
+        deltaAmount: existing.deltaAmount,
+        direction: existing.direction,
+        note: existing.note,
       },
     })
   },

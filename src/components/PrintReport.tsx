@@ -8,6 +8,8 @@ import type {
   FinancePreference,
   GoalEntry,
   IncomeEntry,
+  IncomeChangeDirection,
+  IncomeChangeEventEntry,
   IncomePaymentCheckEntry,
   IncomePaymentStatus,
   KpiSnapshot,
@@ -33,6 +35,7 @@ type PrintReportProps = {
   kpis: KpiSnapshot | null
   monthCloseSnapshots: MonthCloseSnapshotEntry[]
   incomes: IncomeEntry[]
+  incomeChangeEvents: IncomeChangeEventEntry[]
   incomePaymentChecks: IncomePaymentCheckEntry[]
   bills: BillEntry[]
   cards: CardEntry[]
@@ -178,6 +181,12 @@ const incomeStatusLabel = (status: IncomeStatusTag) => {
   if (status === 'at_risk') return 'At-risk'
   if (status === 'missed') return 'Missed'
   return 'Pending'
+}
+
+const incomeChangeDirectionLabel = (direction: IncomeChangeDirection) => {
+  if (direction === 'increase') return 'Increase'
+  if (direction === 'decrease') return 'Decrease'
+  return 'No change'
 }
 
 const resolveIncomeStatusTag = (args: {
@@ -472,6 +481,7 @@ export function PrintReport({
   kpis,
   monthCloseSnapshots,
   incomes,
+  incomeChangeEvents,
   incomePaymentChecks,
   bills,
   cards,
@@ -623,6 +633,32 @@ export function PrintReport({
     incomeExpectations.actualTrackedMonthly - incomeExpectations.expectedTrackedMonthly,
   )
   const incomePendingCount = Math.max(incomes.length - incomeExpectations.trackedCount, 0)
+  const incomeNameById = incomes.reduce((map, income) => {
+    map.set(String(income._id), income.source)
+    return map
+  }, new Map<string, string>())
+  const incomeChangeEventsInRange = [...incomeChangeEvents]
+    .filter((event) => {
+      if (/^\d{4}-\d{2}/.test(event.effectiveDate)) {
+        return inMonthRange(event.effectiveDate.slice(0, 7), config.startMonth, config.endMonth)
+      }
+      return true
+    })
+    .sort((left, right) => {
+      const byDate = right.effectiveDate.localeCompare(left.effectiveDate)
+      if (byDate !== 0) return byDate
+      return right.createdAt - left.createdAt
+    })
+  const incomeChangeSummary = incomeChangeEventsInRange.reduce(
+    (totals, event) => {
+      if (event.direction === 'increase') totals.increase += 1
+      if (event.direction === 'decrease') totals.decrease += 1
+      if (event.direction === 'no_change') totals.noChange += 1
+      totals.netDelta += event.deltaAmount
+      return totals
+    },
+    { increase: 0, decrease: 0, noChange: 0, netDelta: 0 },
+  )
 
   const filteredAuditLogs = config.includeAuditLogs
     ? {
@@ -1015,6 +1051,73 @@ export function PrintReport({
                   </tbody>
                 </table>
               </div>
+
+              <h3 className="print-subhead">Income change history</h3>
+              {incomeChangeEventsInRange.length === 0 ? (
+                <p className="print-subnote">No salary change events in the selected range.</p>
+              ) : (
+                <>
+                  <div className="print-kpi-grid">
+                    <div className="print-kpi">
+                      <p>Change events</p>
+                      <strong>{incomeChangeEventsInRange.length}</strong>
+                      <small>effective-dated updates in range</small>
+                    </div>
+                    <div className="print-kpi">
+                      <p>Increases</p>
+                      <strong>{incomeChangeSummary.increase}</strong>
+                      <small>positive salary adjustments</small>
+                    </div>
+                    <div className="print-kpi">
+                      <p>Decreases</p>
+                      <strong>{incomeChangeSummary.decrease}</strong>
+                      <small>negative salary adjustments</small>
+                    </div>
+                    <div className="print-kpi">
+                      <p>No change entries</p>
+                      <strong>{incomeChangeSummary.noChange}</strong>
+                      <small>logged for audit consistency</small>
+                    </div>
+                    <div className="print-kpi">
+                      <p>Net delta over range</p>
+                      <strong>{formatMoney(roundCurrency(incomeChangeSummary.netDelta))}</strong>
+                      <small>sum of all change deltas</small>
+                    </div>
+                  </div>
+
+                  <div className="print-table-wrap">
+                    <table className="print-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">Effective Date</th>
+                          <th scope="col">Source</th>
+                          <th scope="col">Direction</th>
+                          <th scope="col">Previous</th>
+                          <th scope="col">New</th>
+                          <th scope="col">Delta</th>
+                          {config.includeNotes ? <th scope="col">Note</th> : null}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {incomeChangeEventsInRange.map((event) => (
+                          <tr key={event._id}>
+                            <td>{event.effectiveDate}</td>
+                            <td>{incomeNameById.get(String(event.incomeId)) ?? 'Unknown source'}</td>
+                            <td>{incomeChangeDirectionLabel(event.direction)}</td>
+                            <td className="table-amount">{formatMoney(event.previousAmount)}</td>
+                            <td className="table-amount">{formatMoney(event.newAmount)}</td>
+                            <td className="table-amount">
+                              {event.deltaAmount > 0 ? '+' : ''}
+                              {formatMoney(event.deltaAmount)}
+                            </td>
+                            {config.includeNotes ? <td>{event.note ?? ''}</td> : null}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
             </>
           )}
         </section>

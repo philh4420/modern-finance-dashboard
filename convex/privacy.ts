@@ -17,6 +17,7 @@ const retentionPolicyKeyValidator = v.union(
 
 type DeletionTable =
   | 'incomePaymentChecks'
+  | 'incomeChangeEvents'
   | 'ledgerLines'
   | 'ledgerEntries'
   | 'financeAuditEvents'
@@ -43,6 +44,7 @@ type DeletionTable =
 
 const deletionTableValidator = v.union(
   v.literal('incomePaymentChecks'),
+  v.literal('incomeChangeEvents'),
   v.literal('ledgerLines'),
   v.literal('ledgerEntries'),
   v.literal('financeAuditEvents'),
@@ -360,6 +362,7 @@ export const requestDeletion = action({
 
     const deleteTables: DeletionTable[] = [
       'incomePaymentChecks',
+      'incomeChangeEvents',
       'ledgerLines',
       'ledgerEntries',
       'financeAuditEvents',
@@ -507,6 +510,7 @@ export const _collectExportData = internalQuery({
     const [
       incomes,
       incomePaymentChecks,
+      incomeChangeEvents,
       bills,
       cards,
       loans,
@@ -531,6 +535,7 @@ export const _collectExportData = internalQuery({
     ] = await Promise.all([
       ctx.db.query('incomes').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomePaymentChecks').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('incomeChangeEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('bills').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cards').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('loans').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -557,6 +562,7 @@ export const _collectExportData = internalQuery({
     return {
       incomes: docsToPortableRows(incomes),
       incomePaymentChecks: docsToPortableRows(incomePaymentChecks),
+      incomeChangeEvents: docsToPortableRows(incomeChangeEvents),
       bills: docsToPortableRows(bills),
       cards: docsToPortableRows(cards),
       loans: docsToPortableRows(loans),

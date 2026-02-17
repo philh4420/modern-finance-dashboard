@@ -150,6 +150,7 @@ const exportStatus = v.union(v.literal('processing'), v.literal('ready'), v.lite
 const deletionJobStatus = v.union(v.literal('running'), v.literal('completed'), v.literal('failed'))
 const cardMinimumPaymentType = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
 const incomePaymentStatus = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
+const incomeChangeDirection = v.union(v.literal('increase'), v.literal('decrease'), v.literal('no_change'))
 const incomeAllocationTarget = v.union(
   v.literal('bills'),
   v.literal('savings'),
@@ -228,6 +229,20 @@ export default defineSchema({
     .index('by_userId_createdAt', ['userId', 'createdAt'])
     .index('by_userId_incomeId_cycleMonth', ['userId', 'incomeId', 'cycleMonth'])
     .index('by_userId_cycleMonth', ['userId', 'cycleMonth']),
+  incomeChangeEvents: defineTable({
+    userId: v.string(),
+    incomeId: v.id('incomes'),
+    effectiveDate: v.string(),
+    previousAmount: v.number(),
+    newAmount: v.number(),
+    deltaAmount: v.number(),
+    direction: incomeChangeDirection,
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_incomeId_effectiveDate', ['userId', 'incomeId', 'effectiveDate']),
   bills: defineTable({
     userId: v.string(),
     name: v.string(),

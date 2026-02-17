@@ -6,6 +6,7 @@ import type {
   IncomeEditDraft,
   IncomeEntry,
   IncomeForm,
+  IncomeChangeEventId,
   IncomeId,
   IncomePaymentCheckId,
   IncomePaymentStatus,
@@ -145,6 +146,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
   const addIncome = useMutation(api.finance.addIncome)
   const updateIncome = useMutation(api.finance.updateIncome)
   const removeIncome = useMutation(api.finance.removeIncome)
+  const addIncomeChangeEvent = useMutation(api.finance.addIncomeChangeEvent)
+  const removeIncomeChangeEvent = useMutation(api.finance.removeIncomeChangeEvent)
   const upsertIncomePaymentCheck = useMutation(api.finance.upsertIncomePaymentCheck)
   const removeIncomePaymentCheck = useMutation(api.finance.removeIncomePaymentCheck)
 
@@ -193,6 +196,44 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
         setIncomeEditId(null)
       }
       await removeIncome({ id })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onAddIncomeChangeEvent = async (input: {
+    incomeId: IncomeId
+    effectiveDate: string
+    newAmount: string
+    note: string
+  }) => {
+    clearError()
+    try {
+      const effectiveDate = input.effectiveDate.trim()
+      if (!isValidIsoDate(effectiveDate)) {
+        throw new Error('Effective date must use YYYY-MM-DD format.')
+      }
+
+      const newAmount = parseFloatInput(input.newAmount, 'New salary amount')
+      if (!Number.isFinite(newAmount) || newAmount <= 0) {
+        throw new Error('New salary amount must be greater than 0.')
+      }
+
+      await addIncomeChangeEvent({
+        incomeId: input.incomeId,
+        effectiveDate,
+        newAmount: roundCurrency(newAmount),
+        note: input.note.trim() || undefined,
+      })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const onDeleteIncomeChangeEvent = async (id: IncomeChangeEventId) => {
+    clearError()
+    try {
+      await removeIncomeChangeEvent({ id })
     } catch (error) {
       handleMutationError(error)
     }
@@ -302,6 +343,8 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
     setIncomeEditDraft,
     onAddIncome,
     onDeleteIncome,
+    onAddIncomeChangeEvent,
+    onDeleteIncomeChangeEvent,
     startIncomeEdit,
     saveIncomeEdit,
     onUpsertIncomePaymentCheck,

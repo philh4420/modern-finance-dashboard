@@ -144,6 +144,7 @@ function App() {
 
   const incomes = financeState?.data.incomes ?? []
   const incomePaymentChecks = financeState?.data.incomePaymentChecks ?? []
+  const incomeChangeEvents = financeState?.data.incomeChangeEvents ?? []
   const bills = financeState?.data.bills ?? []
   const cards = financeState?.data.cards ?? []
   const loans = financeState?.data.loans ?? []
@@ -645,6 +646,7 @@ function App() {
 	            incomes={incomes}
               accounts={accounts}
               incomePaymentChecks={incomePaymentChecks}
+              incomeChangeEvents={incomeChangeEvents}
 	            monthlyIncome={summary.monthlyIncome}
 	            incomeForm={incomeSection.incomeForm}
 	            setIncomeForm={incomeSection.setIncomeForm}
@@ -653,9 +655,11 @@ function App() {
             incomeEditDraft={incomeSection.incomeEditDraft}
             setIncomeEditDraft={incomeSection.setIncomeEditDraft}
             onAddIncome={incomeSection.onAddIncome}
-            onDeleteIncome={incomeSection.onDeleteIncome}
-            saveIncomeEdit={incomeSection.saveIncomeEdit}
-            startIncomeEdit={incomeSection.startIncomeEdit}
+	            onDeleteIncome={incomeSection.onDeleteIncome}
+              onAddIncomeChangeEvent={incomeSection.onAddIncomeChangeEvent}
+              onDeleteIncomeChangeEvent={incomeSection.onDeleteIncomeChangeEvent}
+	            saveIncomeEdit={incomeSection.saveIncomeEdit}
+	            startIncomeEdit={incomeSection.startIncomeEdit}
             onUpsertIncomePaymentCheck={incomeSection.onUpsertIncomePaymentCheck}
             onDeleteIncomePaymentCheck={incomeSection.onDeleteIncomePaymentCheck}
             cadenceOptions={cadenceOptions}
@@ -925,6 +929,7 @@ function App() {
               monthCloseSnapshots={monthCloseSnapshots}
               incomes={incomes}
               incomePaymentChecks={incomePaymentChecks}
+              incomeChangeEvents={incomeChangeEvents}
               bills={bills}
               cards={cards}
               loans={loans}

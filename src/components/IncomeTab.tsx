@@ -4,6 +4,9 @@ import type {
   Cadence,
   CustomCadenceUnit,
   CustomCadenceUnitOption,
+  IncomeChangeDirection,
+  IncomeChangeEventEntry,
+  IncomeChangeEventId,
   IncomeEditDraft,
   IncomeEntry,
   IncomeForm,
@@ -75,6 +78,12 @@ type IncomeSourceTrendCard = {
   lastLoggedDate: string | null
 }
 
+type IncomeChangeDraft = {
+  effectiveDate: string
+  newAmount: string
+  note: string
+}
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 const incomeTrendWindowDays: IncomeTrendWindowDays[] = [30, 90, 365]
 
@@ -101,6 +110,18 @@ const incomeStatusPillClass = (status: IncomeStatusTag) => {
   if (status === 'confirmed') return 'pill pill--good'
   if (status === 'at_risk') return 'pill pill--warning'
   if (status === 'missed') return 'pill pill--critical'
+  return 'pill pill--neutral'
+}
+
+const incomeChangeDirectionLabel = (direction: IncomeChangeDirection) => {
+  if (direction === 'increase') return 'Increase'
+  if (direction === 'decrease') return 'Decrease'
+  return 'No change'
+}
+
+const incomeChangeDirectionPillClass = (direction: IncomeChangeDirection) => {
+  if (direction === 'increase') return 'pill pill--good'
+  if (direction === 'decrease') return 'pill pill--warning'
   return 'pill pill--neutral'
 }
 
@@ -294,6 +315,7 @@ type IncomeTabProps = {
   incomes: IncomeEntry[]
   accounts: AccountEntry[]
   incomePaymentChecks: IncomePaymentCheckEntry[]
+  incomeChangeEvents: IncomeChangeEventEntry[]
   monthlyIncome: number
   incomeForm: IncomeForm
   setIncomeForm: Dispatch<SetStateAction<IncomeForm>>
@@ -303,6 +325,13 @@ type IncomeTabProps = {
   setIncomeEditDraft: Dispatch<SetStateAction<IncomeEditDraft>>
   onAddIncome: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
   onDeleteIncome: (id: IncomeId) => Promise<void>
+  onAddIncomeChangeEvent: (input: {
+    incomeId: IncomeId
+    effectiveDate: string
+    newAmount: string
+    note: string
+  }) => Promise<void>
+  onDeleteIncomeChangeEvent: (id: IncomeChangeEventId) => Promise<void>
   saveIncomeEdit: () => Promise<void>
   startIncomeEdit: (entry: IncomeEntry) => void
   onUpsertIncomePaymentCheck: (input: {
@@ -325,6 +354,7 @@ export function IncomeTab({
   incomes,
   accounts,
   incomePaymentChecks,
+  incomeChangeEvents,
   monthlyIncome,
   incomeForm,
   setIncomeForm,
@@ -334,6 +364,8 @@ export function IncomeTab({
   setIncomeEditDraft,
   onAddIncome,
   onDeleteIncome,
+  onAddIncomeChangeEvent,
+  onDeleteIncomeChangeEvent,
   saveIncomeEdit,
   startIncomeEdit,
   onUpsertIncomePaymentCheck,
@@ -347,6 +379,12 @@ export function IncomeTab({
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<IncomeSortKey>('source_asc')
   const currentCycleMonth = new Date().toISOString().slice(0, 7)
+  const [changeTrackerIncomeId, setChangeTrackerIncomeId] = useState<IncomeId | null>(null)
+  const [changeDraft, setChangeDraft] = useState<IncomeChangeDraft>({
+    effectiveDate: toIsoDate(new Date()),
+    newAmount: '',
+    note: '',
+  })
   const [paymentLogIncomeId, setPaymentLogIncomeId] = useState<IncomeId | null>(null)
   const [paymentLogDraft, setPaymentLogDraft] = useState<{
     cycleMonth: string
@@ -459,6 +497,30 @@ export function IncomeTab({
     return map
   }, [incomePaymentChecks])
 
+  const changeEventsByIncomeId = useMemo(() => {
+    const map = new Map<IncomeId, IncomeChangeEventEntry[]>()
+    incomeChangeEvents.forEach((entry) => {
+      const key = entry.incomeId as IncomeId
+      const current = map.get(key) ?? []
+      current.push(entry)
+      map.set(key, current)
+    })
+
+    map.forEach((entries, key) => {
+      const sorted = [...entries].sort((left, right) => {
+        const byEffectiveDate = right.effectiveDate.localeCompare(left.effectiveDate)
+        if (byEffectiveDate !== 0) {
+          return byEffectiveDate
+        }
+        return right.createdAt - left.createdAt
+      })
+      map.set(key, sorted)
+    })
+
+    return map
+  }, [incomeChangeEvents])
+  const totalIncomeChangesTracked = incomeChangeEvents.length
+
   const forecastNormalizedMonthlyIncome = useMemo(
     () =>
       roundCurrency(
@@ -480,6 +542,7 @@ export function IncomeTab({
   )
 
   const openPaymentLog = (entry: IncomeEntry) => {
+    setChangeTrackerIncomeId(null)
     setPaymentLogIncomeId(entry._id)
     setPaymentLogDraft({
       cycleMonth: currentCycleMonth,
@@ -497,6 +560,25 @@ export function IncomeTab({
       status: 'on_time',
       receivedDay: '',
       receivedAmount: '',
+      note: '',
+    })
+  }
+
+  const openChangeTracker = (entry: IncomeEntry) => {
+    setPaymentLogIncomeId(null)
+    setChangeTrackerIncomeId(entry._id)
+    setChangeDraft({
+      effectiveDate: toIsoDate(new Date()),
+      newAmount: String(resolveIncomeNetAmount(entry)),
+      note: '',
+    })
+  }
+
+  const closeChangeTracker = () => {
+    setChangeTrackerIncomeId(null)
+    setChangeDraft({
+      effectiveDate: toIsoDate(new Date()),
+      newAmount: '',
       note: '',
     })
   }
@@ -999,6 +1081,10 @@ export function IncomeTab({
               Forecast normalized run-rate {formatMoney(forecastNormalizedMonthlyIncome)} / month.
             </p>
             <p className="subnote">
+              Salary change events tracked: {totalIncomeChangesTracked}. Use <strong>Track change</strong> on any row to
+              log increase/decrease history with an effective date.
+            </p>
+            <p className="subnote">
               Actuals tracked on {monthlyBreakdown.trackedCount}/{incomes.length} sources · {untrackedCount} pending
               actual value{untrackedCount === 1 ? '' : 's'}.
             </p>
@@ -1046,6 +1132,11 @@ export function IncomeTab({
                 <p>Forecast normalized</p>
                 <strong>{formatMoney(forecastNormalizedMonthlyIncome)}</strong>
                 <small>{smoothingEnabledCount} smoothing-enabled source{smoothingEnabledCount === 1 ? '' : 's'}</small>
+              </div>
+              <div>
+                <p>Change history</p>
+                <strong>{totalIncomeChangesTracked}</strong>
+                <small>effective-dated salary adjustments tracked</small>
               </div>
             </div>
             <section className="income-source-trends" aria-label="Source-level income trends">
@@ -1136,6 +1227,7 @@ export function IncomeTab({
                         ? roundCurrency(editActualPaidAmount - editPlannedNetAmount)
                         : undefined
                     const rowPaymentChecks = paymentChecksByIncomeId.get(entry._id) ?? []
+                    const rowChangeEvents = changeEventsByIncomeId.get(entry._id) ?? []
                     const rowReliability = calculateIncomePaymentReliability(rowPaymentChecks)
                     const rowForecastNormalizedMonthly = resolveIncomeForecastMonthlyAmount(
                       entry,
@@ -1153,6 +1245,7 @@ export function IncomeTab({
                       hasActualPaidAmount: actualPaidAmount !== undefined,
                     })
                     const isPaymentLogOpen = paymentLogIncomeId === entry._id
+                    const isChangeTrackerOpen = changeTrackerIncomeId === entry._id
                     const editCustomInterval = isCustomCadence(incomeEditDraft.cadence)
                       ? parseOptionalPositiveInt(incomeEditDraft.customInterval)
                       : undefined
@@ -1595,6 +1688,13 @@ export function IncomeTab({
                                 >
                                   Log payment
                                 </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn--sm"
+                                  onClick={() => (isChangeTrackerOpen ? closeChangeTracker() : openChangeTracker(entry))}
+                                >
+                                  {isChangeTrackerOpen ? 'Close change' : 'Track change'}
+                                </button>
                               </>
                             )}
                             <button
@@ -1756,6 +1856,144 @@ export function IncomeTab({
                                     ))}
                                   </ul>
                                 ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                        {isChangeTrackerOpen ? (
+                          <tr className="table-row--quick">
+                            <td colSpan={incomeTableColumnCount}>
+                              <div className="income-change-tracker-panel">
+                                <div className="income-change-tracker-head">
+                                  <h3>Income change tracker</h3>
+                                  <p>
+                                    Track effective-dated salary changes for <strong>{entry.source}</strong>. Current planned
+                                    net: <strong>{formatMoney(netAmount)}</strong>.
+                                  </p>
+                                </div>
+
+                                <div className="income-change-tracker-fields">
+                                  <label className="income-change-tracker-field">
+                                    <span>Effective date</span>
+                                    <input
+                                      type="date"
+                                      value={changeDraft.effectiveDate}
+                                      onChange={(event) =>
+                                        setChangeDraft((prev) => ({
+                                          ...prev,
+                                          effectiveDate: event.target.value,
+                                        }))
+                                      }
+                                      max={toIsoDate(new Date())}
+                                    />
+                                  </label>
+
+                                  <label className="income-change-tracker-field">
+                                    <span>New net amount</span>
+                                    <input
+                                      type="number"
+                                      min="0.01"
+                                      step="0.01"
+                                      inputMode="decimal"
+                                      placeholder={String(resolveIncomeNetAmount(entry))}
+                                      value={changeDraft.newAmount}
+                                      onChange={(event) =>
+                                        setChangeDraft((prev) => ({
+                                          ...prev,
+                                          newAmount: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+
+                                  <label className="income-change-tracker-field income-change-tracker-field--note">
+                                    <span>Note</span>
+                                    <input
+                                      type="text"
+                                      placeholder="Optional context for this change"
+                                      value={changeDraft.note}
+                                      onChange={(event) =>
+                                        setChangeDraft((prev) => ({
+                                          ...prev,
+                                          note: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </label>
+                                </div>
+
+                                <p className="income-change-tracker-hint">
+                                  Saving writes a dated increase/decrease entry and updates this source&apos;s planned net.
+                                </p>
+
+                                <div className="income-change-tracker-actions">
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary btn--sm"
+                                    onClick={() =>
+                                      void onAddIncomeChangeEvent({
+                                        incomeId: entry._id,
+                                        effectiveDate: changeDraft.effectiveDate,
+                                        newAmount: changeDraft.newAmount,
+                                        note: changeDraft.note,
+                                      })
+                                    }
+                                  >
+                                    Save change
+                                  </button>
+                                  <button type="button" className="btn btn-ghost btn--sm" onClick={closeChangeTracker}>
+                                    Close
+                                  </button>
+                                </div>
+
+                                {rowChangeEvents.length > 0 ? (
+                                  <ul className="income-change-tracker-history">
+                                    {rowChangeEvents.slice(0, 8).map((changeEvent) => {
+                                      const deltaLabel = `${changeEvent.deltaAmount > 0 ? '+' : ''}${formatMoney(
+                                        changeEvent.deltaAmount,
+                                      )}`
+                                      return (
+                                        <li key={changeEvent._id}>
+                                          <div className="income-change-tracker-history-main">
+                                            <span className={incomeChangeDirectionPillClass(changeEvent.direction)}>
+                                              {incomeChangeDirectionLabel(changeEvent.direction)}
+                                            </span>
+                                            <strong>{changeEvent.effectiveDate}</strong>
+                                            <small>
+                                              {formatMoney(changeEvent.previousAmount)} to {formatMoney(changeEvent.newAmount)} (
+                                              <span
+                                                className={
+                                                  changeEvent.deltaAmount < 0
+                                                    ? 'amount-negative'
+                                                    : changeEvent.deltaAmount > 0
+                                                      ? 'amount-positive'
+                                                      : undefined
+                                                }
+                                              >
+                                                {deltaLabel}
+                                              </span>
+                                              )
+                                            </small>
+                                            {changeEvent.note ? (
+                                              <small className="income-change-tracker-note">{changeEvent.note}</small>
+                                            ) : null}
+                                          </div>
+                                          <button
+                                            type="button"
+                                            className="btn btn-ghost btn--sm"
+                                            onClick={() => void onDeleteIncomeChangeEvent(changeEvent._id)}
+                                          >
+                                            Remove
+                                          </button>
+                                        </li>
+                                      )
+                                    })}
+                                  </ul>
+                                ) : (
+                                  <p className="income-change-tracker-empty">
+                                    No salary change events tracked for this source yet.
+                                  </p>
+                                )}
                               </div>
                             </td>
                           </tr>
