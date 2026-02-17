@@ -9,8 +9,70 @@ import type {
   CustomCadenceUnit,
   CustomCadenceUnitOption,
 } from './financeTypes'
+import { nextDateForCadence } from '../lib/cadenceDates'
+import { toMonthlyAmount } from '../lib/incomeMath'
 
 type BillSortKey = 'name_asc' | 'amount_desc' | 'amount_asc' | 'day_asc' | 'cadence_asc' | 'autopay_first'
+
+const variableBillKeywordPattern = /\b(variable|usage|meter(ed)?|estimated?|seasonal|fluctuat(?:e|es|ing|ion))\b/i
+const msPerDay = 86400000
+
+const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+
+const clampDayToMonth = (year: number, month: number, day: number) => {
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  return new Date(year, month, Math.min(Math.max(day, 1), daysInMonth))
+}
+
+const addMonthsWithDay = (baseDate: Date, monthDelta: number, day: number) => {
+  const targetMonth = baseDate.getMonth() + monthDelta
+  const targetYear = baseDate.getFullYear() + Math.floor(targetMonth / 12)
+  const normalizedMonth = ((targetMonth % 12) + 12) % 12
+  return clampDayToMonth(targetYear, normalizedMonth, day)
+}
+
+const previousDueDateForBill = (entry: BillEntry, nextDueDate: Date) => {
+  switch (entry.cadence) {
+    case 'weekly':
+      return new Date(nextDueDate.getFullYear(), nextDueDate.getMonth(), nextDueDate.getDate() - 7)
+    case 'biweekly':
+      return new Date(nextDueDate.getFullYear(), nextDueDate.getMonth(), nextDueDate.getDate() - 14)
+    case 'monthly':
+      return addMonthsWithDay(nextDueDate, -1, entry.dueDay)
+    case 'quarterly':
+      return addMonthsWithDay(nextDueDate, -3, entry.dueDay)
+    case 'yearly':
+      return addMonthsWithDay(nextDueDate, -12, entry.dueDay)
+    case 'custom':
+      if (!entry.customInterval || !entry.customUnit || entry.customInterval <= 0) {
+        return null
+      }
+      if (entry.customUnit === 'days') {
+        return new Date(nextDueDate.getFullYear(), nextDueDate.getMonth(), nextDueDate.getDate() - entry.customInterval)
+      }
+      if (entry.customUnit === 'weeks') {
+        return new Date(
+          nextDueDate.getFullYear(),
+          nextDueDate.getMonth(),
+          nextDueDate.getDate() - entry.customInterval * 7,
+        )
+      }
+      if (entry.customUnit === 'months') {
+        return addMonthsWithDay(nextDueDate, -entry.customInterval, entry.dueDay)
+      }
+      return addMonthsWithDay(nextDueDate, -(entry.customInterval * 12), entry.dueDay)
+    case 'one_time':
+    default:
+      return null
+  }
+}
+
+const isVariableBill = (entry: BillEntry) => {
+  if (variableBillKeywordPattern.test(entry.notes ?? '')) {
+    return true
+  }
+  return entry.cadence === 'custom' || entry.cadence === 'weekly' || entry.cadence === 'biweekly'
+}
 
 type BillsTabProps = {
   bills: BillEntry[]
@@ -93,8 +155,80 @@ export function BillsTab({
     return sorted
   }, [bills, cadenceLabel, search, sortKey])
 
+  const billSummary = useMemo(() => {
+    const today = startOfDay(new Date())
+    const variableMonthlyAmounts: number[] = []
+
+    let dueIn7DaysCount = 0
+    let dueIn7DaysAmount = 0
+    let overdueCount = 0
+    let autopayMonthlyAmount = 0
+
+    bills.forEach((entry) => {
+      const normalizedMonthlyAmount = toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit)
+
+      if (entry.autopay) {
+        autopayMonthlyAmount += normalizedMonthlyAmount
+      }
+
+      if (isVariableBill(entry)) {
+        variableMonthlyAmounts.push(normalizedMonthlyAmount)
+      }
+
+      const nextDueDate = nextDateForCadence({
+        cadence: entry.cadence,
+        createdAt: entry.createdAt,
+        dayOfMonth: entry.dueDay,
+        customInterval: entry.customInterval ?? undefined,
+        customUnit: entry.customUnit ?? undefined,
+        now: today,
+      })
+
+      if (!nextDueDate) {
+        return
+      }
+
+      const daysUntilDue = Math.round((startOfDay(nextDueDate).getTime() - today.getTime()) / msPerDay)
+      if (daysUntilDue >= 0 && daysUntilDue <= 7) {
+        dueIn7DaysCount += 1
+        dueIn7DaysAmount += entry.amount
+      }
+
+      if (!entry.autopay) {
+        const previousDueDate = previousDueDateForBill(entry, nextDueDate)
+        if (previousDueDate && startOfDay(previousDueDate) < today) {
+          overdueCount += 1
+        }
+      }
+    })
+
+    const autopayCoveragePercent = monthlyBills > 0 ? (autopayMonthlyAmount / monthlyBills) * 100 : 0
+    const autopayCoverageAmountGap = Math.max(monthlyBills - autopayMonthlyAmount, 0)
+
+    let variableVarianceStd = 0
+    let variableVariancePercent = 0
+    if (variableMonthlyAmounts.length > 1) {
+      const mean = variableMonthlyAmounts.reduce((sum, amount) => sum + amount, 0) / variableMonthlyAmounts.length
+      const variance =
+        variableMonthlyAmounts.reduce((sum, amount) => sum + (amount - mean) ** 2, 0) / variableMonthlyAmounts.length
+      variableVarianceStd = Math.sqrt(variance)
+      variableVariancePercent = mean > 0 ? (variableVarianceStd / mean) * 100 : 0
+    }
+
+    return {
+      dueIn7DaysCount,
+      dueIn7DaysAmount,
+      overdueCount,
+      autopayCoveragePercent,
+      autopayCoverageAmountGap,
+      variableBillCount: variableMonthlyAmounts.length,
+      variableVarianceStd,
+      variableVariancePercent,
+    }
+  }, [bills, monthlyBills])
+
   return (
-    <section className="editor-grid" aria-label="Bill management">
+    <section className="editor-grid bills-tab-shell" aria-label="Bill management">
       <article className="panel panel-form">
         <header className="panel-header">
           <div>
@@ -281,6 +415,46 @@ export function BillsTab({
           <p className="empty-state">No bills added yet.</p>
         ) : (
           <>
+            <section className="bills-summary-strip" aria-label="Bills executive summary strip">
+              <article className="bills-summary-card">
+                <p>Monthly bills total</p>
+                <strong>{formatMoney(monthlyBills)}</strong>
+                <small>
+                  {bills.length} tracked bill{bills.length === 1 ? '' : 's'}
+                </small>
+              </article>
+              <article className="bills-summary-card bills-summary-card--watch">
+                <p>Due in next 7 days</p>
+                <strong>{billSummary.dueIn7DaysCount}</strong>
+                <small>{formatMoney(billSummary.dueIn7DaysAmount)} upcoming</small>
+              </article>
+              <article className="bills-summary-card bills-summary-card--critical">
+                <p>Overdue (manual)</p>
+                <strong>{billSummary.overdueCount}</strong>
+                <small>Based on cadence cycle and due-day rollovers</small>
+              </article>
+              <article className="bills-summary-card bills-summary-card--good">
+                <p>Autopay coverage</p>
+                <strong>{billSummary.autopayCoveragePercent.toFixed(1)}%</strong>
+                <small>
+                  {billSummary.autopayCoverageAmountGap > 0
+                    ? `${formatMoney(billSummary.autopayCoverageAmountGap)} remains manual`
+                    : 'All monthly bill volume is autopay-covered'}
+                </small>
+              </article>
+              <article className="bills-summary-card">
+                <p>Variable-bill variance</p>
+                <strong>
+                  {billSummary.variableBillCount > 1 ? `${billSummary.variableVariancePercent.toFixed(1)}%` : 'n/a'}
+                </strong>
+                <small>
+                  {billSummary.variableBillCount > 1
+                    ? `σ ${formatMoney(billSummary.variableVarianceStd)} across ${billSummary.variableBillCount} variable bills`
+                    : 'Tag notes with "variable" or use custom/weekly cadence to track variability'}
+                </small>
+              </article>
+            </section>
+
             <p className="subnote">
               Showing {visibleBills.length} of {bills.length} bill{bills.length === 1 ? '' : 's'}.
             </p>
