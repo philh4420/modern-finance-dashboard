@@ -656,11 +656,12 @@ function App() {
             setIncomeEditDraft={incomeSection.setIncomeEditDraft}
             onAddIncome={incomeSection.onAddIncome}
 	            onDeleteIncome={incomeSection.onDeleteIncome}
-              onAddIncomeChangeEvent={incomeSection.onAddIncomeChangeEvent}
-              onDeleteIncomeChangeEvent={incomeSection.onDeleteIncomeChangeEvent}
-	            saveIncomeEdit={incomeSection.saveIncomeEdit}
-	            startIncomeEdit={incomeSection.startIncomeEdit}
+            onAddIncomeChangeEvent={incomeSection.onAddIncomeChangeEvent}
+            onDeleteIncomeChangeEvent={incomeSection.onDeleteIncomeChangeEvent}
+            saveIncomeEdit={incomeSection.saveIncomeEdit}
+            startIncomeEdit={incomeSection.startIncomeEdit}
             onUpsertIncomePaymentCheck={incomeSection.onUpsertIncomePaymentCheck}
+            onBulkUpsertIncomePaymentChecks={incomeSection.onBulkUpsertIncomePaymentChecks}
             onDeleteIncomePaymentCheck={incomeSection.onDeleteIncomePaymentCheck}
             cadenceOptions={cadenceOptions}
             customCadenceUnitOptions={customCadenceUnitOptions}

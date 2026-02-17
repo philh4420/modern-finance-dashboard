@@ -2299,6 +2299,130 @@ export const removeIncomeChangeEvent = mutation({
   },
 })
 
+const upsertIncomePaymentCheckRecord = async (
+  ctx: MutationCtx,
+  args: {
+    userId: string
+    input: {
+      incomeId: Id<'incomes'>
+      cycleMonth: string
+      status: IncomePaymentStatus
+      receivedDay?: number
+      receivedAmount?: number
+      paymentReference?: string
+      payslipReference?: string
+      note?: string
+    }
+    metadata?: unknown
+  },
+) => {
+  const cycleMonth = args.input.cycleMonth.trim()
+  validateStatementMonth(cycleMonth, 'Cycle month')
+  validateOptionalText(args.input.paymentReference, 'Payment reference', 120)
+  validateOptionalText(args.input.payslipReference, 'Payslip reference', 120)
+  validateOptionalText(args.input.note, 'Payment note', 800)
+
+  if (args.input.receivedDay !== undefined) {
+    validateDayOfMonth(args.input.receivedDay, 'Received day')
+  }
+  if (args.input.receivedAmount !== undefined) {
+    validateNonNegative(args.input.receivedAmount, 'Received amount')
+  }
+
+  if (args.input.status === 'missed' && (args.input.receivedDay !== undefined || args.input.receivedAmount !== undefined)) {
+    throw new Error('Missed payments cannot include received day or amount.')
+  }
+
+  const income = await ctx.db.get(args.input.incomeId)
+  ensureOwned(income, args.userId, 'Income record not found.')
+
+  const expectedDay = income.receivedDay
+  const normalizedStatus: IncomePaymentStatus =
+    args.input.status === 'on_time' &&
+    expectedDay !== undefined &&
+    args.input.receivedDay !== undefined &&
+    args.input.receivedDay > expectedDay
+      ? 'late'
+      : args.input.status
+
+  const now = Date.now()
+  const expectedAmount = roundCurrency(resolveIncomeNetAmount(income))
+  const existing = await ctx.db
+    .query('incomePaymentChecks')
+    .withIndex('by_userId_incomeId_cycleMonth', (q) =>
+      q.eq('userId', args.userId).eq('incomeId', args.input.incomeId).eq('cycleMonth', cycleMonth),
+    )
+    .first()
+
+  const nextData = {
+    cycleMonth,
+    status: normalizedStatus,
+    expectedDay,
+    receivedDay: args.input.status === 'missed' ? undefined : args.input.receivedDay,
+    expectedAmount,
+    receivedAmount: args.input.status === 'missed' ? undefined : args.input.receivedAmount,
+    paymentReference: args.input.status === 'missed' ? undefined : args.input.paymentReference?.trim() || undefined,
+    payslipReference: args.input.status === 'missed' ? undefined : args.input.payslipReference?.trim() || undefined,
+    note: args.input.note?.trim() || undefined,
+    updatedAt: now,
+  }
+
+  if (existing) {
+    await ctx.db.patch(existing._id, nextData)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: args.userId,
+      entityType: 'income_payment_check',
+      entityId: String(existing._id),
+      action: 'updated',
+      before: {
+        cycleMonth: existing.cycleMonth,
+        status: existing.status,
+        receivedDay: existing.receivedDay,
+        receivedAmount: existing.receivedAmount,
+        paymentReference: existing.paymentReference,
+        payslipReference: existing.payslipReference,
+        note: existing.note,
+      },
+      after: nextData,
+      metadata: args.metadata,
+    })
+
+    return {
+      id: existing._id,
+      status: normalizedStatus,
+      action: 'updated' as const,
+      lateNormalized: normalizedStatus === 'late' && args.input.status === 'on_time',
+    }
+  }
+
+  const createdId = await ctx.db.insert('incomePaymentChecks', {
+    userId: args.userId,
+    incomeId: args.input.incomeId,
+    createdAt: now,
+    ...nextData,
+  })
+
+  await recordFinanceAuditEvent(ctx, {
+    userId: args.userId,
+    entityType: 'income_payment_check',
+    entityId: String(createdId),
+    action: 'created',
+    after: {
+      incomeId: String(args.input.incomeId),
+      ...nextData,
+    },
+    metadata: args.metadata,
+  })
+
+  return {
+    id: createdId,
+    status: normalizedStatus,
+    action: 'created' as const,
+    lateNormalized: normalizedStatus === 'late' && args.input.status === 'on_time',
+  }
+}
+
 export const upsertIncomePaymentCheck = mutation({
   args: {
     incomeId: v.id('incomes'),
@@ -2312,104 +2436,99 @@ export const upsertIncomePaymentCheck = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
-
-    validateStatementMonth(args.cycleMonth, 'Cycle month')
-    validateOptionalText(args.paymentReference, 'Payment reference', 120)
-    validateOptionalText(args.payslipReference, 'Payslip reference', 120)
-    validateOptionalText(args.note, 'Payment note', 800)
-
-    if (args.receivedDay !== undefined) {
-      validateDayOfMonth(args.receivedDay, 'Received day')
-    }
-    if (args.receivedAmount !== undefined) {
-      validateNonNegative(args.receivedAmount, 'Received amount')
-    }
-
-    if (args.status === 'missed' && (args.receivedDay !== undefined || args.receivedAmount !== undefined)) {
-      throw new Error('Missed payments cannot include received day or amount.')
-    }
-
-    const income = await ctx.db.get(args.incomeId)
-    ensureOwned(income, identity.subject, 'Income record not found.')
-
-    const expectedDay = income.receivedDay
-    const normalizedStatus: IncomePaymentStatus =
-      args.status === 'on_time' &&
-      expectedDay !== undefined &&
-      args.receivedDay !== undefined &&
-      args.receivedDay > expectedDay
-        ? 'late'
-        : args.status
-
-    const now = Date.now()
-    const expectedAmount = roundCurrency(resolveIncomeNetAmount(income))
-    const existing = await ctx.db
-      .query('incomePaymentChecks')
-      .withIndex('by_userId_incomeId_cycleMonth', (q) =>
-        q.eq('userId', identity.subject).eq('incomeId', args.incomeId).eq('cycleMonth', args.cycleMonth),
-      )
-      .first()
-
-    const nextData = {
-      cycleMonth: args.cycleMonth,
-      status: normalizedStatus,
-      expectedDay,
-      receivedDay: args.status === 'missed' ? undefined : args.receivedDay,
-      expectedAmount,
-      receivedAmount: args.status === 'missed' ? undefined : args.receivedAmount,
-      paymentReference: args.status === 'missed' ? undefined : args.paymentReference?.trim() || undefined,
-      payslipReference: args.status === 'missed' ? undefined : args.payslipReference?.trim() || undefined,
-      note: args.note?.trim() || undefined,
-      updatedAt: now,
-    }
-
-    if (existing) {
-      await ctx.db.patch(existing._id, nextData)
-
-      await recordFinanceAuditEvent(ctx, {
-        userId: identity.subject,
-        entityType: 'income_payment_check',
-        entityId: String(existing._id),
-        action: 'updated',
-        before: {
-          cycleMonth: existing.cycleMonth,
-          status: existing.status,
-          receivedDay: existing.receivedDay,
-          receivedAmount: existing.receivedAmount,
-          paymentReference: existing.paymentReference,
-          payslipReference: existing.payslipReference,
-          note: existing.note,
-        },
-        after: nextData,
-      })
-
-      return {
-        id: existing._id,
-        status: normalizedStatus,
-      }
-    }
-
-    const createdId = await ctx.db.insert('incomePaymentChecks', {
+    const result = await upsertIncomePaymentCheckRecord(ctx, {
       userId: identity.subject,
-      incomeId: args.incomeId,
-      createdAt: now,
-      ...nextData,
+      input: args,
+      metadata: { mode: 'single' },
     })
+
+    return {
+      id: result.id,
+      status: result.status,
+    }
+  },
+})
+
+export const bulkUpsertIncomePaymentChecks = mutation({
+  args: {
+    cycleMonth: v.string(),
+    entries: v.array(
+      v.object({
+        incomeId: v.id('incomes'),
+        status: incomePaymentStatusValidator,
+        receivedDay: v.optional(v.number()),
+        receivedAmount: v.optional(v.number()),
+        paymentReference: v.optional(v.string()),
+        payslipReference: v.optional(v.string()),
+        note: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validateStatementMonth(args.cycleMonth, 'Cycle month')
+
+    if (args.entries.length === 0) {
+      throw new Error('Add at least one income entry for bulk import.')
+    }
+    if (args.entries.length > 200) {
+      throw new Error('Bulk import supports up to 200 entries per run.')
+    }
+
+    const seenIncomeIds = new Set<string>()
+    args.entries.forEach((entry) => {
+      const key = String(entry.incomeId)
+      if (seenIncomeIds.has(key)) {
+        throw new Error('Bulk import cannot include the same income source more than once.')
+      }
+      seenIncomeIds.add(key)
+    })
+
+    const batchId = `bulk-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+    const results = []
+    for (let index = 0; index < args.entries.length; index += 1) {
+      const entry = args.entries[index]
+      const result = await upsertIncomePaymentCheckRecord(ctx, {
+        userId: identity.subject,
+        input: {
+          ...entry,
+          cycleMonth: args.cycleMonth,
+        },
+        metadata: {
+          mode: 'bulk',
+          batchId,
+          row: index + 1,
+          totalRows: args.entries.length,
+        },
+      })
+      results.push(result)
+    }
+
+    const createdCount = results.filter((entry) => entry.action === 'created').length
+    const updatedCount = results.filter((entry) => entry.action === 'updated').length
+    const normalizedLateCount = results.filter((entry) => entry.lateNormalized).length
 
     await recordFinanceAuditEvent(ctx, {
       userId: identity.subject,
-      entityType: 'income_payment_check',
-      entityId: String(createdId),
-      action: 'created',
-      after: {
-        incomeId: String(args.incomeId),
-        ...nextData,
+      entityType: 'income_payment_check_bulk',
+      entityId: batchId,
+      action: 'upserted',
+      metadata: {
+        cycleMonth: args.cycleMonth,
+        rowCount: args.entries.length,
+        createdCount,
+        updatedCount,
+        normalizedLateCount,
       },
     })
 
     return {
-      id: createdId,
-      status: normalizedStatus,
+      batchId,
+      cycleMonth: args.cycleMonth,
+      rowCount: args.entries.length,
+      createdCount,
+      updatedCount,
+      normalizedLateCount,
     }
   },
 })

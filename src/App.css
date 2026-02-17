@@ -2379,6 +2379,106 @@ h2 {
   font-size: 0.76rem;
 }
 
+.income-bulk-mode {
+  margin-top: 0.82rem;
+  border-radius: 0.95rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 80%, transparent);
+  background:
+    radial-gradient(140% 140% at 100% -20%, color-mix(in oklab, var(--tone-finance) 12%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
+    0 16px 34px -32px color-mix(in oklab, black 48%, transparent);
+  padding: 0.74rem 0.8rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.income-bulk-mode-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.62rem;
+  align-items: flex-start;
+}
+
+.income-bulk-mode-head h3 {
+  margin: 0;
+  font-size: 0.96rem;
+  letter-spacing: -0.01em;
+}
+
+.income-bulk-mode-head p {
+  margin: 0.22rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.79rem;
+}
+
+.income-bulk-mode-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.62rem;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.income-bulk-field {
+  display: grid;
+  gap: 0.24rem;
+  min-width: min(12rem, 100%);
+}
+
+.income-bulk-field span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.income-bulk-mode-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.income-bulk-import {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.income-bulk-import label {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.income-bulk-import textarea {
+  min-height: 5.3rem;
+}
+
+.income-bulk-import-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.income-bulk-import-actions small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.income-bulk-error {
+  margin: 0;
+  color: var(--tone-negative);
+  font-size: 0.79rem;
+}
+
+.data-table--income-bulk {
+  min-width: 52rem;
+}
+
 .entry-form label {
   font-size: 0.82rem;
   color: var(--text-muted);
@@ -3496,6 +3596,16 @@ tbody td {
     grid-template-columns: 1fr;
   }
 
+  .income-bulk-mode-head,
+  .income-bulk-mode-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .income-bulk-import-actions {
+    justify-content: flex-start;
+  }
+
   .cards-desktop-table {
     display: none;
   }
@@ -3550,6 +3660,14 @@ tbody td {
 
   .income-change-tracker-fields {
     grid-template-columns: 1fr;
+  }
+
+  .income-bulk-mode-toolbar-actions {
+    width: 100%;
+  }
+
+  .data-table--income-bulk {
+    min-width: 44rem;
   }
 
   .forecast-axis-labels {

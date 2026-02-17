@@ -84,8 +84,30 @@ type IncomeChangeDraft = {
   note: string
 }
 
+type BulkIncomeRowDraft = {
+  incomeId: IncomeId
+  source: string
+  status: IncomePaymentStatus
+  receivedDay: string
+  receivedAmount: string
+  paymentReference: string
+  payslipReference: string
+  note: string
+}
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 const incomeTrendWindowDays: IncomeTrendWindowDays[] = [30, 90, 365]
+
+const normalizeImportStatus = (value: string): IncomePaymentStatus | null => {
+  const normalized = value.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_')
+  if (normalized === 'on_time' || normalized === 'late' || normalized === 'missed') {
+    return normalized
+  }
+  if (normalized === 'ontime') {
+    return 'on_time'
+  }
+  return null
+}
 
 const reliabilityStatusLabel = (status: IncomePaymentStatus) => {
   if (status === 'on_time') return 'On time'
@@ -344,6 +366,18 @@ type IncomeTabProps = {
     payslipReference: string
     note: string
   }) => Promise<void>
+  onBulkUpsertIncomePaymentChecks: (input: {
+    cycleMonth: string
+    entries: Array<{
+      incomeId: IncomeId
+      status: IncomePaymentStatus
+      receivedDay: string
+      receivedAmount: string
+      paymentReference: string
+      payslipReference: string
+      note: string
+    }>
+  }) => Promise<void>
   onDeleteIncomePaymentCheck: (id: IncomePaymentCheckId) => Promise<void>
   cadenceOptions: CadenceOption[]
   customCadenceUnitOptions: CustomCadenceUnitOption[]
@@ -371,6 +405,7 @@ export function IncomeTab({
   saveIncomeEdit,
   startIncomeEdit,
   onUpsertIncomePaymentCheck,
+  onBulkUpsertIncomePaymentChecks,
   onDeleteIncomePaymentCheck,
   cadenceOptions,
   customCadenceUnitOptions,
@@ -405,6 +440,12 @@ export function IncomeTab({
     payslipReference: '',
     note: '',
   })
+  const [bulkModeOpen, setBulkModeOpen] = useState(false)
+  const [bulkCycleMonth, setBulkCycleMonth] = useState(currentCycleMonth)
+  const [bulkRows, setBulkRows] = useState<BulkIncomeRowDraft[]>([])
+  const [bulkImportText, setBulkImportText] = useState('')
+  const [bulkImportError, setBulkImportError] = useState<string | null>(null)
+  const [isBulkSaving, setIsBulkSaving] = useState(false)
 
   const formGrossAmount = parseOptionalMoneyInput(incomeForm.grossAmount)
   const formTaxAmount = parseOptionalMoneyInput(incomeForm.taxAmount)
@@ -546,8 +587,54 @@ export function IncomeTab({
     () => calculateIncomePaymentReliability(incomePaymentChecks),
     [incomePaymentChecks],
   )
+  const incomeById = useMemo(() => {
+    const map = new Map<IncomeId, IncomeEntry>()
+    incomes.forEach((entry) => {
+      map.set(entry._id, entry)
+    })
+    return map
+  }, [incomes])
+  const incomeIdBySource = useMemo(() => {
+    const map = new Map<string, IncomeId>()
+    incomes.forEach((entry) => {
+      map.set(entry.source.trim().toLowerCase(), entry._id)
+    })
+    return map
+  }, [incomes])
+  const buildBulkRowsForMonth = (cycleMonth: string): BulkIncomeRowDraft[] =>
+    [...incomes]
+      .sort((left, right) => left.source.localeCompare(right.source, undefined, { sensitivity: 'base' }))
+      .map((entry) => {
+        const currentMonthCheck = (paymentChecksByIncomeId.get(entry._id) ?? []).find(
+          (paymentCheck) => paymentCheck.cycleMonth === cycleMonth,
+        )
+        const fallbackAmount =
+          typeof entry.actualAmount === 'number' && Number.isFinite(entry.actualAmount)
+            ? roundCurrency(Math.max(entry.actualAmount, 0))
+            : roundCurrency(resolveIncomeNetAmount(entry))
+        return {
+          incomeId: entry._id,
+          source: entry.source,
+          status: currentMonthCheck?.status ?? 'on_time',
+          receivedDay: currentMonthCheck?.receivedDay
+            ? String(currentMonthCheck.receivedDay)
+            : entry.receivedDay
+              ? String(entry.receivedDay)
+              : '',
+          receivedAmount:
+            currentMonthCheck?.status === 'missed'
+              ? ''
+              : currentMonthCheck?.receivedAmount !== undefined
+                ? String(currentMonthCheck.receivedAmount)
+                : String(fallbackAmount),
+          paymentReference: currentMonthCheck?.paymentReference ?? '',
+          payslipReference: currentMonthCheck?.payslipReference ?? '',
+          note: currentMonthCheck?.note ?? '',
+        }
+      })
 
   const openPaymentLog = (entry: IncomeEntry) => {
+    setBulkModeOpen(false)
     setChangeTrackerIncomeId(null)
     setPaymentLogIncomeId(entry._id)
     setPaymentLogDraft({
@@ -575,6 +662,7 @@ export function IncomeTab({
   }
 
   const openChangeTracker = (entry: IncomeEntry) => {
+    setBulkModeOpen(false)
     setPaymentLogIncomeId(null)
     setChangeTrackerIncomeId(entry._id)
     setChangeDraft({
@@ -591,6 +679,142 @@ export function IncomeTab({
       newAmount: '',
       note: '',
     })
+  }
+
+  const openBulkMode = () => {
+    setPaymentLogIncomeId(null)
+    setChangeTrackerIncomeId(null)
+    setBulkModeOpen(true)
+    setBulkCycleMonth(currentCycleMonth)
+    setBulkRows(buildBulkRowsForMonth(currentCycleMonth))
+    setBulkImportText('')
+    setBulkImportError(null)
+  }
+
+  const closeBulkMode = () => {
+    setBulkModeOpen(false)
+    setBulkImportError(null)
+  }
+
+  const applyBulkDefaultValues = () => {
+    setBulkRows((prev) =>
+      prev.map((row) => {
+        const income = incomeById.get(row.incomeId)
+        if (!income) {
+          return row
+        }
+        if (row.status === 'missed') {
+          return {
+            ...row,
+            receivedDay: '',
+            receivedAmount: '',
+            paymentReference: '',
+            payslipReference: '',
+          }
+        }
+        return {
+          ...row,
+          receivedDay: row.receivedDay || (income.receivedDay ? String(income.receivedDay) : ''),
+          receivedAmount: row.receivedAmount || String(roundCurrency(resolveIncomeNetAmount(income))),
+        }
+      }),
+    )
+  }
+
+  const applyBulkImportText = () => {
+    const lines = bulkImportText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    if (lines.length === 0) {
+      setBulkImportError('Paste at least one CSV line to import.')
+      return
+    }
+
+    const nextRows = bulkRows.map((row) => ({ ...row }))
+    const rowIndexByIncomeId = new Map<string, number>()
+    nextRows.forEach((row, index) => {
+      rowIndexByIncomeId.set(String(row.incomeId), index)
+    })
+
+    const errors: string[] = []
+    lines.forEach((line, lineIndex) => {
+      const columns = line.split(',').map((column) => column.trim())
+      if (lineIndex === 0 && columns[0]?.toLowerCase() === 'source') {
+        return
+      }
+
+      const source = columns[0]
+      if (!source) {
+        errors.push(`Line ${lineIndex + 1} is missing a source name.`)
+        return
+      }
+      const incomeId = incomeIdBySource.get(source.toLowerCase())
+      if (!incomeId) {
+        errors.push(`Line ${lineIndex + 1} source "${source}" was not found.`)
+        return
+      }
+      const rowIndex = rowIndexByIncomeId.get(String(incomeId))
+      if (rowIndex === undefined) {
+        errors.push(`Line ${lineIndex + 1} source "${source}" is not in the current bulk view.`)
+        return
+      }
+
+      const currentRow = nextRows[rowIndex]
+      const statusInput = columns[1] ?? ''
+      const normalizedStatus = statusInput ? normalizeImportStatus(statusInput) : currentRow.status
+      if (statusInput && !normalizedStatus) {
+        errors.push(`Line ${lineIndex + 1} has invalid status "${statusInput}". Use on_time, late, or missed.`)
+        return
+      }
+
+      nextRows[rowIndex] = {
+        ...currentRow,
+        status: normalizedStatus ?? currentRow.status,
+        receivedDay: columns[2] !== undefined && columns[2] !== '' ? columns[2] : currentRow.receivedDay,
+        receivedAmount: columns[3] !== undefined && columns[3] !== '' ? columns[3] : currentRow.receivedAmount,
+        paymentReference: columns[4] !== undefined ? columns[4] : currentRow.paymentReference,
+        payslipReference: columns[5] !== undefined ? columns[5] : currentRow.payslipReference,
+        note: columns[6] !== undefined ? columns[6] : currentRow.note,
+      }
+    })
+
+    if (errors.length > 0) {
+      setBulkImportError(errors.slice(0, 2).join(' '))
+      return
+    }
+
+    setBulkRows(nextRows)
+    setBulkImportError(null)
+  }
+
+  const saveBulkIncomeLogs = async () => {
+    if (bulkRows.length === 0) {
+      setBulkImportError('No income rows available to bulk save.')
+      return
+    }
+
+    setIsBulkSaving(true)
+    try {
+      await onBulkUpsertIncomePaymentChecks({
+        cycleMonth: bulkCycleMonth,
+        entries: bulkRows.map((row) => ({
+          incomeId: row.incomeId,
+          status: row.status,
+          receivedDay: row.status === 'missed' ? '' : row.receivedDay,
+          receivedAmount: row.status === 'missed' ? '' : row.receivedAmount,
+          paymentReference: row.status === 'missed' ? '' : row.paymentReference,
+          payslipReference: row.status === 'missed' ? '' : row.payslipReference,
+          note: row.note,
+        })),
+      })
+      setBulkRows(buildBulkRowsForMonth(bulkCycleMonth))
+      setBulkImportText('')
+      setBulkImportError(null)
+    } finally {
+      setIsBulkSaving(false)
+    }
   }
 
   const visibleIncomes = useMemo(() => {
@@ -1109,6 +1333,219 @@ export function IncomeTab({
               Actuals tracked on {monthlyBreakdown.trackedCount}/{incomes.length} sources · {untrackedCount} pending
               actual value{untrackedCount === 1 ? '' : 's'}.
             </p>
+            <section className="income-bulk-mode" aria-label="Bulk add and import monthly income logs">
+              <header className="income-bulk-mode-head">
+                <div>
+                  <h3>Bulk add/import monthly logs</h3>
+                  <p>Capture all sources for one month in a single save operation.</p>
+                </div>
+                {!bulkModeOpen ? (
+                  <button type="button" className="btn btn-secondary btn--sm" onClick={openBulkMode}>
+                    Open bulk mode
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn-ghost btn--sm" onClick={closeBulkMode}>
+                    Close bulk mode
+                  </button>
+                )}
+              </header>
+
+              {bulkModeOpen ? (
+                <>
+                  <div className="income-bulk-mode-toolbar">
+                    <label className="income-bulk-field">
+                      <span>Cycle month</span>
+                      <input
+                        type="month"
+                        value={bulkCycleMonth}
+                        onChange={(event) => {
+                          const month = event.target.value
+                          setBulkCycleMonth(month)
+                          if (month) {
+                            setBulkRows(buildBulkRowsForMonth(month))
+                          }
+                        }}
+                      />
+                    </label>
+                    <div className="income-bulk-mode-toolbar-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn--sm"
+                        onClick={() => setBulkRows(buildBulkRowsForMonth(bulkCycleMonth))}
+                      >
+                        Reload month
+                      </button>
+                      <button type="button" className="btn btn-ghost btn--sm" onClick={applyBulkDefaultValues}>
+                        Use planned defaults
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn--sm"
+                        onClick={() => void saveBulkIncomeLogs()}
+                        disabled={isBulkSaving}
+                      >
+                        {isBulkSaving ? 'Saving…' : `Save ${bulkRows.length} rows`}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="income-bulk-import">
+                    <label htmlFor="income-bulk-import-text">CSV import (optional)</label>
+                    <textarea
+                      id="income-bulk-import-text"
+                      rows={3}
+                      placeholder="Source,status,receivedDay,receivedAmount,paymentReference,payslipReference,note"
+                      value={bulkImportText}
+                      onChange={(event) => setBulkImportText(event.target.value)}
+                    />
+                    <div className="income-bulk-import-actions">
+                      <button type="button" className="btn btn-ghost btn--sm" onClick={applyBulkImportText}>
+                        Apply CSV to table
+                      </button>
+                      <small>
+                        Format: <code>source,status,day,amount,paymentRef,payslipRef,note</code>
+                      </small>
+                    </div>
+                    {bulkImportError ? <p className="income-bulk-error">{bulkImportError}</p> : null}
+                  </div>
+
+                  <div className="table-wrap table-wrap--card">
+                    <table className="data-table data-table--income-bulk" data-testid="income-bulk-table">
+                      <caption className="sr-only">Bulk monthly income logs</caption>
+                      <thead>
+                        <tr>
+                          <th scope="col">Source</th>
+                          <th scope="col">Status</th>
+                          <th scope="col">Day</th>
+                          <th scope="col">Amount</th>
+                          <th scope="col">Payment ref</th>
+                          <th scope="col">Payslip ref</th>
+                          <th scope="col">Note</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bulkRows.map((row) => (
+                          <tr key={row.incomeId}>
+                            <td>{row.source}</td>
+                            <td>
+                              <select
+                                className="inline-select"
+                                value={row.status}
+                                onChange={(event) => {
+                                  const nextStatus = event.target.value as IncomePaymentStatus
+                                  setBulkRows((prev) =>
+                                    prev.map((entry) =>
+                                      entry.incomeId === row.incomeId
+                                        ? {
+                                            ...entry,
+                                            status: nextStatus,
+                                            receivedDay: nextStatus === 'missed' ? '' : entry.receivedDay,
+                                            receivedAmount: nextStatus === 'missed' ? '' : entry.receivedAmount,
+                                            paymentReference: nextStatus === 'missed' ? '' : entry.paymentReference,
+                                            payslipReference: nextStatus === 'missed' ? '' : entry.payslipReference,
+                                          }
+                                        : entry,
+                                    ),
+                                  )
+                                }}
+                              >
+                                <option value="on_time">On time</option>
+                                <option value="late">Late</option>
+                                <option value="missed">Missed</option>
+                              </select>
+                            </td>
+                            <td>
+                              <input
+                                className="inline-input"
+                                type="number"
+                                min="1"
+                                max="31"
+                                value={row.receivedDay}
+                                disabled={row.status === 'missed'}
+                                onChange={(event) =>
+                                  setBulkRows((prev) =>
+                                    prev.map((entry) =>
+                                      entry.incomeId === row.incomeId ? { ...entry, receivedDay: event.target.value } : entry,
+                                    ),
+                                  )
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="inline-input"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={row.receivedAmount}
+                                disabled={row.status === 'missed'}
+                                onChange={(event) =>
+                                  setBulkRows((prev) =>
+                                    prev.map((entry) =>
+                                      entry.incomeId === row.incomeId
+                                        ? { ...entry, receivedAmount: event.target.value }
+                                        : entry,
+                                    ),
+                                  )
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="inline-input"
+                                type="text"
+                                value={row.paymentReference}
+                                disabled={row.status === 'missed'}
+                                onChange={(event) =>
+                                  setBulkRows((prev) =>
+                                    prev.map((entry) =>
+                                      entry.incomeId === row.incomeId
+                                        ? { ...entry, paymentReference: event.target.value }
+                                        : entry,
+                                    ),
+                                  )
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="inline-input"
+                                type="text"
+                                value={row.payslipReference}
+                                disabled={row.status === 'missed'}
+                                onChange={(event) =>
+                                  setBulkRows((prev) =>
+                                    prev.map((entry) =>
+                                      entry.incomeId === row.incomeId
+                                        ? { ...entry, payslipReference: event.target.value }
+                                        : entry,
+                                    ),
+                                  )
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="inline-input"
+                                type="text"
+                                value={row.note}
+                                onChange={(event) =>
+                                  setBulkRows((prev) =>
+                                    prev.map((entry) =>
+                                      entry.incomeId === row.incomeId ? { ...entry, note: event.target.value } : entry,
+                                    ),
+                                  )
+                                }
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : null}
+            </section>
             <div className="bulk-summary income-breakdown-summary">
               <div>
                 <p>Gross income</p>

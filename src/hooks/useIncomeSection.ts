@@ -151,6 +151,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
   const addIncomeChangeEvent = useMutation(api.finance.addIncomeChangeEvent)
   const removeIncomeChangeEvent = useMutation(api.finance.removeIncomeChangeEvent)
   const upsertIncomePaymentCheck = useMutation(api.finance.upsertIncomePaymentCheck)
+  const bulkUpsertIncomePaymentChecks = useMutation(api.finance.bulkUpsertIncomePaymentChecks)
   const removeIncomePaymentCheck = useMutation(api.finance.removeIncomePaymentCheck)
 
   const [incomeForm, setIncomeForm] = useState<IncomeForm>(initialIncomeForm)
@@ -334,6 +335,46 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
     }
   }
 
+  const onBulkUpsertIncomePaymentChecks = async (input: {
+    cycleMonth: string
+    entries: Array<{
+      incomeId: IncomeId
+      status: IncomePaymentStatus
+      receivedDay: string
+      receivedAmount: string
+      paymentReference: string
+      payslipReference: string
+      note: string
+    }>
+  }) => {
+    clearError()
+    try {
+      const cycleMonth = input.cycleMonth.trim()
+      if (!/^\d{4}-\d{2}$/.test(cycleMonth)) {
+        throw new Error('Cycle month must use YYYY-MM format.')
+      }
+
+      if (input.entries.length === 0) {
+        throw new Error('Add at least one entry to bulk save.')
+      }
+
+      await bulkUpsertIncomePaymentChecks({
+        cycleMonth,
+        entries: input.entries.map((entry) => ({
+          incomeId: entry.incomeId,
+          status: entry.status,
+          receivedDay: entry.receivedDay.trim() ? parseIntInput(entry.receivedDay, 'Received day') : undefined,
+          receivedAmount: parseOptionalNonNegativeFloat(entry.receivedAmount, 'Received amount'),
+          paymentReference: entry.paymentReference.trim() || undefined,
+          payslipReference: entry.payslipReference.trim() || undefined,
+          note: entry.note.trim() || undefined,
+        })),
+      })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
   const onDeleteIncomePaymentCheck = async (id: IncomePaymentCheckId) => {
     clearError()
     try {
@@ -357,6 +398,7 @@ export const useIncomeSection = ({ incomes, clearError, handleMutationError }: U
     startIncomeEdit,
     saveIncomeEdit,
     onUpsertIncomePaymentCheck,
+    onBulkUpsertIncomePaymentChecks,
     onDeleteIncomePaymentCheck,
     incomes,
   }
