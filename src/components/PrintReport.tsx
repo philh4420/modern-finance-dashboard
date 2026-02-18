@@ -16,6 +16,7 @@ import type {
   IncomePaymentStatus,
   KpiSnapshot,
   LoanEntry,
+  LoanEventEntry,
   MonthCloseSnapshotEntry,
   MonthlyCycleRunEntry,
   PurchaseEntry,
@@ -29,6 +30,7 @@ import {
   toMonthlyAmount,
 } from '../lib/incomeMath'
 import { nextDateForCadence, toIsoDate } from '../lib/cadenceDates'
+import { buildLoanPortfolioProjection, buildLoanStrategy } from '../lib/loanIntelligence'
 
 type PrintReportProps = {
   config: PrintReportConfig
@@ -42,6 +44,7 @@ type PrintReportProps = {
   bills: BillEntry[]
   cards: CardEntry[]
   loans: LoanEntry[]
+  loanEvents: LoanEventEntry[]
   accounts: AccountEntry[]
   goals: GoalEntry[]
   purchases: PurchaseEntry[]
@@ -80,6 +83,8 @@ const inMonthRange = (monthKey: string, startMonth: string, endMonth: string) =>
 const formatMonthLabel = (locale: string, monthKey: string) =>
   new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(new Date(`${monthKey}-01T00:00:00`))
 
+const monthKeyFromTimestamp = (timestamp: number) => new Date(timestamp).toISOString().slice(0, 7)
+
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`
 
 const sumBy = <T,>(values: T[], selector: (value: T) => number) =>
@@ -113,6 +118,26 @@ const billScopeLabelMap: Record<BillScope, string> = {
 
 const resolveBillCategory = (bill: BillEntry): BillCategory => (bill.category as BillCategory | undefined) ?? 'other'
 const resolveBillScope = (bill: BillEntry): BillScope => (bill.scope === 'personal' ? 'personal' : 'shared')
+
+const loanEventTypeLabel = (eventType: LoanEventEntry['eventType']) => {
+  if (eventType === 'interest_accrual') return 'Interest'
+  if (eventType === 'subscription_fee') return 'Subscription'
+  if (eventType === 'charge') return 'Charge'
+  return 'Payment'
+}
+
+const cadenceLabelForPrint = (
+  cadence: IncomeEntry['cadence'],
+  customInterval?: number,
+  customUnit?: IncomeEntry['customUnit'],
+) => {
+  if (cadence !== 'custom') {
+    if (cadence === 'one_time') return 'One time'
+    return cadence.charAt(0).toUpperCase() + cadence.slice(1)
+  }
+  if (!customInterval || !customUnit) return 'Custom'
+  return `Every ${customInterval} ${customUnit}`
+}
 
 type CardProjectionRow = {
   monthIndex: number
@@ -510,6 +535,7 @@ export function PrintReport({
   bills,
   cards,
   loans,
+  loanEvents,
   accounts,
   goals,
   purchases,
@@ -806,6 +832,25 @@ export function PrintReport({
   const snowballRanking = rankPayoffCards(payoffCards, 'snowball')
   const avalancheTarget = avalancheRanking[0] ?? null
   const snowballTarget = snowballRanking[0] ?? null
+  const loanPortfolio = buildLoanPortfolioProjection(loans, {
+    maxMonths: 36,
+    loanEvents,
+  })
+  const loanStrategy = buildLoanStrategy(loans, loanEvents, 0)
+  const loanModels = loanPortfolio.models
+  const loanEventsInRange = loanEvents
+    .filter((event) => inMonthRange(monthKeyFromTimestamp(event.createdAt), config.startMonth, config.endMonth))
+    .sort((left, right) => right.createdAt - left.createdAt)
+  const loanInterestTrend = loanModels
+    .slice(0, 6)
+    .map((model) => {
+      const trend = model.rows
+        .slice(0, 6)
+        .map((row) => `M${row.monthIndex} ${formatMoney(row.interestAccrued)}`)
+        .join(' • ')
+      return `${model.name}: ${trend}`
+    })
+    .join(' | ')
 
   return (
     <article className="print-report" aria-label="Print report">
@@ -1456,36 +1501,221 @@ export function PrintReport({
           {loans.length === 0 ? (
             <p className="print-subnote">No loan entries.</p>
           ) : (
-            <div className="print-table-wrap">
-              <table className="print-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Name</th>
-                    <th scope="col">Balance</th>
-                    <th scope="col">Min Payment</th>
-                    <th scope="col">Subscription</th>
-                    <th scope="col">APR</th>
-                    <th scope="col">Due</th>
-                    <th scope="col">Cadence</th>
-                    {config.includeNotes ? <th scope="col">Notes</th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {loans.map((loan) => (
-                    <tr key={loan._id}>
-                      <td>{loan.name}</td>
-                      <td className="table-amount">{formatMoney(loan.balance)}</td>
-                      <td className="table-amount">{formatMoney(loan.minimumPayment)}</td>
-                      <td className="table-amount">{formatMoney(loan.subscriptionCost ?? 0)}</td>
-                      <td>{loan.interestRate ? `${loan.interestRate.toFixed(2)}%` : 'n/a'}</td>
-                      <td>Day {loan.dueDay}</td>
-                      <td>{loan.cadence}</td>
-                      {config.includeNotes ? <td>{loan.notes ?? ''}</td> : null}
+            <>
+              <div className="print-kpi-grid">
+                <div className="print-kpi">
+                  <p>Total outstanding</p>
+                  <strong>{formatMoney(loanPortfolio.totalOutstanding)}</strong>
+                  <small>{loanModels.length} active loan model{loanModels.length === 1 ? '' : 's'}</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Projected next-month interest</p>
+                  <strong>{formatMoney(loanPortfolio.projectedNextMonthInterest)}</strong>
+                  <small>current balances + APR + payment setup</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Projected 12-month interest</p>
+                  <strong>{formatMoney(loanPortfolio.projectedAnnualInterest)}</strong>
+                  <small>{formatMoney(loanPortfolio.projectedAnnualPayments)} projected annual payments</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Strategy recommendation</p>
+                  <strong>
+                    {loanStrategy.recommendedTarget
+                      ? `${loanStrategy.recommendedMode === 'avalanche' ? 'Avalanche' : 'Snowball'}`
+                      : 'n/a'}
+                  </strong>
+                  <small>
+                    {loanStrategy.recommendedTarget
+                      ? `${loanStrategy.recommendedTarget.name} · ${formatMoney(loanStrategy.recommendedTarget.annualInterestSavings)} annual savings`
+                      : 'Add balances to calculate recommendation'}
+                  </small>
+                </div>
+              </div>
+
+              <div className="print-card-payoff-grid">
+                <article className="print-card-risk-item">
+                  <strong>Avalanche</strong>
+                  <small>
+                    {loanStrategy.avalancheTarget
+                      ? `${loanStrategy.avalancheTarget.name} · ${loanStrategy.avalancheTarget.apr.toFixed(2)}% APR · ${formatMoney(loanStrategy.avalancheTarget.annualInterestSavings)} annual savings`
+                      : 'No active loan balance'}
+                  </small>
+                </article>
+                <article className="print-card-risk-item">
+                  <strong>Snowball</strong>
+                  <small>
+                    {loanStrategy.snowballTarget
+                      ? `${loanStrategy.snowballTarget.name} · ${formatMoney(loanStrategy.snowballTarget.balance)} balance · ${formatMoney(loanStrategy.snowballTarget.annualInterestSavings)} annual savings`
+                      : 'No active loan balance'}
+                  </small>
+                </article>
+                <article className="print-card-risk-item">
+                  <strong>Recommended target</strong>
+                  <small>
+                    {loanStrategy.recommendedTarget
+                      ? `${loanStrategy.recommendedTarget.name} · ${formatMoney(loanStrategy.recommendedTarget.nextMonthInterest)} next-month interest`
+                      : 'n/a'}
+                  </small>
+                </article>
+              </div>
+
+              <p className="print-subnote">Interest trend: {loanInterestTrend || 'No loan interest trend yet.'}</p>
+
+              <div className="print-table-wrap">
+                <table className="print-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Loan</th>
+                      <th scope="col">Current</th>
+                      <th scope="col">APR</th>
+                      <th scope="col">Due cycle</th>
+                      <th scope="col">Projection</th>
+                      <th scope="col">Payoff</th>
+                      {config.includeNotes ? <th scope="col">Notes</th> : null}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {loanModels.map((model) => {
+                      const firstRow = model.rows[0]
+                      const sourceLoan = loans.find((loan) => String(loan._id) === model.loanId)
+                      return (
+                        <tr key={model.loanId}>
+                          <td>
+                            <strong>{model.name}</strong>
+                            <br />
+                            {cadenceLabelForPrint(model.cadence, model.customInterval, model.customUnit)}
+                          </td>
+                          <td>
+                            Outstanding {formatMoney(model.currentOutstanding)}
+                            <br />
+                            Principal {formatMoney(model.currentPrincipal)}
+                            <br />
+                            Interest {formatMoney(model.currentInterest)}
+                            <br />
+                            Subscription {formatMoney(model.currentSubscriptionOutstanding)}
+                          </td>
+                          <td>
+                            {model.apr > 0 ? `${model.apr.toFixed(2)}%` : 'n/a'}
+                            <br />
+                            Next interest {formatMoney(model.projectedNextMonthInterest)}
+                            <br />
+                            12m {formatMoney(model.projectedAnnualInterest)}
+                          </td>
+                          <td>
+                            Day {model.dueDay}
+                            <br />
+                            Loan pay {formatMoney(firstRow?.plannedLoanPayment ?? 0)}
+                            <br />
+                            Subscription {formatMoney(firstRow?.subscriptionDue ?? 0)}
+                            <br />
+                            Total {formatMoney(firstRow?.totalPayment ?? 0)}
+                          </td>
+                          <td>
+                            12m end {formatMoney(model.horizons[12].endingOutstanding)}
+                            <br />
+                            24m end {formatMoney(model.horizons[24].endingOutstanding)}
+                            <br />
+                            36m end {formatMoney(model.horizons[36].endingOutstanding)}
+                          </td>
+                          <td>{model.projectedPayoffDate ?? 'Beyond modeled window'}</td>
+                          {config.includeNotes ? <td>{sourceLoan?.notes ?? ''}</td> : null}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 className="print-subhead">Loan Amortization Tables (12 months)</h3>
+              {loanModels.map((model) => (
+                <article key={`loan-projection-${model.loanId}`} className="print-card-projection">
+                  <div className="print-card-projection-head">
+                    <h4>{model.name}</h4>
+                    <p>
+                      Outstanding {formatMoney(model.currentOutstanding)} · APR {model.apr > 0 ? `${model.apr.toFixed(2)}%` : 'n/a'} ·
+                      payoff {model.projectedPayoffDate ?? 'beyond model window'}
+                    </p>
+                  </div>
+                  <p className="print-subnote">
+                    Interest trend:{' '}
+                    {model.rows
+                      .slice(0, 12)
+                      .map((row) => `M${row.monthIndex} ${formatMoney(row.interestAccrued)}`)
+                      .join(' • ')}
+                  </p>
+                  <div className="print-table-wrap">
+                    <table className="print-table print-table--projection">
+                      <thead>
+                        <tr>
+                          <th scope="col">Month</th>
+                          <th scope="col">Open</th>
+                          <th scope="col">Interest</th>
+                          <th scope="col">Loan payment</th>
+                          <th scope="col">Subscription</th>
+                          <th scope="col">Total payment</th>
+                          <th scope="col">End outstanding</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {model.rows.slice(0, 12).map((row) => (
+                          <tr key={`${model.loanId}-m${row.monthIndex}`}>
+                            <td>M{row.monthIndex}</td>
+                            <td className="table-amount">{formatMoney(row.openingOutstanding)}</td>
+                            <td className="table-amount">{formatMoney(row.interestAccrued)}</td>
+                            <td className="table-amount">{formatMoney(row.plannedLoanPayment)}</td>
+                            <td className="table-amount">{formatMoney(row.subscriptionDue)}</td>
+                            <td className="table-amount">{formatMoney(row.totalPayment)}</td>
+                            <td className="table-amount">{formatMoney(row.endingOutstanding)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              ))}
+
+              <h3 className="print-subhead">Loan Event History (Range)</h3>
+              {loanEventsInRange.length === 0 ? (
+                <p className="print-subnote">No loan events in selected range.</p>
+              ) : (
+                <div className="print-table-wrap">
+                  <table className="print-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Date</th>
+                        <th scope="col">Loan</th>
+                        <th scope="col">Event</th>
+                        <th scope="col">Source</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Principal Δ</th>
+                        <th scope="col">Interest Δ</th>
+                        <th scope="col">Resulting balance</th>
+                        {config.includeNotes ? <th scope="col">Notes</th> : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loanEventsInRange.map((event) => {
+                        const loanName = loans.find((loan) => String(loan._id) === String(event.loanId))?.name ?? String(event.loanId)
+                        return (
+                          <tr key={event._id}>
+                            <td>{cycleDateLabel.format(new Date(event.createdAt))}</td>
+                            <td>{loanName}</td>
+                            <td>{loanEventTypeLabel(event.eventType)}</td>
+                            <td>{event.source}</td>
+                            <td className="table-amount">{formatMoney(event.amount)}</td>
+                            <td className="table-amount">{formatMoney(event.principalDelta)}</td>
+                            <td className="table-amount">{formatMoney(event.interestDelta)}</td>
+                            <td className="table-amount">{formatMoney(event.resultingBalance)}</td>
+                            {config.includeNotes ? <td>{event.notes ?? ''}</td> : null}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
       ) : null}

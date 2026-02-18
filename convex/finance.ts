@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { paginationOptsValidator } from 'convex/server'
 import { mutation, query, type MutationCtx, type QueryCtx } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel'
 import { requireIdentity as requireAuthIdentity } from './lib/authz'
@@ -63,11 +64,22 @@ type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'cus
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 type InsightSeverity = 'good' | 'warning' | 'critical'
 type CycleRunSource = 'manual' | 'automatic'
+type CycleStepAlertSeverity = 'warning' | 'critical'
 type LoanEventSource = 'manual' | 'monthly_cycle'
 type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 type LoanMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 type LoanEventType = 'interest_accrual' | 'payment' | 'charge' | 'subscription_fee'
+type LoanMutationType =
+  | 'created'
+  | 'updated'
+  | 'removed'
+  | 'charge'
+  | 'payment'
+  | 'interest_accrual'
+  | 'subscription_fee'
+  | 'monthly_cycle'
+type LoanMutationSource = 'manual' | 'automatic' | 'monthly_cycle'
 type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
 type BillCategory =
@@ -359,6 +371,40 @@ const getLoanSubscriptionPaymentsRemaining = (loan: LoanDoc) => {
 const getLoanTotalOutstanding = (loan: LoanDoc) => {
   const working = getLoanWorkingBalances(loan)
   return roundCurrency(working.balance + getLoanSubscriptionOutstanding(loan))
+}
+
+type LoanAuditSnapshot = {
+  principal: number
+  interest: number
+  subscription: number
+  total: number
+}
+
+const getLoanAuditSnapshot = (loan: LoanDoc): LoanAuditSnapshot => {
+  const working = getLoanWorkingBalances(loan)
+  const subscription = getLoanSubscriptionOutstanding(loan)
+  return {
+    principal: working.principalBalance,
+    interest: working.accruedInterest,
+    subscription,
+    total: roundCurrency(working.balance + subscription),
+  }
+}
+
+const buildLoanAuditSnapshot = (input: {
+  principal: number
+  interest: number
+  subscription: number
+}): LoanAuditSnapshot => {
+  const principal = roundCurrency(Math.max(finiteOrZero(input.principal), 0))
+  const interest = roundCurrency(Math.max(finiteOrZero(input.interest), 0))
+  const subscription = roundCurrency(Math.max(finiteOrZero(input.subscription), 0))
+  return {
+    principal,
+    interest,
+    subscription,
+    total: roundCurrency(principal + interest + subscription),
+  }
 }
 
 const resolveLoanPaymentPlan = (args: {
@@ -1215,24 +1261,29 @@ const runCardMonthlyCycleForUser = async (
   let spendAdded = 0
 
   for (const card of cards) {
-    const cycleAnchor = typeof card.lastCycleAt === 'number' ? card.lastCycleAt : card.createdAt
+    const latestCard = await ctx.db.get(card._id)
+    if (!latestCard || latestCard.userId !== userId) {
+      continue
+    }
+
+    const cycleAnchor = typeof latestCard.lastCycleAt === 'number' ? latestCard.lastCycleAt : latestCard.createdAt
     const cycles = countCompletedMonthlyCycles(cycleAnchor, now)
 
     if (cycles <= 0) {
       continue
     }
 
-    const summary = applyCardMonthlyLifecycle(card, cycles)
+    const summary = applyCardMonthlyLifecycle(latestCard, cycles)
     const newCycleDate = addCalendarMonthsKeepingDay(startOfDay(new Date(cycleAnchor)), cycles).getTime()
 
-    await ctx.db.patch(card._id, {
+    await ctx.db.patch(latestCard._id, {
       usedLimit: summary.balance,
       statementBalance: summary.statementBalance,
       pendingCharges: summary.pendingCharges,
       lastCycleAt: newCycleDate,
     })
 
-    const cardToken = sanitizeLedgerToken(card.name)
+    const cardToken = sanitizeLedgerToken(latestCard.name)
     const liabilityAccount = `LIABILITY:CARD:${cardToken}`
     const cashAccount = 'ASSET:CASH:UNASSIGNED'
 
@@ -1240,10 +1291,10 @@ const runCardMonthlyCycleForUser = async (
       await insertLedgerEntry(ctx, {
         userId,
         entryType: 'cycle_card_spend',
-        description: `Card monthly spend: ${card.name}`,
+        description: `Card monthly spend: ${latestCard.name}`,
         occurredAt: newCycleDate,
         referenceType: 'card',
-        referenceId: String(card._id),
+        referenceId: String(latestCard._id),
         cycleKey,
         lines: [
           {
@@ -1264,10 +1315,10 @@ const runCardMonthlyCycleForUser = async (
       await insertLedgerEntry(ctx, {
         userId,
         entryType: 'cycle_card_interest',
-        description: `Card monthly interest: ${card.name}`,
+        description: `Card monthly interest: ${latestCard.name}`,
         occurredAt: newCycleDate,
         referenceType: 'card',
-        referenceId: String(card._id),
+        referenceId: String(latestCard._id),
         cycleKey,
         lines: [
           {
@@ -1288,10 +1339,10 @@ const runCardMonthlyCycleForUser = async (
       await insertLedgerEntry(ctx, {
         userId,
         entryType: 'cycle_card_payment',
-        description: `Card monthly payment: ${card.name}`,
+        description: `Card monthly payment: ${latestCard.name}`,
         occurredAt: newCycleDate,
         referenceType: 'card',
-        referenceId: String(card._id),
+        referenceId: String(latestCard._id),
         cycleKey,
         lines: [
           {
@@ -1311,7 +1362,7 @@ const runCardMonthlyCycleForUser = async (
     await recordFinanceAuditEvent(ctx, {
       userId,
       entityType: 'card',
-      entityId: String(card._id),
+      entityId: String(latestCard._id),
       action: 'monthly_cycle_applied',
       metadata: {
         cycleKey,
@@ -1341,6 +1392,10 @@ const runLoanMonthlyCycleForUser = async (
   userId: string,
   now: Date,
   cycleKey: string,
+  options?: {
+    idempotencyKey?: string
+    runSource?: CycleRunSource
+  },
 ): Promise<LoanCycleAggregate> => {
   const loans = await ctx.db
     .query('loans')
@@ -1353,17 +1408,23 @@ const runLoanMonthlyCycleForUser = async (
   let paymentsApplied = 0
 
   for (const loan of loans) {
-    const cycleAnchor = typeof loan.lastCycleAt === 'number' ? loan.lastCycleAt : loan.createdAt
+    const latestLoan = await ctx.db.get(loan._id)
+    if (!latestLoan || latestLoan.userId !== userId) {
+      continue
+    }
+
+    const cycleAnchor = typeof latestLoan.lastCycleAt === 'number' ? latestLoan.lastCycleAt : latestLoan.createdAt
     const cycles = countCompletedMonthlyCycles(cycleAnchor, now)
 
     if (cycles <= 0) {
       continue
     }
 
-    const summary = applyLoanMonthlyLifecycle(loan, cycles)
+    const beforeSnapshot = getLoanAuditSnapshot(latestLoan)
+    const summary = applyLoanMonthlyLifecycle(latestLoan, cycles)
     const newCycleDate = addCalendarMonthsKeepingDay(startOfDay(new Date(cycleAnchor)), cycles).getTime()
-    const subscriptionCost = roundCurrency(Math.max(finiteOrZero(loan.subscriptionCost), 0))
-    const currentSubscriptionOutstanding = getLoanSubscriptionOutstanding(loan)
+    const subscriptionCost = roundCurrency(Math.max(finiteOrZero(latestLoan.subscriptionCost), 0))
+    const currentSubscriptionOutstanding = getLoanSubscriptionOutstanding(latestLoan)
     const subscriptionDueForCycles = roundCurrency(
       Math.min(currentSubscriptionOutstanding, Math.max(subscriptionCost * cycles, 0)),
     )
@@ -1371,18 +1432,23 @@ const runLoanMonthlyCycleForUser = async (
     const nextSubscriptionPaymentCount = getSubscriptionPaymentsRemaining(subscriptionCost, nextSubscriptionOutstanding)
     const totalLoanPaymentsApplied = roundCurrency(summary.paymentsApplied + subscriptionDueForCycles)
     const totalOutstandingAfterCycle = roundCurrency(summary.balance + nextSubscriptionOutstanding)
+    const afterSnapshot = buildLoanAuditSnapshot({
+      principal: summary.principalBalance,
+      interest: summary.accruedInterest,
+      subscription: nextSubscriptionOutstanding,
+    })
 
-    await ctx.db.patch(loan._id, {
+    await ctx.db.patch(latestLoan._id, {
       balance: summary.balance,
       principalBalance: summary.principalBalance,
       accruedInterest: summary.accruedInterest,
       subscriptionOutstanding: nextSubscriptionOutstanding,
       subscriptionPaymentCount: nextSubscriptionPaymentCount,
       lastCycleAt: newCycleDate,
-      lastInterestAppliedAt: summary.interestAccrued > 0 ? newCycleDate : loan.lastInterestAppliedAt,
+      lastInterestAppliedAt: summary.interestAccrued > 0 ? newCycleDate : latestLoan.lastInterestAppliedAt,
     })
 
-    const loanToken = sanitizeLedgerToken(loan.name)
+    const loanToken = sanitizeLedgerToken(latestLoan.name)
     const liabilityAccount = `LIABILITY:LOAN:${loanToken}`
     const cashAccount = 'ASSET:CASH:UNASSIGNED'
 
@@ -1390,10 +1456,10 @@ const runLoanMonthlyCycleForUser = async (
       await insertLedgerEntry(ctx, {
         userId,
         entryType: 'cycle_loan_interest',
-        description: `Loan monthly interest: ${loan.name}`,
+        description: `Loan monthly interest: ${latestLoan.name}`,
         occurredAt: newCycleDate,
         referenceType: 'loan',
-        referenceId: String(loan._id),
+        referenceId: String(latestLoan._id),
         cycleKey,
         lines: [
           {
@@ -1411,7 +1477,7 @@ const runLoanMonthlyCycleForUser = async (
 
       await insertLoanEvent(ctx, {
         userId,
-        loanId: loan._id,
+        loanId: latestLoan._id,
         eventType: 'interest_accrual',
         source: 'monthly_cycle',
         amount: summary.interestAccrued,
@@ -1428,10 +1494,10 @@ const runLoanMonthlyCycleForUser = async (
       await insertLedgerEntry(ctx, {
         userId,
         entryType: 'cycle_loan_payment',
-        description: `Loan monthly payment: ${loan.name}`,
+        description: `Loan monthly payment: ${latestLoan.name}`,
         occurredAt: newCycleDate,
         referenceType: 'loan',
-        referenceId: String(loan._id),
+        referenceId: String(latestLoan._id),
         cycleKey,
         lines: [
           {
@@ -1449,7 +1515,7 @@ const runLoanMonthlyCycleForUser = async (
 
       await insertLoanEvent(ctx, {
         userId,
-        loanId: loan._id,
+        loanId: latestLoan._id,
         eventType: 'payment',
         source: 'monthly_cycle',
         amount: totalLoanPaymentsApplied,
@@ -1465,7 +1531,7 @@ const runLoanMonthlyCycleForUser = async (
     if (subscriptionDueForCycles > 0) {
       await insertLoanEvent(ctx, {
         userId,
-        loanId: loan._id,
+        loanId: latestLoan._id,
         eventType: 'subscription_fee',
         source: 'monthly_cycle',
         amount: subscriptionDueForCycles,
@@ -1481,7 +1547,7 @@ const runLoanMonthlyCycleForUser = async (
     await recordFinanceAuditEvent(ctx, {
       userId,
       entityType: 'loan',
-      entityId: String(loan._id),
+      entityId: String(latestLoan._id),
       action: 'monthly_cycle_applied',
       metadata: {
         cycleKey,
@@ -1490,6 +1556,28 @@ const runLoanMonthlyCycleForUser = async (
         subscriptionDueForCycles,
         totalLoanPaymentsApplied,
       },
+    })
+
+    await recordLoanCycleAuditEntry(ctx, {
+      userId,
+      loanId: latestLoan._id,
+      mutationType: 'monthly_cycle',
+      source: 'monthly_cycle',
+      cycleKey,
+      idempotencyKey: options?.idempotencyKey,
+      amount: totalLoanPaymentsApplied,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      notes: `${cycles} cycle${cycles === 1 ? '' : 's'} (${options?.runSource ?? 'automatic'})`,
+      metadata: {
+        runSource: options?.runSource ?? 'automatic',
+        cycleKey,
+        cyclesApplied: cycles,
+        interestAccrued: summary.interestAccrued,
+        totalLoanPaymentsApplied,
+        subscriptionDueForCycles,
+      },
+      occurredAt: newCycleDate,
     })
 
     updatedLoans += 1
@@ -1900,6 +1988,68 @@ const recordFinanceAuditEvent = async (ctx: MutationCtx, args: {
   })
 }
 
+const recordLoanCycleAuditEntry = async (ctx: MutationCtx, args: {
+  userId: string
+  loanId: Id<'loans'>
+  mutationType: LoanMutationType
+  source: LoanMutationSource
+  before: LoanAuditSnapshot
+  after: LoanAuditSnapshot
+  amount?: number
+  cycleKey?: string
+  idempotencyKey?: string
+  notes?: string
+  metadata?: unknown
+  occurredAt?: number
+}) => {
+  await ctx.db.insert('loanCycleAuditEntries', {
+    userId: args.userId,
+    loanId: args.loanId,
+    mutationType: args.mutationType,
+    source: args.source,
+    cycleKey: args.cycleKey,
+    idempotencyKey: args.idempotencyKey,
+    amount: args.amount === undefined ? undefined : roundCurrency(args.amount),
+    principalBefore: roundCurrency(args.before.principal),
+    interestBefore: roundCurrency(args.before.interest),
+    subscriptionBefore: roundCurrency(args.before.subscription),
+    totalBefore: roundCurrency(args.before.total),
+    principalAfter: roundCurrency(args.after.principal),
+    interestAfter: roundCurrency(args.after.interest),
+    subscriptionAfter: roundCurrency(args.after.subscription),
+    totalAfter: roundCurrency(args.after.total),
+    notes: args.notes,
+    metadataJson: args.metadata === undefined ? undefined : stringifyForAudit(args.metadata),
+    occurredAt: args.occurredAt ?? Date.now(),
+    createdAt: Date.now(),
+  })
+}
+
+const recordCycleStepAlert = async (ctx: MutationCtx, args: {
+  userId: string
+  cycleKey: string
+  source: CycleRunSource
+  step: string
+  message: string
+  severity: CycleStepAlertSeverity
+  idempotencyKey?: string
+  metadata?: unknown
+  occurredAt?: number
+}) => {
+  await ctx.db.insert('cycleStepAlerts', {
+    userId: args.userId,
+    cycleKey: args.cycleKey,
+    idempotencyKey: args.idempotencyKey,
+    source: args.source,
+    step: args.step,
+    severity: args.severity,
+    message: args.message.slice(0, 280),
+    metadataJson: args.metadata === undefined ? undefined : stringifyForAudit(args.metadata),
+    occurredAt: args.occurredAt ?? Date.now(),
+    createdAt: Date.now(),
+  })
+}
+
 const resolveIncomeDestinationAccountId = async (
   ctx: MutationCtx,
   userId: string,
@@ -2100,10 +2250,12 @@ export const getFinanceData = query({
           cards: [],
           loans: [],
           loanEvents: [],
+          loanCycleAuditEntries: [],
           purchases: [],
           accounts: [],
           goals: [],
           cycleAuditLogs: [],
+          cycleStepAlerts: [],
           monthlyCycleRuns: [],
           monthCloseSnapshots: [],
           financeAuditEvents: [],
@@ -2127,10 +2279,12 @@ export const getFinanceData = query({
       cards,
       loans,
       loanEvents,
+      loanCycleAuditEntries,
       purchases,
       accounts,
       goals,
       cycleAuditLogs,
+      cycleStepAlerts,
       monthlyCycleRuns,
       monthCloseSnapshots,
       financeAuditEvents,
@@ -2181,7 +2335,12 @@ export const getFinanceData = query({
         .query('loanEvents')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
-        .take(720),
+        .take(240),
+      ctx.db
+        .query('loanCycleAuditEntries')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(240),
       ctx.db
         .query('purchases')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -2202,6 +2361,11 @@ export const getFinanceData = query({
         .withIndex('by_userId_ranAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .take(20),
+      ctx.db
+        .query('cycleStepAlerts')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(25),
       ctx.db
         .query('monthlyCycleRuns')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -2338,10 +2502,12 @@ export const getFinanceData = query({
       ...cards.map((entry) => entry.createdAt),
       ...loans.map((entry) => entry.createdAt),
       ...loanEvents.map((entry) => entry.createdAt),
+      ...loanCycleAuditEntries.map((entry) => entry.createdAt),
       ...purchases.map((entry) => entry.createdAt),
       ...accounts.map((entry) => entry.createdAt),
       ...goals.map((entry) => entry.createdAt),
       ...cycleAuditLogs.map((entry) => entry.createdAt),
+      ...cycleStepAlerts.map((entry) => entry.createdAt),
       ...monthlyCycleRuns.map((entry) => entry.createdAt),
       ...monthCloseSnapshots.map((entry) => entry.createdAt),
       ...financeAuditEvents.map((entry) => entry.createdAt),
@@ -2364,10 +2530,12 @@ export const getFinanceData = query({
         cards,
         loans,
         loanEvents,
+        loanCycleAuditEntries,
         purchases,
         accounts,
         goals,
         cycleAuditLogs,
+        cycleStepAlerts,
         monthlyCycleRuns,
         monthCloseSnapshots,
         financeAuditEvents,
@@ -2404,6 +2572,115 @@ export const getFinanceData = query({
           reconciledPurchases,
         },
       },
+    }
+  },
+})
+
+export const getLoanMutationHistoryPage = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+    loanId: v.optional(v.id('loans')),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    if (args.loanId) {
+      const loan = await ctx.db.get(args.loanId)
+      ensureOwned(loan, identity.subject, 'Loan record not found.')
+
+      return await ctx.db
+        .query('loanCycleAuditEntries')
+        .withIndex('by_userId_loanId_createdAt', (q) =>
+          q.eq('userId', identity.subject).eq('loanId', args.loanId as Id<'loans'>),
+        )
+        .order('desc')
+        .paginate(args.paginationOpts)
+    }
+
+    return await ctx.db
+      .query('loanCycleAuditEntries')
+      .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+      .order('desc')
+      .paginate(args.paginationOpts)
+  },
+})
+
+export const getLoanHistorySummary = query({
+  args: {
+    windowDays: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity()
+    const now = Date.now()
+    const windowDays = clamp(Math.floor(args.windowDays ?? 90), 7, 3650)
+    const windowStart = now - windowDays * 86400000
+
+    if (!identity) {
+      return {
+        windowDays,
+        totalEvents: 0,
+        totalPayments: 0,
+        totalCharges: 0,
+        totalInterest: 0,
+        totalSubscriptionFees: 0,
+        monthlyCycleMutations: 0,
+        failedSteps: 0,
+        lastMutationAt: null as number | null,
+      }
+    }
+
+    const [entries, failedSteps] = await Promise.all([
+      ctx.db
+        .query('loanCycleAuditEntries')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject).gte('createdAt', windowStart))
+        .collect(),
+      ctx.db
+        .query('cycleStepAlerts')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject).gte('createdAt', windowStart))
+        .collect(),
+    ])
+
+    const totals = entries.reduce(
+      (acc, entry) => {
+        const amount = Math.max(finiteOrZero(entry.amount), 0)
+        if (entry.mutationType === 'payment' || entry.mutationType === 'monthly_cycle') {
+          acc.totalPayments += amount
+        }
+        if (entry.mutationType === 'charge') {
+          acc.totalCharges += amount
+        }
+        if (entry.mutationType === 'interest_accrual') {
+          acc.totalInterest += amount
+        }
+        if (entry.mutationType === 'subscription_fee') {
+          acc.totalSubscriptionFees += amount
+        }
+        if (entry.mutationType === 'monthly_cycle') {
+          acc.monthlyCycleMutations += 1
+        }
+        acc.lastMutationAt = Math.max(acc.lastMutationAt ?? 0, entry.occurredAt, entry.createdAt)
+        return acc
+      },
+      {
+        totalPayments: 0,
+        totalCharges: 0,
+        totalInterest: 0,
+        totalSubscriptionFees: 0,
+        monthlyCycleMutations: 0,
+        lastMutationAt: null as number | null,
+      },
+    )
+
+    return {
+      windowDays,
+      totalEvents: entries.length,
+      totalPayments: roundCurrency(totals.totalPayments),
+      totalCharges: roundCurrency(totals.totalCharges),
+      totalInterest: roundCurrency(totals.totalInterest),
+      totalSubscriptionFees: roundCurrency(totals.totalSubscriptionFees),
+      monthlyCycleMutations: totals.monthlyCycleMutations,
+      failedSteps: failedSteps.length,
+      lastMutationAt: totals.lastMutationAt,
     }
   },
 })
@@ -4079,6 +4356,31 @@ export const addLoan = mutation({
         interestRate: args.interestRate ?? 0,
       },
     })
+
+    await recordLoanCycleAuditEntry(ctx, {
+      userId: identity.subject,
+      loanId: createdLoanId,
+      mutationType: 'created',
+      source: 'manual',
+      amount: roundCurrency(balances.balance + subscriptionOutstanding),
+      before: buildLoanAuditSnapshot({
+        principal: 0,
+        interest: 0,
+        subscription: 0,
+      }),
+      after: buildLoanAuditSnapshot({
+        principal: balances.principalBalance,
+        interest: balances.accruedInterest,
+        subscription: subscriptionOutstanding,
+      }),
+      notes: 'Loan created',
+      metadata: {
+        cadence: args.cadence,
+        dueDay: args.dueDay,
+        minimumPaymentType: paymentConfig.minimumPaymentType,
+      },
+      occurredAt: now,
+    })
   },
 })
 
@@ -4107,6 +4409,7 @@ export const updateLoan = mutation({
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const beforeSnapshot = getLoanAuditSnapshot(existing)
 
     validateRequiredText(args.name, 'Loan name')
     validateNonNegative(args.balance, 'Loan balance')
@@ -4221,6 +4524,26 @@ export const updateLoan = mutation({
         interestRate: args.interestRate ?? 0,
       },
     })
+
+    await recordLoanCycleAuditEntry(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      mutationType: 'updated',
+      source: 'manual',
+      amount: roundCurrency(beforeSnapshot.total - (balances.balance + subscriptionOutstanding)),
+      before: beforeSnapshot,
+      after: buildLoanAuditSnapshot({
+        principal: balances.principalBalance,
+        interest: balances.accruedInterest,
+        subscription: subscriptionOutstanding,
+      }),
+      notes: 'Loan configuration updated',
+      metadata: {
+        cadence: args.cadence,
+        dueDay: args.dueDay,
+        minimumPaymentType: paymentConfig.minimumPaymentType,
+      },
+    })
   },
 })
 
@@ -4232,6 +4555,7 @@ export const removeLoan = mutation({
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const beforeSnapshot = getLoanAuditSnapshot(existing)
     const existingEvents = await ctx.db
       .query('loanEvents')
       .withIndex('by_userId_loanId_createdAt', (q) =>
@@ -4257,6 +4581,24 @@ export const removeLoan = mutation({
         removedEvents: existingEvents.length,
       },
     })
+
+    await recordLoanCycleAuditEntry(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      mutationType: 'removed',
+      source: 'manual',
+      amount: beforeSnapshot.total,
+      before: beforeSnapshot,
+      after: buildLoanAuditSnapshot({
+        principal: 0,
+        interest: 0,
+        subscription: 0,
+      }),
+      notes: 'Loan removed',
+      metadata: {
+        removedEvents: existingEvents.length,
+      },
+    })
   },
 })
 
@@ -4273,6 +4615,7 @@ export const addLoanCharge = mutation({
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const beforeSnapshot = getLoanAuditSnapshot(existing)
     const working = getLoanWorkingBalances(existing)
     const subscriptionCost = roundCurrency(Math.max(finiteOrZero(existing.subscriptionCost), 0))
     const subscriptionOutstanding = getLoanSubscriptionOutstanding(existing)
@@ -4326,6 +4669,25 @@ export const addLoanCharge = mutation({
         notes: args.notes?.trim() || undefined,
       },
     })
+
+    await recordLoanCycleAuditEntry(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      mutationType: 'charge',
+      source: 'manual',
+      amount: args.amount,
+      before: beforeSnapshot,
+      after: buildLoanAuditSnapshot({
+        principal: nextPrincipalBalance,
+        interest: working.accruedInterest,
+        subscription: subscriptionOutstanding,
+      }),
+      notes: args.notes?.trim() || undefined,
+      metadata: {
+        totalOutstanding: nextTotalOutstanding,
+      },
+      occurredAt: now,
+    })
   },
 })
 
@@ -4342,6 +4704,7 @@ export const recordLoanPayment = mutation({
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const beforeSnapshot = getLoanAuditSnapshot(existing)
     const working = getLoanWorkingBalances(existing)
     const subscriptionCost = roundCurrency(Math.max(finiteOrZero(existing.subscriptionCost), 0))
     const subscriptionOutstanding = getLoanSubscriptionOutstanding(existing)
@@ -4427,6 +4790,28 @@ export const recordLoanPayment = mutation({
         notes: args.notes?.trim() || undefined,
       },
     })
+
+    await recordLoanCycleAuditEntry(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      mutationType: 'payment',
+      source: 'manual',
+      amount: totalApplied,
+      before: beforeSnapshot,
+      after: buildLoanAuditSnapshot({
+        principal: paymentOutcome.principalBalance,
+        interest: paymentOutcome.accruedInterest,
+        subscription: nextSubscriptionOutstanding,
+      }),
+      notes: args.notes?.trim() || undefined,
+      metadata: {
+        subscriptionPayment,
+        loanPayment: paymentOutcome.appliedAmount,
+        interestPayment: paymentOutcome.interestPayment,
+        principalPayment: paymentOutcome.principalPayment,
+      },
+      occurredAt: now,
+    })
   },
 })
 
@@ -4441,6 +4826,7 @@ export const applyLoanInterestNow = mutation({
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const beforeSnapshot = getLoanAuditSnapshot(existing)
     const working = getLoanWorkingBalances(existing)
     const subscriptionCost = roundCurrency(Math.max(finiteOrZero(existing.subscriptionCost), 0))
     const subscriptionOutstanding = getLoanSubscriptionOutstanding(existing)
@@ -4511,6 +4897,26 @@ export const applyLoanInterestNow = mutation({
         notes: args.notes?.trim() || undefined,
       },
     })
+
+    await recordLoanCycleAuditEntry(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      mutationType: 'interest_accrual',
+      source: 'manual',
+      amount: interestAmount,
+      before: beforeSnapshot,
+      after: buildLoanAuditSnapshot({
+        principal: working.principalBalance,
+        interest: nextAccruedInterest,
+        subscription: subscriptionOutstanding,
+      }),
+      notes: args.notes?.trim() || undefined,
+      metadata: {
+        apr,
+        totalOutstanding: nextTotalOutstanding,
+      },
+      occurredAt: now,
+    })
   },
 })
 
@@ -4525,6 +4931,7 @@ export const applyLoanSubscriptionNow = mutation({
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const beforeSnapshot = getLoanAuditSnapshot(existing)
     const subscriptionCost = roundCurrency(Math.max(finiteOrZero(existing.subscriptionCost), 0))
     if (subscriptionCost <= 0) {
       throw new Error('Loan subscription cost must be greater than 0.')
@@ -4571,6 +4978,27 @@ export const applyLoanSubscriptionNow = mutation({
         notes: args.notes?.trim() || undefined,
       },
     })
+
+    await recordLoanCycleAuditEntry(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      mutationType: 'subscription_fee',
+      source: 'manual',
+      amount: subscriptionCost,
+      before: beforeSnapshot,
+      after: buildLoanAuditSnapshot({
+        principal: working.principalBalance,
+        interest: working.accruedInterest,
+        subscription: nextSubscriptionOutstanding,
+      }),
+      notes: args.notes?.trim() || undefined,
+      metadata: {
+        previousSubscriptionOutstanding: currentSubscriptionOutstanding,
+        nextSubscriptionOutstanding,
+        totalOutstanding: nextTotalOutstanding,
+      },
+      occurredAt: now,
+    })
   },
 })
 
@@ -4596,7 +5024,9 @@ export const applyLoanMonthlyCycle = mutation({
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const now = new Date(args.now ?? Date.now())
-    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now, toCycleKey(now))
+    const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now, toCycleKey(now), {
+      runSource: 'manual',
+    })
 
     return {
       ...loanResult,
@@ -4616,16 +5046,23 @@ export const runMonthlyCycle = mutation({
     const source: CycleRunSource = args.source ?? 'manual'
     const cycleKey = toCycleKey(now)
     const providedIdempotencyKey = args.idempotencyKey?.trim() || undefined
-    const idempotencyKey = providedIdempotencyKey ?? (source === 'automatic' ? `automatic:${cycleKey}` : undefined)
+    const idempotencyKey = providedIdempotencyKey ?? `${source}:${cycleKey}`
 
     if (idempotencyKey) {
-      const existingRun = await ctx.db
+      const existingRuns = await ctx.db
         .query('monthlyCycleRuns')
         .withIndex('by_userId_idempotencyKey', (q) => q.eq('userId', identity.subject).eq('idempotencyKey', idempotencyKey))
-        .first()
+        .collect()
 
-      if (existingRun) {
+      const existingRun = existingRuns
+        .filter((run) => run.status === 'completed')
+        .sort((left, right) => right.createdAt - left.createdAt)[0]
+
+      if (existingRun && existingRun.status === 'completed') {
         return {
+          status: existingRun.status,
+          wasDeduplicated: true,
+          failureReason: existingRun.failureReason ?? null,
           source: existingRun.source,
           cycleKey: existingRun.cycleKey,
           idempotencyKey: existingRun.idempotencyKey ?? null,
@@ -4647,9 +5084,71 @@ export const runMonthlyCycle = mutation({
       }
     }
 
+    const runStep = async <T,>(
+      step: string,
+      work: () => Promise<T>,
+      metadata?: Record<string, unknown>,
+    ) => {
+      try {
+        return await work()
+      } catch (error) {
+        const stepFailure = error instanceof Error ? error.message : String(error)
+        await recordCycleStepAlert(ctx, {
+          userId: identity.subject,
+          cycleKey,
+          idempotencyKey,
+          source,
+          step,
+          severity: 'critical',
+          message: stepFailure,
+          metadata,
+          occurredAt: now.getTime(),
+        })
+        throw new Error(`[${step}] ${stepFailure}`)
+      }
+    }
+
     try {
-      const cardResult = await runCardMonthlyCycleForUser(ctx, identity.subject, now, cycleKey)
-      const loanResult = await runLoanMonthlyCycleForUser(ctx, identity.subject, now, cycleKey)
+      const cardResult = await runStep('cards_monthly_cycle', async () =>
+        runCardMonthlyCycleForUser(ctx, identity.subject, now, cycleKey),
+      )
+      const loanResult = await runStep(
+        'loans_monthly_cycle',
+        async () =>
+          runLoanMonthlyCycleForUser(ctx, identity.subject, now, cycleKey, {
+            idempotencyKey,
+            runSource: source,
+          }),
+        {
+          source,
+          cycleKey,
+          idempotencyKey,
+        },
+      )
+
+      await runStep('month_close_snapshot', async () => {
+        const summarySnapshot = await computeMonthCloseSnapshotSummary(ctx, identity.subject, now)
+        const existingSnapshot = await ctx.db
+          .query('monthCloseSnapshots')
+          .withIndex('by_userId_cycleKey', (q) => q.eq('userId', identity.subject).eq('cycleKey', cycleKey))
+          .first()
+
+        if (existingSnapshot) {
+          await ctx.db.patch(existingSnapshot._id, {
+            ranAt: now.getTime(),
+            summary: summarySnapshot,
+          })
+          return
+        }
+
+        await ctx.db.insert('monthCloseSnapshots', {
+          userId: identity.subject,
+          cycleKey,
+          ranAt: now.getTime(),
+          summary: summarySnapshot,
+          createdAt: Date.now(),
+        })
+      })
 
       const shouldLog = source === 'manual' || cardResult.updatedCards > 0 || loanResult.updatedLoans > 0
       let auditLogId: string | null = null
@@ -4673,27 +5172,6 @@ export const runMonthlyCycle = mutation({
           createdAt: Date.now(),
         })
         auditLogId = String(id)
-      }
-
-      const summarySnapshot = await computeMonthCloseSnapshotSummary(ctx, identity.subject, now)
-      const existingSnapshot = await ctx.db
-        .query('monthCloseSnapshots')
-        .withIndex('by_userId_cycleKey', (q) => q.eq('userId', identity.subject).eq('cycleKey', cycleKey))
-        .first()
-
-      if (existingSnapshot) {
-        await ctx.db.patch(existingSnapshot._id, {
-          ranAt: now.getTime(),
-          summary: summarySnapshot,
-        })
-      } else {
-        await ctx.db.insert('monthCloseSnapshots', {
-          userId: identity.subject,
-          cycleKey,
-          ranAt: now.getTime(),
-          summary: summarySnapshot,
-          createdAt: Date.now(),
-        })
       }
 
       const monthlyCycleRunId = await ctx.db.insert('monthlyCycleRuns', {
@@ -4733,6 +5211,9 @@ export const runMonthlyCycle = mutation({
       })
 
       return {
+        status: 'completed',
+        wasDeduplicated: false,
+        failureReason: null,
         source,
         cycleKey,
         idempotencyKey: idempotencyKey ?? null,
@@ -4759,7 +5240,7 @@ export const runMonthlyCycle = mutation({
         cycleKey,
         source,
         status: 'failed',
-        idempotencyKey: undefined,
+        idempotencyKey: idempotencyKey ?? undefined,
         auditLogId: undefined,
         failureReason: failureReason.slice(0, 280),
         ranAt: now.getTime(),
@@ -4773,6 +5254,22 @@ export const runMonthlyCycle = mutation({
         loanInterestAccrued: 0,
         loanPaymentsApplied: 0,
         createdAt: Date.now(),
+      })
+
+      await recordCycleStepAlert(ctx, {
+        userId: identity.subject,
+        cycleKey,
+        idempotencyKey,
+        source,
+        step: 'monthly_cycle_run',
+        severity: 'critical',
+        message: failureReason,
+        metadata: {
+          source,
+          cycleKey,
+          idempotencyKey,
+        },
+        occurredAt: now.getTime(),
       })
 
       await recordFinanceAuditEvent(ctx, {

@@ -157,6 +157,18 @@ const loanEventType = v.union(
   v.literal('subscription_fee'),
 )
 const loanEventSource = v.union(v.literal('manual'), v.literal('monthly_cycle'))
+const loanMutationType = v.union(
+  v.literal('created'),
+  v.literal('updated'),
+  v.literal('removed'),
+  v.literal('charge'),
+  v.literal('payment'),
+  v.literal('interest_accrual'),
+  v.literal('subscription_fee'),
+  v.literal('monthly_cycle'),
+)
+const loanMutationSource = v.union(v.literal('manual'), v.literal('automatic'), v.literal('monthly_cycle'))
+const cycleStepAlertSeverity = v.union(v.literal('warning'), v.literal('critical'))
 const incomePaymentStatus = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
 const incomeChangeDirection = v.union(v.literal('increase'), v.literal('decrease'), v.literal('no_change'))
 const incomeAllocationTarget = v.union(
@@ -380,6 +392,31 @@ export default defineSchema({
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt'])
     .index('by_userId_loanId_createdAt', ['userId', 'loanId', 'createdAt']),
+  loanCycleAuditEntries: defineTable({
+    userId: v.string(),
+    loanId: v.id('loans'),
+    mutationType: loanMutationType,
+    source: loanMutationSource,
+    cycleKey: v.optional(v.string()),
+    idempotencyKey: v.optional(v.string()),
+    amount: v.optional(v.number()),
+    principalBefore: v.number(),
+    interestBefore: v.number(),
+    subscriptionBefore: v.number(),
+    totalBefore: v.number(),
+    principalAfter: v.number(),
+    interestAfter: v.number(),
+    subscriptionAfter: v.number(),
+    totalAfter: v.number(),
+    notes: v.optional(v.string()),
+    metadataJson: v.optional(v.string()),
+    occurredAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_loanId_createdAt', ['userId', 'loanId', 'createdAt'])
+    .index('by_userId_cycleKey_createdAt', ['userId', 'cycleKey', 'createdAt']),
   purchases: defineTable({
     userId: v.string(),
     item: v.string(),
@@ -565,6 +602,21 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_ranAt', ['userId', 'ranAt']),
+  cycleStepAlerts: defineTable({
+    userId: v.string(),
+    cycleKey: v.string(),
+    idempotencyKey: v.optional(v.string()),
+    source: cycleRunSource,
+    step: v.string(),
+    severity: cycleStepAlertSeverity,
+    message: v.string(),
+    metadataJson: v.optional(v.string()),
+    occurredAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_cycleKey_createdAt', ['userId', 'cycleKey', 'createdAt']),
   financePreferences: defineTable({
     userId: v.string(),
     currency: v.string(),

@@ -1,4 +1,6 @@
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { usePaginatedQuery, useQuery } from 'convex/react'
+import { api } from '../../convex/_generated/api'
 import type {
   Cadence,
   CadenceOption,
@@ -95,6 +97,17 @@ const formatMonthKeyLabel = (value: string, locale = 'en-GB') => {
   )
 }
 
+const loanMutationTypeLabel = (mutationType: string) => {
+  if (mutationType === 'interest_accrual') return 'Interest accrual'
+  if (mutationType === 'subscription_fee') return 'Subscription fee'
+  if (mutationType === 'monthly_cycle') return 'Monthly cycle'
+  if (mutationType === 'created') return 'Created'
+  if (mutationType === 'updated') return 'Updated'
+  if (mutationType === 'removed') return 'Removed'
+  if (mutationType === 'charge') return 'Charge'
+  return 'Payment'
+}
+
 export function LoansTab({
   loans,
   loanEvents,
@@ -142,6 +155,12 @@ export function LoansTab({
   const [refinanceFees, setRefinanceFees] = useState('0')
   const [refinanceTermMonths, setRefinanceTermMonths] = useState('24')
   const [trendLoanId, setTrendLoanId] = useState('')
+  const loanMutationHistory = usePaginatedQuery(
+    api.finance.getLoanMutationHistoryPage,
+    {},
+    { initialNumItems: 18 },
+  )
+  const loanHistorySummary = useQuery(api.finance.getLoanHistorySummary, { windowDays: 90 })
 
   const parseNumber = (value: string) => {
     const parsed = Number.parseFloat(value)
@@ -1019,6 +1038,78 @@ export function LoansTab({
                 </p>
               </section>
             ) : null}
+
+            <section className="loan-history-panel" aria-label="Loan mutation history">
+              <header className="loan-history-head">
+                <div>
+                  <h3>Loan event history</h3>
+                  <p>Paginated mutation log keeps the loans tab fast with large histories.</p>
+                </div>
+              </header>
+              <div className="loan-history-summary-grid">
+                <article>
+                  <p>90-day events</p>
+                  <strong>{loanHistorySummary?.totalEvents ?? 0}</strong>
+                  <small>
+                    {loanHistorySummary?.monthlyCycleMutations ?? 0} monthly-cycle mutations ·{' '}
+                    {loanHistorySummary?.failedSteps ?? 0} failed cycle steps
+                  </small>
+                </article>
+                <article>
+                  <p>Payments vs charges</p>
+                  <strong>
+                    {formatMoney(loanHistorySummary?.totalPayments ?? 0)} / {formatMoney(loanHistorySummary?.totalCharges ?? 0)}
+                  </strong>
+                  <small>payments / charges over the last 90 days</small>
+                </article>
+                <article>
+                  <p>Interest + subscriptions</p>
+                  <strong>
+                    {formatMoney(loanHistorySummary?.totalInterest ?? 0)} +{' '}
+                    {formatMoney(loanHistorySummary?.totalSubscriptionFees ?? 0)}
+                  </strong>
+                  <small>interest accrual + subscription fees</small>
+                </article>
+              </div>
+              {loanMutationHistory.results.length === 0 ? (
+                <p className="empty-state">No loan history entries yet.</p>
+              ) : (
+                <ul className="timeline-list loan-history-list">
+                  {loanMutationHistory.results.map((entry) => (
+                    <li key={entry._id}>
+                      <div>
+                        <p>
+                          {loanMutationTypeLabel(entry.mutationType)} · {entry.source}
+                        </p>
+                        <small>
+                          {entry.cycleKey ? `${entry.cycleKey} · ` : ''}
+                          {entry.notes ?? 'Loan mutation recorded'}
+                        </small>
+                        <small>
+                          {formatMoney(entry.totalBefore)}
+                          {' -> '}
+                          {formatMoney(entry.totalAfter)}
+                          {entry.amount !== undefined ? ` · amount ${formatMoney(entry.amount)}` : ''}
+                        </small>
+                      </div>
+                      <strong>{new Date(entry.occurredAt).toLocaleDateString('en-GB')}</strong>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {loanMutationHistory.status === 'CanLoadMore' || loanMutationHistory.status === 'LoadingMore' ? (
+                <div className="loan-history-actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn--sm"
+                    disabled={loanMutationHistory.status !== 'CanLoadMore'}
+                    onClick={() => loanMutationHistory.loadMore(18)}
+                  >
+                    {loanMutationHistory.status === 'LoadingMore' ? 'Loading...' : 'Load more history'}
+                  </button>
+                </div>
+              ) : null}
+            </section>
 
             <p className="subnote">
               Showing {visibleLoans.length} of {loans.length} loan{loans.length === 1 ? '' : 's'}.

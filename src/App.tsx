@@ -153,10 +153,12 @@ function App() {
   const cards = financeState?.data.cards ?? []
   const loans = financeState?.data.loans ?? []
   const loanEvents = financeState?.data.loanEvents ?? []
+  const loanCycleAuditEntries = financeState?.data.loanCycleAuditEntries ?? []
   const purchases = financeState?.data.purchases ?? []
   const accounts = financeState?.data.accounts ?? []
   const goals = financeState?.data.goals ?? []
   const cycleAuditLogs = financeState?.data.cycleAuditLogs ?? []
+  const cycleStepAlerts = financeState?.data.cycleStepAlerts ?? []
   const monthlyCycleRuns = financeState?.data.monthlyCycleRuns ?? []
   const monthCloseSnapshots = financeState?.data.monthCloseSnapshots ?? []
   const financeAuditEvents = financeState?.data.financeAuditEvents ?? []
@@ -384,10 +386,12 @@ function App() {
         cards,
         loans,
         loanEvents,
+        loanCycleAuditEntries,
         purchases,
         accounts,
         goals,
         cycleAuditLogs,
+        cycleStepAlerts,
         monthlyCycleRuns,
         monthCloseSnapshots,
         financeAuditEvents,
@@ -614,6 +618,7 @@ function App() {
             topCategories={topCategories}
             goalsWithMetrics={goalsSection.goalsWithMetrics}
             cycleAuditLogs={cycleAuditLogs}
+            cycleStepAlerts={cycleStepAlerts}
             monthlyCycleRuns={monthlyCycleRuns}
             monthCloseSnapshots={monthCloseSnapshots}
             financeAuditEvents={financeAuditEvents}
@@ -956,6 +961,7 @@ function App() {
               bills={bills}
               cards={cards}
               loans={loans}
+              loanEvents={loanEvents}
               accounts={accounts}
               goals={goals}
               purchases={purchases}

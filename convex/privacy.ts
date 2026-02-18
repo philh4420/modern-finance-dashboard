@@ -21,12 +21,14 @@ type DeletionTable =
   | 'subscriptionPriceChanges'
   | 'incomeChangeEvents'
   | 'loanEvents'
+  | 'loanCycleAuditEntries'
   | 'ledgerLines'
   | 'ledgerEntries'
   | 'financeAuditEvents'
   | 'monthCloseSnapshots'
   | 'monthlyCycleRuns'
   | 'cycleAuditLogs'
+  | 'cycleStepAlerts'
   | 'purchaseSplits'
   | 'purchases'
   | 'transactionRules'
@@ -51,12 +53,14 @@ const deletionTableValidator = v.union(
   v.literal('subscriptionPriceChanges'),
   v.literal('incomeChangeEvents'),
   v.literal('loanEvents'),
+  v.literal('loanCycleAuditEntries'),
   v.literal('ledgerLines'),
   v.literal('ledgerEntries'),
   v.literal('financeAuditEvents'),
   v.literal('monthCloseSnapshots'),
   v.literal('monthlyCycleRuns'),
   v.literal('cycleAuditLogs'),
+  v.literal('cycleStepAlerts'),
   v.literal('purchaseSplits'),
   v.literal('purchases'),
   v.literal('transactionRules'),
@@ -137,6 +141,231 @@ const docsToPortableRows = <T extends { _id?: unknown }>(docs: T[]) =>
     ...doc,
     _id: doc._id ? String(doc._id) : undefined,
   })) as Array<Record<string, unknown>>
+
+const roundCurrency = (value: number) => Math.round(value * 100) / 100
+const finiteOrZero = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+const clampPercent = (value: number) => Math.min(Math.max(value, 0), 100)
+
+const toMonthlyAmount = (
+  amount: number,
+  cadence: string,
+  customInterval?: number,
+  customUnit?: string,
+) => {
+  switch (cadence) {
+    case 'weekly':
+      return (amount * 52) / 12
+    case 'biweekly':
+      return (amount * 26) / 12
+    case 'monthly':
+      return amount
+    case 'quarterly':
+      return amount / 3
+    case 'yearly':
+      return amount / 12
+    case 'custom':
+      if (!customInterval || !customUnit || customInterval <= 0) {
+        return 0
+      }
+      if (customUnit === 'days') return (amount * 365.2425) / (customInterval * 12)
+      if (customUnit === 'weeks') return (amount * 365.2425) / (customInterval * 7 * 12)
+      if (customUnit === 'months') return amount / customInterval
+      return amount / (customInterval * 12)
+    default:
+      return amount
+  }
+}
+
+type LoanReportingBundle = {
+  summaryRows: Array<Record<string, unknown>>
+  amortizationRows: Array<Record<string, unknown>>
+  interestTrendRows: Array<Record<string, unknown>>
+  eventHistoryRows: Array<Record<string, unknown>>
+  strategyRows: Array<Record<string, unknown>>
+}
+
+const buildLoanReportingArtifacts = (payload: Record<string, Array<Record<string, unknown>>>): LoanReportingBundle => {
+  const loans = payload.loans ?? []
+  const loanEvents = payload.loanEvents ?? []
+
+  const summaryRows: Array<Record<string, unknown>> = []
+  const amortizationRows: Array<Record<string, unknown>> = []
+  const interestTrendRows: Array<Record<string, unknown>> = []
+  const eventHistoryRows: Array<Record<string, unknown>> = []
+
+  const strategyCandidates: Array<{ loanId: string; name: string; apr: number; balance: number }> = []
+
+  for (const loan of loans) {
+    const loanId = String(loan._id ?? '')
+    if (!loanId) continue
+
+    const name = typeof loan.name === 'string' ? loan.name : 'Loan'
+    const principalBase =
+      loan.principalBalance !== undefined || loan.accruedInterest !== undefined
+        ? Math.max(finiteOrZero(loan.principalBalance), 0)
+        : Math.max(finiteOrZero(loan.balance), 0)
+    const interestBase =
+      loan.principalBalance !== undefined || loan.accruedInterest !== undefined
+        ? Math.max(finiteOrZero(loan.accruedInterest), 0)
+        : 0
+    const subscriptionOutstanding = Math.max(finiteOrZero(loan.subscriptionOutstanding), 0)
+    const subscriptionCost = Math.max(finiteOrZero(loan.subscriptionCost), 0)
+    const minimumPaymentType = loan.minimumPaymentType === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed'
+    const minimumPayment = Math.max(finiteOrZero(loan.minimumPayment), 0)
+    const minimumPaymentPercent = clampPercent(finiteOrZero(loan.minimumPaymentPercent))
+    const extraPayment = Math.max(finiteOrZero(loan.extraPayment), 0)
+    const apr = Math.max(finiteOrZero(loan.interestRate), 0)
+    const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
+    const cadence = typeof loan.cadence === 'string' ? loan.cadence : 'monthly'
+    const customInterval = finiteOrZero(loan.customInterval) || undefined
+    const customUnit = typeof loan.customUnit === 'string' ? loan.customUnit : undefined
+
+    let principal = roundCurrency(principalBase)
+    let accruedInterest = roundCurrency(interestBase)
+    let subscription = roundCurrency(subscriptionOutstanding)
+    let annualInterest = 0
+    let nextMonthInterest = 0
+
+    for (let monthIndex = 1; monthIndex <= 12; monthIndex += 1) {
+      const openingLoan = roundCurrency(principal + accruedInterest)
+      const openingOutstanding = roundCurrency(openingLoan + subscription)
+      const interestAccrued = roundCurrency(openingLoan * monthlyRate)
+      if (monthIndex === 1) {
+        nextMonthInterest = interestAccrued
+      }
+      annualInterest += interestAccrued
+      accruedInterest = roundCurrency(accruedInterest + interestAccrued)
+
+      const dueBalance = roundCurrency(principal + accruedInterest)
+      const cadenceMinimum = toMonthlyAmount(minimumPayment, cadence, customInterval, customUnit)
+      const cadenceExtra = toMonthlyAmount(extraPayment, cadence, customInterval, customUnit)
+      const minimumDueRaw =
+        minimumPaymentType === 'percent_plus_interest'
+          ? principal * (minimumPaymentPercent / 100) + accruedInterest
+          : cadenceMinimum
+      const minimumDue = roundCurrency(Math.min(dueBalance, Math.max(minimumDueRaw, 0)))
+      const plannedLoanPayment = roundCurrency(Math.min(dueBalance, minimumDue + cadenceExtra))
+      const paymentToInterest = roundCurrency(Math.min(accruedInterest, plannedLoanPayment))
+      accruedInterest = roundCurrency(Math.max(accruedInterest - paymentToInterest, 0))
+      const paymentToPrincipal = roundCurrency(Math.min(principal, plannedLoanPayment - paymentToInterest))
+      principal = roundCurrency(Math.max(principal - paymentToPrincipal, 0))
+      const subscriptionDue = roundCurrency(Math.min(subscription, subscriptionCost > 0 ? subscriptionCost : subscription))
+      subscription = roundCurrency(Math.max(subscription - subscriptionDue, 0))
+      const endingLoan = roundCurrency(principal + accruedInterest)
+      const endingOutstanding = roundCurrency(endingLoan + subscription)
+
+      amortizationRows.push({
+        loanId,
+        loanName: name,
+        monthIndex,
+        openingOutstanding,
+        interestAccrued,
+        plannedLoanPayment,
+        subscriptionDue,
+        totalPayment: roundCurrency(plannedLoanPayment + subscriptionDue),
+        endingOutstanding,
+      })
+
+      interestTrendRows.push({
+        loanId,
+        loanName: name,
+        monthIndex,
+        interestAccrued,
+      })
+
+      if (openingOutstanding <= 0.000001 && endingOutstanding <= 0.000001) {
+        break
+      }
+    }
+
+    const currentOutstanding = roundCurrency(principalBase + interestBase + subscriptionOutstanding)
+    summaryRows.push({
+      loanId,
+      loanName: name,
+      currentOutstanding,
+      projectedNextMonthInterest: roundCurrency(nextMonthInterest),
+      projected12MonthInterest: roundCurrency(annualInterest),
+      apr: roundCurrency(apr),
+      cadence,
+    })
+
+    if (currentOutstanding > 0.005) {
+      strategyCandidates.push({
+        loanId,
+        name,
+        apr,
+        balance: currentOutstanding,
+      })
+    }
+  }
+
+  const avalancheTarget = [...strategyCandidates].sort((left, right) => {
+    if (right.apr !== left.apr) return right.apr - left.apr
+    return right.balance - left.balance
+  })[0]
+  const snowballTarget = [...strategyCandidates].sort((left, right) => {
+    if (left.balance !== right.balance) return left.balance - right.balance
+    return right.apr - left.apr
+  })[0]
+  const recommendedMode =
+    avalancheTarget && snowballTarget
+      ? avalancheTarget.apr >= snowballTarget.apr
+        ? 'avalanche'
+        : 'snowball'
+      : 'avalanche'
+  const recommendedTarget = recommendedMode === 'avalanche' ? avalancheTarget : snowballTarget
+
+  const strategyRows = [
+    {
+      strategy: 'avalanche',
+      targetLoanId: avalancheTarget?.loanId ?? null,
+      targetLoanName: avalancheTarget?.name ?? null,
+      targetApr: avalancheTarget?.apr ?? null,
+      targetBalance: avalancheTarget?.balance ?? null,
+      recommended: recommendedMode === 'avalanche',
+    },
+    {
+      strategy: 'snowball',
+      targetLoanId: snowballTarget?.loanId ?? null,
+      targetLoanName: snowballTarget?.name ?? null,
+      targetApr: snowballTarget?.apr ?? null,
+      targetBalance: snowballTarget?.balance ?? null,
+      recommended: recommendedMode === 'snowball',
+    },
+    {
+      strategy: 'recommended',
+      targetLoanId: recommendedTarget?.loanId ?? null,
+      targetLoanName: recommendedTarget?.name ?? null,
+      targetApr: recommendedTarget?.apr ?? null,
+      targetBalance: recommendedTarget?.balance ?? null,
+      recommended: true,
+    },
+  ]
+
+  for (const event of loanEvents) {
+    const eventType = typeof event.eventType === 'string' ? event.eventType : 'payment'
+    eventHistoryRows.push({
+      loanId: event.loanId ? String(event.loanId) : null,
+      eventType,
+      source: typeof event.source === 'string' ? event.source : null,
+      amount: finiteOrZero(event.amount),
+      principalDelta: finiteOrZero(event.principalDelta),
+      interestDelta: finiteOrZero(event.interestDelta),
+      resultingBalance: finiteOrZero(event.resultingBalance),
+      cycleKey: typeof event.cycleKey === 'string' ? event.cycleKey : null,
+      occurredAt: finiteOrZero(event.occurredAt) || finiteOrZero(event.createdAt),
+      notes: typeof event.notes === 'string' ? event.notes : null,
+    })
+  }
+
+  return {
+    summaryRows,
+    amortizationRows,
+    interestTrendRows,
+    eventHistoryRows,
+    strategyRows,
+  }
+}
 
 export const getConsentSettings = query({
   args: {},
@@ -312,23 +541,32 @@ export const generateUserExport = action({
     })) as Id<'userExports'>
 
     try {
-      const payload = await ctx.runQuery(internal.privacy._collectExportData, {
+      const payload = (await ctx.runQuery(internal.privacy._collectExportData, {
         userId: identity.subject,
-      })
+      })) as Record<string, Array<Record<string, unknown>>>
+      const loanReporting = buildLoanReportingArtifacts(payload)
+      const exportPayload = {
+        ...payload,
+        loanReportingSummary: loanReporting.summaryRows,
+        loanAmortization12Month: loanReporting.amortizationRows,
+        loanInterestTrend12Month: loanReporting.interestTrendRows,
+        loanEventHistory: loanReporting.eventHistoryRows,
+        loanStrategyRecommendation: loanReporting.strategyRows,
+      }
 
       const meta = {
         formatVersion: EXPORT_FORMAT_VERSION,
         calcVersion: 'finance_calc_2026_02',
         generatedAt: new Date(now).toISOString(),
         range: 'all',
-        tables: Object.keys(payload),
+        tables: Object.keys(exportPayload),
       }
 
       const files: Record<string, Uint8Array> = {
         'meta.json': strToU8(safeJson(meta)),
       }
 
-      Object.entries(payload).forEach(([table, rows]) => {
+      Object.entries(exportPayload).forEach(([table, rows]) => {
         files[`json/${table}.json`] = strToU8(safeJson(rows))
         files[`csv/${table}.csv`] = strToU8(toCsv(rows as Array<Record<string, unknown>>))
       })
@@ -372,12 +610,14 @@ export const requestDeletion = action({
       'subscriptionPriceChanges',
       'incomeChangeEvents',
       'loanEvents',
+      'loanCycleAuditEntries',
       'ledgerLines',
       'ledgerEntries',
       'financeAuditEvents',
       'monthCloseSnapshots',
       'monthlyCycleRuns',
       'cycleAuditLogs',
+      'cycleStepAlerts',
       'purchaseSplits',
       'purchases',
       'transactionRules',
@@ -523,6 +763,7 @@ export const _collectExportData = internalQuery({
       subscriptionPriceChanges,
       incomeChangeEvents,
       loanEvents,
+      loanCycleAuditEntries,
       bills,
       cards,
       loans,
@@ -535,6 +776,7 @@ export const _collectExportData = internalQuery({
       incomeAllocationSuggestions,
       purchaseSplits,
       cycleAuditLogs,
+      cycleStepAlerts,
       monthlyCycleRuns,
       monthCloseSnapshots,
       financeAuditEvents,
@@ -551,6 +793,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('subscriptionPriceChanges').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomeChangeEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('loanEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('loanCycleAuditEntries').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('bills').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cards').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('loans').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -563,6 +806,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('incomeAllocationSuggestions').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('purchaseSplits').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cycleAuditLogs').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('cycleStepAlerts').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('monthlyCycleRuns').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('monthCloseSnapshots').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('financeAuditEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -581,6 +825,7 @@ export const _collectExportData = internalQuery({
       subscriptionPriceChanges: docsToPortableRows(subscriptionPriceChanges),
       incomeChangeEvents: docsToPortableRows(incomeChangeEvents),
       loanEvents: docsToPortableRows(loanEvents),
+      loanCycleAuditEntries: docsToPortableRows(loanCycleAuditEntries),
       bills: docsToPortableRows(bills),
       cards: docsToPortableRows(cards),
       loans: docsToPortableRows(loans),
@@ -593,6 +838,7 @@ export const _collectExportData = internalQuery({
       incomeAllocationSuggestions: docsToPortableRows(incomeAllocationSuggestions),
       purchaseSplits: docsToPortableRows(purchaseSplits),
       cycleAuditLogs: docsToPortableRows(cycleAuditLogs),
+      cycleStepAlerts: docsToPortableRows(cycleStepAlerts),
       monthlyCycleRuns: docsToPortableRows(monthlyCycleRuns),
       monthCloseSnapshots: docsToPortableRows(monthCloseSnapshots),
       financeAuditEvents: docsToPortableRows(financeAuditEvents),

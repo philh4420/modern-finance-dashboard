@@ -6,6 +6,7 @@ import type {
   CardId,
   CardMinimumPaymentType,
   CycleAuditLogEntry,
+  CycleStepAlertEntry,
   FinanceAuditEventEntry,
   ForecastWindow,
   CustomCadenceUnit,
@@ -35,6 +36,7 @@ type DashboardTabProps = {
   topCategories: TopCategory[]
   goalsWithMetrics: GoalWithMetrics[]
   cycleAuditLogs: CycleAuditLogEntry[]
+  cycleStepAlerts: CycleStepAlertEntry[]
   monthlyCycleRuns: MonthlyCycleRunEntry[]
   monthCloseSnapshots: MonthCloseSnapshotEntry[]
   financeAuditEvents: FinanceAuditEventEntry[]
@@ -109,7 +111,7 @@ type RiskSeverity = 'critical' | 'warning' | 'watch'
 type RiskCenterAlert = {
   id: string
   severity: RiskSeverity
-  source: 'due_soon' | 'utilization' | 'payment_interest' | 'reconciliation'
+  source: 'due_soon' | 'utilization' | 'payment_interest' | 'reconciliation' | 'cycle_step'
   title: string
   detail: string
   daysAway?: number
@@ -248,6 +250,7 @@ export function DashboardTab({
   topCategories,
   goalsWithMetrics,
   cycleAuditLogs,
+  cycleStepAlerts,
   monthlyCycleRuns,
   monthCloseSnapshots,
   financeAuditEvents,
@@ -674,6 +677,8 @@ export function DashboardTab({
         return 'Payment vs interest'
       case 'reconciliation':
         return 'Reconciliation'
+      case 'cycle_step':
+        return 'Cycle step'
       default:
         return 'Risk signal'
     }
@@ -889,6 +894,20 @@ export function DashboardTab({
       })
     }
 
+    cycleStepAlerts
+      .filter((alert) => alert.severity === 'critical' || alert.severity === 'warning')
+      .forEach((alert) => {
+        alerts.push({
+          id: `cycle-step-${alert._id}`,
+          severity: alert.severity,
+          source: 'cycle_step',
+          title: `Cycle step failed: ${alert.step}`,
+          detail: `${alert.cycleKey} (${alert.source}) · ${alert.message} · ${cycleDateLabel.format(
+            new Date(alert.occurredAt),
+          )}`,
+        })
+      })
+
     return alerts.sort((left, right) => {
       const severityDiff = riskSeverityRank[right.severity] - riskSeverityRank[left.severity]
       if (severityDiff !== 0) return severityDiff
@@ -909,6 +928,8 @@ export function DashboardTab({
     summary.pendingPurchases,
     summary.postedPurchases,
     summary.reconciledPurchases,
+    cycleDateLabel,
+    cycleStepAlerts,
     upcomingCashEvents,
   ])
 
@@ -922,6 +943,7 @@ export function DashboardTab({
       utilization: riskCenterAlerts.filter((alert) => alert.source === 'utilization').length,
       paymentVsInterest: riskCenterAlerts.filter((alert) => alert.source === 'payment_interest').length,
       reconciliation: riskCenterAlerts.filter((alert) => alert.source === 'reconciliation').length,
+      cycleStep: riskCenterAlerts.filter((alert) => alert.source === 'cycle_step').length,
     }),
     [riskCenterAlerts],
   )
@@ -1118,7 +1140,8 @@ export function DashboardTab({
               <p>Signals</p>
               <strong>
                 {riskCenterSummary.dueSoon} due · {riskCenterSummary.utilization} util · {riskCenterSummary.paymentVsInterest}{' '}
-                pay/interest · {riskCenterSummary.reconciliation} reconciliation
+                pay/interest · {riskCenterSummary.reconciliation} reconciliation · {riskCenterSummary.cycleStep} cycle
+                steps
               </strong>
             </article>
           </div>
@@ -1776,6 +1799,34 @@ export function DashboardTab({
                     </small>
                   </div>
                   <strong>{cycleDateLabel.format(new Date(run.ranAt))}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
+        <article className="panel panel-cycle-step-alerts">
+          <header className="panel-header">
+            <div>
+              <p className="panel-kicker">Reliability</p>
+              <h2>Cycle Step Alerts</h2>
+            </div>
+          </header>
+          {cycleStepAlerts.length === 0 ? (
+            <p className="empty-state">No failed cycle steps recorded.</p>
+          ) : (
+            <ul className="timeline-list">
+              {cycleStepAlerts.slice(0, 10).map((alert) => (
+                <li key={alert._id}>
+                  <div>
+                    <p>
+                      {alert.cycleKey} · {alert.step}
+                    </p>
+                    <small>
+                      {alert.source} · {alert.message}
+                    </small>
+                  </div>
+                  <strong>{cycleDateLabel.format(new Date(alert.occurredAt))}</strong>
                 </li>
               ))}
             </ul>
