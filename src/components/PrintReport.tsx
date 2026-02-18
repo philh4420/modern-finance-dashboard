@@ -554,7 +554,10 @@ export function PrintReport({
     .map((purchase) => ({ purchase, monthKey: monthKeyFromPurchase(purchase) }))
     .filter((row) => inMonthRange(row.monthKey, config.startMonth, config.endMonth))
 
-  const purchasesTotal = sumBy(purchasesInRange, (row) => row.purchase.amount)
+  const pendingPurchasesInRange = purchasesInRange.filter((row) => (row.purchase.reconciliationStatus ?? 'posted') === 'pending')
+  const clearedPurchasesInRange = purchasesInRange.filter((row) => (row.purchase.reconciliationStatus ?? 'posted') !== 'pending')
+  const purchasesTotal = sumBy(clearedPurchasesInRange, (row) => row.purchase.amount)
+  const pendingPurchasesTotal = sumBy(pendingPurchasesInRange, (row) => row.purchase.amount)
 
   const monthGroups = new Map<string, PurchaseEntry[]>()
   purchasesInRange.forEach((row) => {
@@ -622,7 +625,7 @@ export function PrintReport({
   }
 
   const categoryTotals = new Map<string, number>()
-  purchasesInRange.forEach((row) => {
+  clearedPurchasesInRange.forEach((row) => {
     const key = row.purchase.category.trim() || 'Uncategorized'
     categoryTotals.set(key, (categoryTotals.get(key) ?? 0) + row.purchase.amount)
   })
@@ -865,7 +868,7 @@ export function PrintReport({
         </div>
         <div className="print-badge">
           <strong>{formatMoney(purchasesTotal)}</strong>
-          <span>purchases in range</span>
+          <span>cleared purchases in range</span>
         </div>
       </header>
 
@@ -892,6 +895,7 @@ export function PrintReport({
                     ? `${sortedMonthKeys.length} month group${sortedMonthKeys.length === 1 ? '' : 's'}`
                     : 'No purchases'}
                 </small>
+                <small>Pending not included: {formatMoney(pendingPurchasesTotal)}</small>
               </div>
               <div className="print-summary-card">
                 <p>Baseline net (range)</p>
@@ -1795,13 +1799,13 @@ export function PrintReport({
               <strong>{formatPercent(rangeKpis.reconciliationCompletionRate)}</strong>
               <small>{rangeKpis.purchaseCount} purchases in selected range</small>
             </div>
-            <div className="print-kpi">
-              <p>Pending to reconcile</p>
-              <strong>{purchasesByStatus.pending}</strong>
-              <small>
-                Posted {purchasesByStatus.posted} · Reconciled {purchasesByStatus.reconciled}
-              </small>
-            </div>
+              <div className="print-kpi">
+                <p>Pending to reconcile</p>
+                <strong>{purchasesByStatus.pending}</strong>
+                <small>
+                Posted {purchasesByStatus.posted} · Reconciled {purchasesByStatus.reconciled} · {formatMoney(pendingPurchasesTotal)} pending value
+                </small>
+              </div>
             <div className="print-kpi">
               <p>Missing categories</p>
               <strong>{rangeKpis.missingCategoryCount}</strong>
@@ -1930,7 +1934,8 @@ export function PrintReport({
                 )
               })}
               <p className="print-subnote">
-                Purchases total for range: <strong>{formatMoney(purchasesTotal)}</strong>
+                Cleared purchases total for range: <strong>{formatMoney(purchasesTotal)}</strong> · Pending value:{' '}
+                <strong>{formatMoney(pendingPurchasesTotal)}</strong>
               </p>
             </>
           )}

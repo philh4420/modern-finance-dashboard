@@ -202,6 +202,8 @@ const billCategory = v.union(
   v.literal('other'),
 )
 const billScope = v.union(v.literal('shared'), v.literal('personal'))
+const purchaseOwnership = v.union(v.literal('shared'), v.literal('personal'))
+const purchaseFundingSourceType = v.union(v.literal('unassigned'), v.literal('account'), v.literal('card'))
 
 export default defineSchema({
   dashboardStates: defineTable({
@@ -425,6 +427,10 @@ export default defineSchema({
     purchaseDate: v.string(),
     reconciliationStatus: v.optional(reconciliationStatus),
     statementMonth: v.optional(v.string()),
+    ownership: v.optional(purchaseOwnership),
+    taxDeductible: v.optional(v.boolean()),
+    fundingSourceType: v.optional(purchaseFundingSourceType),
+    fundingSourceId: v.optional(v.string()),
     postedAt: v.optional(v.number()),
     reconciledAt: v.optional(v.number()),
     notes: v.optional(v.string()),

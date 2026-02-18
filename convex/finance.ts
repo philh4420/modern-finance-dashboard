@@ -54,6 +54,12 @@ const billCategoryValidator = v.union(
   v.literal('other'),
 )
 const billScopeValidator = v.union(v.literal('shared'), v.literal('personal'))
+const purchaseOwnershipValidator = v.union(v.literal('shared'), v.literal('personal'))
+const purchaseFundingSourceTypeValidator = v.union(
+  v.literal('unassigned'),
+  v.literal('account'),
+  v.literal('card'),
+)
 const billsMonthlyBulkActionValidator = v.union(
   v.literal('roll_recurring_forward'),
   v.literal('mark_all_paid_from_account'),
@@ -95,6 +101,8 @@ type BillCategory =
   | 'childcare'
   | 'other'
 type BillScope = 'shared' | 'personal'
+type PurchaseOwnership = 'shared' | 'personal'
+type PurchaseFundingSourceType = 'unassigned' | 'account' | 'card'
 type BillsMonthlyBulkAction = 'roll_recurring_forward' | 'mark_all_paid_from_account' | 'reconcile_batch'
 type LedgerEntryType =
   | 'purchase'
@@ -131,6 +139,9 @@ const defaultSummary = {
   totalLoanBalance: 0,
   cardUtilizationPercent: 0,
   purchasesThisMonth: 0,
+  pendingPurchaseAmountThisMonth: 0,
+  postedPurchaseAmountThisMonth: 0,
+  reconciledPurchaseAmountThisMonth: 0,
   projectedMonthlyNet: 0,
   savingsRatePercent: 0,
   totalAssets: 0,
@@ -2195,8 +2206,9 @@ const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string
   )
 
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const purchasesThisMonth = purchases
-    .filter((entry) => entry.purchaseDate.startsWith(monthKey))
+  const monthPurchases = purchases.filter((entry) => entry.purchaseDate.startsWith(monthKey))
+  const purchasesThisMonth = monthPurchases
+    .filter((entry) => isPurchasePosted(entry.reconciliationStatus))
     .reduce((sum, entry) => sum + entry.amount, 0)
 
   const netWorth = totalAssets + monthlyIncome - totalLiabilities - monthlyCommitments - purchasesThisMonth
@@ -2414,7 +2426,13 @@ export const getFinanceData = query({
     const now = new Date()
     const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
     const monthPurchases = purchases.filter((entry) => entry.purchaseDate.startsWith(monthKey))
-    const purchasesThisMonth = monthPurchases.reduce((sum, entry) => sum + entry.amount, 0)
+    const pendingMonthPurchases = monthPurchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'pending')
+    const postedMonthPurchases = monthPurchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'posted')
+    const reconciledMonthPurchases = monthPurchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'reconciled')
+    const pendingPurchaseAmountThisMonth = pendingMonthPurchases.reduce((sum, entry) => sum + entry.amount, 0)
+    const postedPurchaseAmountThisMonth = postedMonthPurchases.reduce((sum, entry) => sum + entry.amount, 0)
+    const reconciledPurchaseAmountThisMonth = reconciledMonthPurchases.reduce((sum, entry) => sum + entry.amount, 0)
+    const purchasesThisMonth = postedPurchaseAmountThisMonth + reconciledPurchaseAmountThisMonth
     const pendingPurchases = purchases.filter((entry) => entry.reconciliationStatus === 'pending').length
     const reconciledPurchases = purchases.filter((entry) => entry.reconciliationStatus === 'reconciled').length
     const postedPurchases = purchases.length - pendingPurchases
@@ -2463,13 +2481,15 @@ export const getFinanceData = query({
     const healthScore = Math.round(clamp(savingsComponent + utilizationComponent + runwayComponent + goalsComponent, 0, 100))
 
     const categoryMap = new Map<string, { total: number; count: number }>()
-    monthPurchases.forEach((entry) => {
-      const current = categoryMap.get(entry.category) ?? { total: 0, count: 0 }
-      categoryMap.set(entry.category, {
-        total: current.total + entry.amount,
-        count: current.count + 1,
+    monthPurchases
+      .filter((entry) => isPurchasePosted(entry.reconciliationStatus))
+      .forEach((entry) => {
+        const current = categoryMap.get(entry.category) ?? { total: 0, count: 0 }
+        categoryMap.set(entry.category, {
+          total: current.total + entry.amount,
+          count: current.count + 1,
+        })
       })
-    })
 
     const topCategories = [...categoryMap.entries()]
       .map(([category, value]) => ({
@@ -2558,6 +2578,9 @@ export const getFinanceData = query({
           totalLoanBalance,
           cardUtilizationPercent,
           purchasesThisMonth,
+          pendingPurchaseAmountThisMonth,
+          postedPurchaseAmountThisMonth,
+          reconciledPurchaseAmountThisMonth,
           projectedMonthlyNet,
           savingsRatePercent,
           totalAssets,
@@ -5759,6 +5782,10 @@ export const addPurchase = mutation({
     purchaseDate: v.string(),
     reconciliationStatus: v.optional(reconciliationStatusValidator),
     statementMonth: v.optional(v.string()),
+    ownership: v.optional(purchaseOwnershipValidator),
+    taxDeductible: v.optional(v.boolean()),
+    fundingSourceType: v.optional(purchaseFundingSourceTypeValidator),
+    fundingSourceId: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -5771,10 +5798,19 @@ export const addPurchase = mutation({
     if (args.statementMonth) {
       validateStatementMonth(args.statementMonth, 'Statement month')
     }
+    validateOptionalText(args.fundingSourceId, 'Funding source id', 80)
 
     const ruleOverride = await resolvePurchaseRuleOverrides(ctx, identity.subject, args.item)
     const resolvedCategory = isGenericCategory(args.category) && ruleOverride?.category ? ruleOverride.category : args.category.trim()
     const requestedStatus = args.reconciliationStatus ?? ruleOverride?.reconciliationStatus
+    const ownership: PurchaseOwnership = args.ownership ?? 'shared'
+    const taxDeductible = args.taxDeductible ?? false
+    const fundingSourceType: PurchaseFundingSourceType = args.fundingSourceType ?? 'unassigned'
+    const normalizedFundingSourceId = args.fundingSourceId?.trim() || undefined
+    const fundingSourceId = fundingSourceType === 'unassigned' ? undefined : normalizedFundingSourceId
+    if ((fundingSourceType === 'account' || fundingSourceType === 'card') && !fundingSourceId) {
+      throw new Error('Choose an account or card source for this purchase.')
+    }
     validateRequiredText(resolvedCategory, 'Purchase category')
 
     const now = Date.now()
@@ -5793,6 +5829,10 @@ export const addPurchase = mutation({
       purchaseDate: args.purchaseDate,
       reconciliationStatus: reconciliation.reconciliationStatus,
       statementMonth: reconciliation.statementMonth,
+      ownership,
+      taxDeductible,
+      fundingSourceType,
+      fundingSourceId,
       postedAt: reconciliation.postedAt,
       reconciledAt: reconciliation.reconciledAt,
       notes: args.notes?.trim() || undefined,
@@ -5823,6 +5863,10 @@ export const addPurchase = mutation({
         purchaseDate: args.purchaseDate,
         reconciliationStatus: reconciliation.reconciliationStatus,
         statementMonth: reconciliation.statementMonth,
+        ownership,
+        taxDeductible,
+        fundingSourceType,
+        fundingSourceId,
         ruleId: ruleOverride?.ruleId,
       },
     })
@@ -5838,6 +5882,10 @@ export const updatePurchase = mutation({
     purchaseDate: v.string(),
     reconciliationStatus: v.optional(reconciliationStatusValidator),
     statementMonth: v.optional(v.string()),
+    ownership: v.optional(purchaseOwnershipValidator),
+    taxDeductible: v.optional(v.boolean()),
+    fundingSourceType: v.optional(purchaseFundingSourceTypeValidator),
+    fundingSourceId: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -5850,6 +5898,7 @@ export const updatePurchase = mutation({
     if (args.statementMonth) {
       validateStatementMonth(args.statementMonth, 'Statement month')
     }
+    validateOptionalText(args.fundingSourceId, 'Funding source id', 80)
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Purchase record not found.')
@@ -5857,6 +5906,15 @@ export const updatePurchase = mutation({
     const ruleOverride = await resolvePurchaseRuleOverrides(ctx, identity.subject, args.item)
     const resolvedCategory = isGenericCategory(args.category) && ruleOverride?.category ? ruleOverride.category : args.category.trim()
     const requestedStatus = args.reconciliationStatus ?? ruleOverride?.reconciliationStatus
+    const ownership: PurchaseOwnership = args.ownership ?? existing.ownership ?? 'shared'
+    const taxDeductible = args.taxDeductible ?? existing.taxDeductible ?? false
+    const fundingSourceType: PurchaseFundingSourceType = args.fundingSourceType ?? existing.fundingSourceType ?? 'unassigned'
+    const normalizedFundingSourceId = args.fundingSourceId?.trim() || undefined
+    const resolvedFundingSourceId = normalizedFundingSourceId ?? existing.fundingSourceId
+    const fundingSourceId = fundingSourceType === 'unassigned' ? undefined : resolvedFundingSourceId
+    if ((fundingSourceType === 'account' || fundingSourceType === 'card') && !fundingSourceId) {
+      throw new Error('Choose an account or card source for this purchase.')
+    }
     validateRequiredText(resolvedCategory, 'Purchase category')
 
     const now = Date.now()
@@ -5887,6 +5945,10 @@ export const updatePurchase = mutation({
       purchaseDate: args.purchaseDate,
       reconciliationStatus: reconciliation.reconciliationStatus,
       statementMonth: reconciliation.statementMonth,
+      ownership,
+      taxDeductible,
+      fundingSourceType,
+      fundingSourceId,
       postedAt: reconciliation.postedAt,
       reconciledAt: reconciliation.reconciledAt,
       notes: args.notes?.trim() || undefined,
@@ -5916,6 +5978,10 @@ export const updatePurchase = mutation({
         purchaseDate: existing.purchaseDate,
         reconciliationStatus: existing.reconciliationStatus ?? 'posted',
         statementMonth: existing.statementMonth ?? existing.purchaseDate.slice(0, 7),
+        ownership: existing.ownership ?? 'shared',
+        taxDeductible: existing.taxDeductible ?? false,
+        fundingSourceType: existing.fundingSourceType ?? 'unassigned',
+        fundingSourceId: existing.fundingSourceId ?? null,
       },
       after: {
         item: args.item.trim(),
@@ -5924,6 +5990,10 @@ export const updatePurchase = mutation({
         purchaseDate: args.purchaseDate,
         reconciliationStatus: reconciliation.reconciliationStatus,
         statementMonth: reconciliation.statementMonth,
+        ownership,
+        taxDeductible,
+        fundingSourceType,
+        fundingSourceId,
         ruleId: ruleOverride?.ruleId,
       },
     })
@@ -5965,6 +6035,10 @@ export const removePurchase = mutation({
         purchaseDate: existing.purchaseDate,
         reconciliationStatus: existing.reconciliationStatus ?? 'posted',
         statementMonth: existing.statementMonth ?? existing.purchaseDate.slice(0, 7),
+        ownership: existing.ownership ?? 'shared',
+        taxDeductible: existing.taxDeductible ?? false,
+        fundingSourceType: existing.fundingSourceType ?? 'unassigned',
+        fundingSourceId: existing.fundingSourceId ?? null,
       },
     })
   },

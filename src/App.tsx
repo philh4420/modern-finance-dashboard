@@ -770,8 +770,10 @@ function App() {
           />
         ) : null}
 
-        {activeTab === 'purchases' ? (
+	        {activeTab === 'purchases' ? (
 	          <PurchasesTab
+            accounts={accounts}
+            cards={cards}
 	            purchaseForm={purchasesSection.purchaseForm}
 	            setPurchaseForm={purchasesSection.setPurchaseForm}
 	            purchaseFilter={purchasesSection.purchaseFilter}
@@ -780,7 +782,10 @@ function App() {
 	            filteredPurchases={purchasesSection.filteredPurchases}
 	            filteredPurchaseTotal={purchasesSection.filteredPurchaseTotal}
 	            filteredPurchaseAverage={purchasesSection.filteredPurchaseAverage}
+            monthPurchaseSummary={purchasesSection.monthPurchaseSummary}
+            filteredStatusCounts={purchasesSection.filteredStatusCounts}
 	            purchasesThisMonth={summary.purchasesThisMonth}
+            pendingPurchaseAmountThisMonth={summary.pendingPurchaseAmountThisMonth}
 	            pendingPurchases={summary.pendingPurchases}
 	            postedPurchases={summary.postedPurchases}
 	            reconciledPurchases={summary.reconciledPurchases}
@@ -788,11 +793,25 @@ function App() {
 	            setPurchaseEditId={purchasesSection.setPurchaseEditId}
 	            purchaseEditDraft={purchasesSection.purchaseEditDraft}
 	            setPurchaseEditDraft={purchasesSection.setPurchaseEditDraft}
+            selectedPurchaseCount={purchasesSection.selectedPurchaseCount}
+            selectedPurchaseTotal={purchasesSection.selectedPurchaseTotal}
+            selectedPurchaseSet={purchasesSection.selectedPurchaseSet}
+            toggleSelectedPurchase={purchasesSection.toggleSelectedPurchase}
+            toggleSelectFilteredPurchases={purchasesSection.toggleSelectFilteredPurchases}
+            clearSelectedPurchases={purchasesSection.clearSelectedPurchases}
+            bulkCategory={purchasesSection.bulkCategory}
+            setBulkCategory={purchasesSection.setBulkCategory}
+            savedView={purchasesSection.savedView}
+            applySavedView={purchasesSection.applySavedView}
 	            onAddPurchase={purchasesSection.onAddPurchase}
             onDeletePurchase={purchasesSection.onDeletePurchase}
             savePurchaseEdit={purchasesSection.savePurchaseEdit}
             startPurchaseEdit={purchasesSection.startPurchaseEdit}
             onSetPurchaseReconciliation={purchasesSection.onSetPurchaseReconciliation}
+            duplicatePurchase={purchasesSection.duplicatePurchase}
+            runBulkStatus={purchasesSection.runBulkStatus}
+            runBulkCategory={purchasesSection.runBulkCategory}
+            runBulkDelete={purchasesSection.runBulkDelete}
             formatMoney={formatSection.formatMoney}
             dateLabel={dateLabel}
           />

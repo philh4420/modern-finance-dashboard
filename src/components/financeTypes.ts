@@ -39,6 +39,8 @@ export type BillCategory =
   | 'childcare'
   | 'other'
 export type BillScope = 'shared' | 'personal'
+export type PurchaseOwnership = 'shared' | 'personal'
+export type PurchaseFundingSourceType = 'unassigned' | 'account' | 'card'
 
 export type FinancePreference = {
   currency: string
@@ -60,6 +62,9 @@ export type Summary = {
   totalLoanBalance: number
   cardUtilizationPercent: number
   purchasesThisMonth: number
+  pendingPurchaseAmountThisMonth: number
+  postedPurchaseAmountThisMonth: number
+  reconciledPurchaseAmountThisMonth: number
   projectedMonthlyNet: number
   savingsRatePercent: number
   totalAssets: number
@@ -227,6 +232,10 @@ export type PurchaseForm = {
   purchaseDate: string
   reconciliationStatus: ReconciliationStatus
   statementMonth: string
+  ownership: PurchaseOwnership
+  taxDeductible: boolean
+  fundingSourceType: PurchaseFundingSourceType
+  fundingSourceId: string
   notes: string
 }
 
@@ -235,7 +244,18 @@ export type PurchaseFilter = {
   category: string
   month: string
   reconciliationStatus: 'all' | ReconciliationStatus
+  ownership: 'all' | PurchaseOwnership
+  taxDeductible: 'all' | 'yes' | 'no'
+  fundingSourceType: 'all' | PurchaseFundingSourceType
 }
+
+export type PurchaseSavedView =
+  | 'month_all'
+  | 'month_pending'
+  | 'month_unreconciled'
+  | 'month_reconciled'
+  | 'all_unreconciled'
+  | 'all_purchases'
 
 export type AccountForm = {
   name: string
