@@ -37,6 +37,8 @@ import { usePurchasesSection } from './hooks/usePurchasesSection'
 import { useReconciliationSection } from './hooks/useReconciliationSection'
 import { useSettingsSection } from './hooks/useSettingsSection'
 import {
+  billCategoryOptions,
+  billScopeOptions,
   accountTypeOptions,
   cadenceOptions,
   customCadenceUnitOptions,
@@ -695,6 +697,8 @@ function App() {
             onRunBillsMonthlyBulkAction={billsSection.onRunBillsMonthlyBulkAction}
             saveBillEdit={billsSection.saveBillEdit}
             startBillEdit={billsSection.startBillEdit}
+            billCategoryOptions={billCategoryOptions}
+            billScopeOptions={billScopeOptions}
             cadenceOptions={cadenceOptions}
             customCadenceUnitOptions={customCadenceUnitOptions}
             isCustomCadence={isCustomCadence}

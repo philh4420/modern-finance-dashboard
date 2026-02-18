@@ -168,6 +168,20 @@ const incomeAllocationSuggestionStatus = v.union(
   v.literal('completed'),
   v.literal('dismissed'),
 )
+const billCategory = v.union(
+  v.literal('housing'),
+  v.literal('utilities'),
+  v.literal('council_tax'),
+  v.literal('insurance'),
+  v.literal('transport'),
+  v.literal('health'),
+  v.literal('debt'),
+  v.literal('subscriptions'),
+  v.literal('education'),
+  v.literal('childcare'),
+  v.literal('other'),
+)
+const billScope = v.union(v.literal('shared'), v.literal('personal'))
 
 export default defineSchema({
   dashboardStates: defineTable({
@@ -254,6 +268,9 @@ export default defineSchema({
     cadence,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnit),
+    category: v.optional(billCategory),
+    scope: v.optional(billScope),
+    deductible: v.optional(v.boolean()),
     isSubscription: v.optional(v.boolean()),
     cancelReminderDays: v.optional(v.number()),
     linkedAccountId: v.optional(v.id('accounts')),
@@ -263,7 +280,9 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt'])
-    .index('by_userId_linkedAccountId', ['userId', 'linkedAccountId']),
+    .index('by_userId_linkedAccountId', ['userId', 'linkedAccountId'])
+    .index('by_userId_scope', ['userId', 'scope'])
+    .index('by_userId_category', ['userId', 'category']),
   subscriptionPriceChanges: defineTable({
     userId: v.string(),
     billId: v.id('bills'),

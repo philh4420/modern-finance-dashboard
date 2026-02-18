@@ -2,12 +2,16 @@ import { Fragment, useEffect, useMemo, useState, type Dispatch, type FormEvent, 
 import type {
   AccountId,
   AccountEntry,
+  BillCategory,
+  BillCategoryOption,
   BillEditDraft,
   BillEntry,
   BillForm,
   BillId,
   BillPaymentCheckEntry,
   BillPaymentCheckId,
+  BillScope,
+  BillScopeOption,
   Cadence,
   CadenceOption,
   CustomCadenceUnit,
@@ -297,6 +301,12 @@ const hasIntentionalPairMarker = (left: BillEntry, right: BillEntry) => {
   return leftTargetsRight || rightTargetsLeft
 }
 
+const resolveBillScope = (entry: Pick<BillEntry, 'scope'>): BillScope =>
+  entry.scope === 'personal' ? 'personal' : 'shared'
+
+const resolveBillCategory = (entry: Pick<BillEntry, 'category'>): BillCategory =>
+  (entry.category as BillCategory | undefined) ?? 'other'
+
 const buildBillOverlapMatches = (bills: BillEntry[]) => {
   const matches: BillOverlapMatch[] = []
 
@@ -304,6 +314,10 @@ const buildBillOverlapMatches = (bills: BillEntry[]) => {
     const left = bills[leftIndex]
     for (let rightIndex = leftIndex + 1; rightIndex < bills.length; rightIndex += 1) {
       const right = bills[rightIndex]
+
+      if (resolveBillScope(left) !== resolveBillScope(right)) {
+        continue
+      }
 
       if (hasArchivedDuplicateMarker(left.notes) || hasArchivedDuplicateMarker(right.notes)) {
         continue
@@ -432,6 +446,8 @@ type BillsTabProps = {
     cycleMonth: string
     fundingAccountId?: AccountId
   }) => Promise<BillsMonthlyBulkActionResult>
+  billCategoryOptions: BillCategoryOption[]
+  billScopeOptions: BillScopeOption[]
   cadenceOptions: CadenceOption[]
   customCadenceUnitOptions: CustomCadenceUnitOption[]
   isCustomCadence: (cadence: Cadence) => boolean
@@ -459,6 +475,8 @@ export function BillsTab({
   startBillEdit,
   onResolveBillDuplicateOverlap,
   onRunBillsMonthlyBulkAction,
+  billCategoryOptions,
+  billScopeOptions,
   cadenceOptions,
   customCadenceUnitOptions,
   isCustomCadence,
@@ -490,6 +508,14 @@ export function BillsTab({
   const subscriptionDateFormatter = useMemo(
     () => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
     [],
+  )
+  const billCategoryLabelMap = useMemo(
+    () => new Map<BillCategory, string>(billCategoryOptions.map((option) => [option.value, option.label])),
+    [billCategoryOptions],
+  )
+  const billScopeLabelMap = useMemo(
+    () => new Map<BillScope, string>(billScopeOptions.map((option) => [option.value, option.label])),
+    [billScopeOptions],
   )
   const billById = useMemo(() => new Map<BillId, BillEntry>(bills.map((entry) => [entry._id, entry])), [bills])
 
@@ -760,7 +786,9 @@ export function BillsTab({
     const filtered = query
       ? bills.filter((entry) => {
           const notes = entry.notes ?? ''
-          return `${entry.name} ${notes}`.toLowerCase().includes(query)
+          const scope = resolveBillScope(entry)
+          const category = resolveBillCategory(entry)
+          return `${entry.name} ${notes} ${scope} ${category}`.toLowerCase().includes(query)
         })
       : bills.slice()
 
@@ -793,6 +821,69 @@ export function BillsTab({
 
     return sorted
   }, [bills, cadenceLabel, search, sortKey])
+
+  const billsByScope = useMemo(() => {
+    const personal = visibleBills.filter((entry) => resolveBillScope(entry) === 'personal')
+    const shared = visibleBills.filter((entry) => resolveBillScope(entry) === 'shared')
+    return {
+      personal,
+      shared,
+    }
+  }, [visibleBills])
+
+  const billTaggingSummary = useMemo(() => {
+    const totals = {
+      personalMonthly: 0,
+      sharedMonthly: 0,
+      deductibleMonthly: 0,
+      nonDeductibleMonthly: 0,
+      deductibleCount: 0,
+      byCategory: new Map<BillCategory, { monthlyAmount: number; count: number }>(),
+    }
+
+    bills.forEach((entry) => {
+      const monthlyAmount = toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit)
+      const scope = resolveBillScope(entry)
+      const category = resolveBillCategory(entry)
+
+      if (scope === 'personal') {
+        totals.personalMonthly += monthlyAmount
+      } else {
+        totals.sharedMonthly += monthlyAmount
+      }
+
+      if (entry.deductible === true) {
+        totals.deductibleMonthly += monthlyAmount
+        totals.deductibleCount += 1
+      } else {
+        totals.nonDeductibleMonthly += monthlyAmount
+      }
+
+      const current = totals.byCategory.get(category) ?? { monthlyAmount: 0, count: 0 }
+      totals.byCategory.set(category, {
+        monthlyAmount: current.monthlyAmount + monthlyAmount,
+        count: current.count + 1,
+      })
+    })
+
+    const topCategories = [...totals.byCategory.entries()]
+      .map(([category, value]) => ({
+        category,
+        monthlyAmount: value.monthlyAmount,
+        count: value.count,
+      }))
+      .sort((left, right) => right.monthlyAmount - left.monthlyAmount)
+      .slice(0, 3)
+
+    return {
+      personalMonthly: totals.personalMonthly,
+      sharedMonthly: totals.sharedMonthly,
+      deductibleMonthly: totals.deductibleMonthly,
+      nonDeductibleMonthly: totals.nonDeductibleMonthly,
+      deductibleCount: totals.deductibleCount,
+      topCategories,
+    }
+  }, [bills])
 
   const duplicateOverlapData = useMemo(() => {
     const matches = buildBillOverlapMatches(bills)
@@ -1277,6 +1368,8 @@ export function BillsTab({
     confirmationSecondaryBill,
     overlapConfirmation?.match.secondaryName ?? 'Secondary bill',
   )
+  const billCategoryText = (category: BillCategory) => billCategoryLabelMap.get(category) ?? category
+  const billScopeText = (scope: BillScope) => billScopeLabelMap.get(scope) ?? scope
   const bulkActionResultLabel =
     bulkActionResult?.action === 'roll_recurring_forward'
       ? 'Rolled recurring bills'
@@ -1352,6 +1445,46 @@ export function BillsTab({
                 }
               >
                 {cadenceOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="bill-category">Category</label>
+              <select
+                id="bill-category"
+                value={billForm.category}
+                onChange={(event) =>
+                  setBillForm((prev) => ({
+                    ...prev,
+                    category: event.target.value as BillCategory,
+                  }))
+                }
+              >
+                {billCategoryOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="bill-scope">Ownership</label>
+              <select
+                id="bill-scope"
+                value={billForm.scope}
+                onChange={(event) =>
+                  setBillForm((prev) => ({
+                    ...prev,
+                    scope: event.target.value as BillScope,
+                  }))
+                }
+              >
+                {billScopeOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -1466,6 +1599,18 @@ export function BillsTab({
             </div>
 
             <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="bill-deductible">
+                <input
+                  id="bill-deductible"
+                  type="checkbox"
+                  checked={billForm.deductible}
+                  onChange={(event) => setBillForm((prev) => ({ ...prev, deductible: event.target.checked }))}
+                />
+                Tax deductible
+              </label>
+            </div>
+
+            <div className="form-field form-field--span2">
               <label htmlFor="bill-notes">Notes</label>
               <textarea
                 id="bill-notes"
@@ -1480,7 +1625,8 @@ export function BillsTab({
           <p id="bill-form-hint" className="form-hint">
             Tip: use <strong>Custom</strong> for true intervals (every 4 weeks, 6 weeks, 4 months, etc) and{' '}
             <strong>One Time</strong> for non-recurring bills. Mark subscriptions to get renewal + cancel reminders and
-            link an account to enable autopay balance risk checks.
+            link an account to enable autopay balance risk checks. Tag category, ownership, and deductible status for cleaner
+            reporting/export.
           </p>
 
           <div className="form-actions">
@@ -1587,6 +1733,33 @@ export function BillsTab({
                   {billSummary.variableBillCount > 1
                     ? `σ ${formatMoney(billSummary.variableVarianceStd)} across ${billSummary.variableBillCount} variable bills`
                     : 'Tag notes with "variable" or use custom/weekly cadence to track variability'}
+                </small>
+              </article>
+              <article className="bills-summary-card">
+                <p>Shared / personal split</p>
+                <strong>{formatMoney(billTaggingSummary.sharedMonthly)}</strong>
+                <small>{formatMoney(billTaggingSummary.personalMonthly)} personal monthly estimate</small>
+              </article>
+              <article className="bills-summary-card bills-summary-card--good">
+                <p>Tax deductible bills</p>
+                <strong>{formatMoney(billTaggingSummary.deductibleMonthly)}</strong>
+                <small>
+                  {billTaggingSummary.deductibleCount} deductible bill{billTaggingSummary.deductibleCount === 1 ? '' : 's'}
+                </small>
+              </article>
+              <article className="bills-summary-card">
+                <p>Top categories</p>
+                <strong>
+                  {billTaggingSummary.topCategories.length > 0
+                    ? billCategoryText(billTaggingSummary.topCategories[0].category)
+                    : 'n/a'}
+                </strong>
+                <small>
+                  {billTaggingSummary.topCategories.length > 0
+                    ? billTaggingSummary.topCategories
+                        .map((entry) => `${billCategoryText(entry.category)} ${formatMoney(entry.monthlyAmount)}`)
+                        .join(' · ')
+                    : 'Start tagging categories for cleaner reporting'}
                 </small>
               </article>
               <article className="bills-summary-card">
@@ -2175,39 +2348,122 @@ export function BillsTab({
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleBills.map((entry) => {
-                      const isEditing = billEditId === entry._id
-                      const isPaymentLogOpen = paymentLogBillId === entry._id
-                      const linkedAccount = billLinkedAccounts.get(entry._id) ?? null
-                      const autopayRisk = autopayRiskByBillId.get(entry._id)
-                      const rowPaymentChecks = billPaymentChecksByBillId.get(entry._id) ?? []
-                      const latestPaymentCheck = rowPaymentChecks[0] ?? null
-                      const recentVarianceChecks = rowPaymentChecks
-                        .filter((paymentCheck) => typeof paymentCheck.varianceAmount === 'number')
-                        .slice(0, 3)
-                      const averageVariance =
-                        recentVarianceChecks.length > 0
-                          ? recentVarianceChecks.reduce((sum, paymentCheck) => sum + (paymentCheck.varianceAmount ?? 0), 0) /
-                            recentVarianceChecks.length
-                          : 0
+                    {([
+                      { scope: 'personal' as const, rows: billsByScope.personal },
+                      { scope: 'shared' as const, rows: billsByScope.shared },
+                    ]).map((group) => {
+                      if (group.rows.length === 0) {
+                        return null
+                      }
+
+                      const sectionMonthlyTotal = group.rows.reduce(
+                        (sum, entry) => sum + toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit),
+                        0,
+                      )
 
                       return (
-                        <Fragment key={entry._id}>
+                        <Fragment key={`scope-${group.scope}`}>
+                          <tr className="bills-scope-row">
+                            <td colSpan={billTableColumnCount}>
+                              <div className="bills-scope-row-content">
+                                <strong>{billScopeText(group.scope)}</strong>
+                                <small>
+                                  {group.rows.length} bill{group.rows.length === 1 ? '' : 's'} · monthly estimate{' '}
+                                  {formatMoney(sectionMonthlyTotal)}
+                                </small>
+                              </div>
+                            </td>
+                          </tr>
+                          {group.rows.map((entry) => {
+                            const isEditing = billEditId === entry._id
+                            const isPaymentLogOpen = paymentLogBillId === entry._id
+                            const linkedAccount = billLinkedAccounts.get(entry._id) ?? null
+                            const autopayRisk = autopayRiskByBillId.get(entry._id)
+                            const rowPaymentChecks = billPaymentChecksByBillId.get(entry._id) ?? []
+                            const latestPaymentCheck = rowPaymentChecks[0] ?? null
+                            const recentVarianceChecks = rowPaymentChecks
+                              .filter((paymentCheck) => typeof paymentCheck.varianceAmount === 'number')
+                              .slice(0, 3)
+                            const averageVariance =
+                              recentVarianceChecks.length > 0
+                                ? recentVarianceChecks.reduce((sum, paymentCheck) => sum + (paymentCheck.varianceAmount ?? 0), 0) /
+                                  recentVarianceChecks.length
+                                : 0
+
+                            return (
+                              <Fragment key={entry._id}>
                           <tr className={isEditing ? 'table-row--editing' : undefined}>
                             <td>
                               {isEditing ? (
-                                <input
-                                  className="inline-input"
-                                  value={billEditDraft.name}
-                                  onChange={(event) =>
-                                    setBillEditDraft((prev) => ({
-                                      ...prev,
-                                      name: event.target.value,
-                                    }))
-                                  }
-                                />
+                                <div className="cell-stack">
+                                  <input
+                                    className="inline-input"
+                                    value={billEditDraft.name}
+                                    onChange={(event) =>
+                                      setBillEditDraft((prev) => ({
+                                        ...prev,
+                                        name: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                  <div className="bills-inline-tag-grid">
+                                    <select
+                                      className="inline-select"
+                                      value={billEditDraft.category}
+                                      onChange={(event) =>
+                                        setBillEditDraft((prev) => ({
+                                          ...prev,
+                                          category: event.target.value as BillCategory,
+                                        }))
+                                      }
+                                    >
+                                      {billCategoryOptions.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      className="inline-select"
+                                      value={billEditDraft.scope}
+                                      onChange={(event) =>
+                                        setBillEditDraft((prev) => ({
+                                          ...prev,
+                                          scope: event.target.value as BillScope,
+                                        }))
+                                      }
+                                    >
+                                      {billScopeOptions.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <label className="checkbox-row" htmlFor={`bill-edit-deductible-${entry._id}`}>
+                                    <input
+                                      id={`bill-edit-deductible-${entry._id}`}
+                                      type="checkbox"
+                                      checked={billEditDraft.deductible}
+                                      onChange={(event) =>
+                                        setBillEditDraft((prev) => ({
+                                          ...prev,
+                                          deductible: event.target.checked,
+                                        }))
+                                      }
+                                    />
+                                    Tax deductible
+                                  </label>
+                                </div>
                               ) : (
-                                entry.name
+                                <div className="cell-stack">
+                                  <strong>{entry.name}</strong>
+                                  <div className="bills-entry-tags">
+                                    <span className="pill pill--cadence">{billCategoryText(resolveBillCategory(entry))}</span>
+                                    <span className="pill pill--neutral">{billScopeText(resolveBillScope(entry))}</span>
+                                    {entry.deductible ? <span className="pill pill--good">Deductible</span> : null}
+                                  </div>
+                                </div>
                               )}
                             </td>
                             <td className="table-amount amount-negative">
@@ -2709,6 +2965,9 @@ export function BillsTab({
                               </td>
                             </tr>
                           ) : null}
+                              </Fragment>
+                            )
+                          })}
                         </Fragment>
                       )
                     })}

@@ -1,6 +1,8 @@
-import { accountTypeOptions, cadenceOptions, goalPriorityOptions } from './financeConstants'
+import { accountTypeOptions, billCategoryOptions, billScopeOptions, cadenceOptions, goalPriorityOptions } from './financeConstants'
 import type {
   AccountType,
+  BillCategory,
+  BillScope,
   Cadence,
   CustomCadenceUnit,
   GoalPriority,
@@ -65,6 +67,12 @@ export const accountTypeLabel = (value: AccountType) =>
 
 export const priorityLabel = (priority: GoalPriority) =>
   goalPriorityOptions.find((option) => option.value === priority)?.label ?? priority
+
+export const billCategoryLabel = (category: BillCategory) =>
+  billCategoryOptions.find((option) => option.value === category)?.label ?? category
+
+export const billScopeLabel = (scope: BillScope) =>
+  billScopeOptions.find((option) => option.value === scope)?.label ?? scope
 
 export const severityLabel = (severity: InsightSeverity) => {
   if (severity === 'critical') return 'Critical'

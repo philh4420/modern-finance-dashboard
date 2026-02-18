@@ -1,6 +1,8 @@
 import type {
   AccountEntry,
+  BillCategory,
   BillEntry,
+  BillScope,
   CardMinimumPaymentType,
   CardEntry,
   CycleAuditLogEntry,
@@ -89,6 +91,28 @@ const monthsBetweenInclusive = (startMonth: string, endMonth: string) => {
   if (!Number.isFinite(sy) || !Number.isFinite(sm) || !Number.isFinite(ey) || !Number.isFinite(em)) return 1
   return (ey - sy) * 12 + (em - sm) + 1
 }
+
+const billCategoryLabelMap: Record<BillCategory, string> = {
+  housing: 'Housing',
+  utilities: 'Utilities',
+  council_tax: 'Council Tax',
+  insurance: 'Insurance',
+  transport: 'Transport',
+  health: 'Health',
+  debt: 'Debt',
+  subscriptions: 'Subscriptions',
+  education: 'Education',
+  childcare: 'Childcare',
+  other: 'Other',
+}
+
+const billScopeLabelMap: Record<BillScope, string> = {
+  shared: 'Shared / household',
+  personal: 'Personal',
+}
+
+const resolveBillCategory = (bill: BillEntry): BillCategory => (bill.category as BillCategory | undefined) ?? 'other'
+const resolveBillScope = (bill: BillEntry): BillScope => (bill.scope === 'personal' ? 'personal' : 'shared')
 
 type CardProjectionRow = {
   monthIndex: number
@@ -1143,32 +1167,58 @@ export function PrintReport({
           {bills.length === 0 ? (
             <p className="print-subnote">No bill entries.</p>
           ) : (
-            <div className="print-table-wrap">
-              <table className="print-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Name</th>
-                    <th scope="col">Amount</th>
-                    <th scope="col">Due</th>
-                    <th scope="col">Cadence</th>
-                    <th scope="col">Autopay</th>
-                    {config.includeNotes ? <th scope="col">Notes</th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {bills.map((bill) => (
-                    <tr key={bill._id}>
-                      <td>{bill.name}</td>
-                      <td className="table-amount">{formatMoney(bill.amount)}</td>
-                      <td>Day {bill.dueDay}</td>
-                      <td>{bill.cadence}</td>
-                      <td>{bill.autopay ? 'yes' : 'no'}</td>
-                      {config.includeNotes ? <td>{bill.notes ?? ''}</td> : null}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {([
+                { scope: 'shared' as const, rows: bills.filter((bill) => resolveBillScope(bill) === 'shared') },
+                { scope: 'personal' as const, rows: bills.filter((bill) => resolveBillScope(bill) === 'personal') },
+              ]).map((section) => {
+                if (section.rows.length === 0) {
+                  return null
+                }
+
+                const monthlyEstimate = sumBy(section.rows, (bill) =>
+                  toMonthlyAmount(bill.amount, bill.cadence, bill.customInterval, bill.customUnit),
+                )
+                const deductibleCount = section.rows.filter((bill) => bill.deductible === true).length
+
+                return (
+                  <div key={section.scope} className="print-table-wrap">
+                    <p className="print-subnote">
+                      {billScopeLabelMap[section.scope]} · {section.rows.length} bills · {formatMoney(monthlyEstimate)} monthly
+                      estimate · {deductibleCount} deductible
+                    </p>
+                    <table className="print-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">Name</th>
+                          <th scope="col">Amount</th>
+                          <th scope="col">Due</th>
+                          <th scope="col">Cadence</th>
+                          <th scope="col">Category</th>
+                          <th scope="col">Deductible</th>
+                          <th scope="col">Autopay</th>
+                          {config.includeNotes ? <th scope="col">Notes</th> : null}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {section.rows.map((bill) => (
+                          <tr key={bill._id}>
+                            <td>{bill.name}</td>
+                            <td className="table-amount">{formatMoney(bill.amount)}</td>
+                            <td>Day {bill.dueDay}</td>
+                            <td>{bill.cadence}</td>
+                            <td>{billCategoryLabelMap[resolveBillCategory(bill)]}</td>
+                            <td>{bill.deductible ? 'yes' : 'no'}</td>
+                            <td>{bill.autopay ? 'yes' : 'no'}</td>
+                            {config.includeNotes ? <td>{bill.notes ?? ''}</td> : null}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              })}
+            </>
           )}
         </section>
       ) : null}

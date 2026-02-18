@@ -25,6 +25,19 @@ export type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 export type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
 export type IncomeAllocationTarget = 'bills' | 'savings' | 'goals' | 'debt_overpay'
 export type AutoAllocationActionType = 'reserve_bills' | 'move_to_savings' | 'fund_goals' | 'debt_overpay'
+export type BillCategory =
+  | 'housing'
+  | 'utilities'
+  | 'council_tax'
+  | 'insurance'
+  | 'transport'
+  | 'health'
+  | 'debt'
+  | 'subscriptions'
+  | 'education'
+  | 'childcare'
+  | 'other'
+export type BillScope = 'shared' | 'personal'
 
 export type FinancePreference = {
   currency: string
@@ -157,6 +170,9 @@ export type BillForm = {
   cadence: Cadence
   customInterval: string
   customUnit: CustomCadenceUnit
+  category: BillCategory
+  scope: BillScope
+  deductible: boolean
   isSubscription: boolean
   cancelReminderDays: string
   linkedAccountId: string
@@ -397,6 +413,16 @@ export type AccountTypeOption = {
 
 export type GoalPriorityOption = {
   value: GoalPriority
+  label: string
+}
+
+export type BillCategoryOption = {
+  value: BillCategory
+  label: string
+}
+
+export type BillScopeOption = {
+  value: BillScope
   label: string
 }
 

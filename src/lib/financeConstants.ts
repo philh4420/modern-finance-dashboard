@@ -1,5 +1,7 @@
 import type {
   AccountTypeOption,
+  BillCategoryOption,
+  BillScopeOption,
   CadenceOption,
   CustomCadenceUnitOption,
   GoalPriorityOption,
@@ -50,6 +52,25 @@ export const goalPriorityOptions: GoalPriorityOption[] = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
+]
+
+export const billCategoryOptions: BillCategoryOption[] = [
+  { value: 'housing', label: 'Housing' },
+  { value: 'utilities', label: 'Utilities' },
+  { value: 'council_tax', label: 'Council Tax' },
+  { value: 'insurance', label: 'Insurance' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'health', label: 'Health' },
+  { value: 'debt', label: 'Debt' },
+  { value: 'subscriptions', label: 'Subscriptions' },
+  { value: 'education', label: 'Education' },
+  { value: 'childcare', label: 'Childcare' },
+  { value: 'other', label: 'Other' },
+]
+
+export const billScopeOptions: BillScopeOption[] = [
+  { value: 'shared', label: 'Shared / household' },
+  { value: 'personal', label: 'Personal' },
 ]
 
 export const defaultPreference = {

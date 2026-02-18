@@ -38,6 +38,20 @@ const billOverlapResolutionValidator = v.union(
   v.literal('archive_duplicate'),
   v.literal('mark_intentional'),
 )
+const billCategoryValidator = v.union(
+  v.literal('housing'),
+  v.literal('utilities'),
+  v.literal('council_tax'),
+  v.literal('insurance'),
+  v.literal('transport'),
+  v.literal('health'),
+  v.literal('debt'),
+  v.literal('subscriptions'),
+  v.literal('education'),
+  v.literal('childcare'),
+  v.literal('other'),
+)
+const billScopeValidator = v.union(v.literal('shared'), v.literal('personal'))
 const billsMonthlyBulkActionValidator = v.union(
   v.literal('roll_recurring_forward'),
   v.literal('mark_all_paid_from_account'),
@@ -52,6 +66,19 @@ type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
+type BillCategory =
+  | 'housing'
+  | 'utilities'
+  | 'council_tax'
+  | 'insurance'
+  | 'transport'
+  | 'health'
+  | 'debt'
+  | 'subscriptions'
+  | 'education'
+  | 'childcare'
+  | 'other'
+type BillScope = 'shared' | 'personal'
 type BillsMonthlyBulkAction = 'roll_recurring_forward' | 'mark_all_paid_from_account' | 'reconcile_batch'
 type LedgerEntryType =
   | 'purchase'
@@ -433,6 +460,16 @@ const sanitizeSubscriptionDetails = (isSubscription?: boolean, cancelReminderDay
     cancelReminderDays,
   }
 }
+
+const sanitizeBillTagging = (
+  category?: BillCategory,
+  scope?: BillScope,
+  deductible?: boolean,
+) => ({
+  category: category ?? 'other',
+  scope: scope ?? 'shared',
+  deductible: deductible === true,
+})
 
 const archivedDuplicateNoteMarker = '[archived-duplicate]'
 const intentionalOverlapMarkerPrefix = '[intentional-overlap:'
@@ -2851,6 +2888,9 @@ export const addBill = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    category: v.optional(billCategoryValidator),
+    scope: v.optional(billScopeValidator),
+    deductible: v.optional(v.boolean()),
     isSubscription: v.optional(v.boolean()),
     cancelReminderDays: v.optional(v.number()),
     linkedAccountId: v.optional(v.id('accounts')),
@@ -2870,6 +2910,7 @@ export const addBill = mutation({
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
     const subscriptionDetails = sanitizeSubscriptionDetails(args.isSubscription, args.cancelReminderDays)
+    const billTagging = sanitizeBillTagging(args.category, args.scope, args.deductible)
     const linkedAccountId = await resolveBillLinkedAccountId(ctx, identity.subject, args.linkedAccountId)
 
     const createdBillId = await ctx.db.insert('bills', {
@@ -2880,6 +2921,9 @@ export const addBill = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      category: billTagging.category,
+      scope: billTagging.scope,
+      deductible: billTagging.deductible,
       isSubscription: subscriptionDetails.isSubscription,
       cancelReminderDays: subscriptionDetails.cancelReminderDays,
       linkedAccountId,
@@ -2898,6 +2942,9 @@ export const addBill = mutation({
         amount: args.amount,
         dueDay: args.dueDay,
         cadence: args.cadence,
+        category: billTagging.category,
+        scope: billTagging.scope,
+        deductible: billTagging.deductible,
         isSubscription: subscriptionDetails.isSubscription,
         cancelReminderDays: subscriptionDetails.cancelReminderDays,
         linkedAccountId: linkedAccountId ? String(linkedAccountId) : undefined,
@@ -2915,6 +2962,9 @@ export const updateBill = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    category: v.optional(billCategoryValidator),
+    scope: v.optional(billScopeValidator),
+    deductible: v.optional(v.boolean()),
     isSubscription: v.optional(v.boolean()),
     cancelReminderDays: v.optional(v.number()),
     linkedAccountId: v.optional(v.id('accounts')),
@@ -2932,12 +2982,17 @@ export const updateBill = mutation({
       throw new Error('Due day must be between 1 and 31.')
     }
 
-    const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
-    const subscriptionDetails = sanitizeSubscriptionDetails(args.isSubscription, args.cancelReminderDays)
-    const linkedAccountId = await resolveBillLinkedAccountId(ctx, identity.subject, args.linkedAccountId)
-
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Bill record not found.')
+
+    const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+    const subscriptionDetails = sanitizeSubscriptionDetails(args.isSubscription, args.cancelReminderDays)
+    const billTagging = sanitizeBillTagging(
+      args.category ?? (existing.category as BillCategory | undefined),
+      args.scope ?? (existing.scope as BillScope | undefined),
+      args.deductible ?? existing.deductible,
+    )
+    const linkedAccountId = await resolveBillLinkedAccountId(ctx, identity.subject, args.linkedAccountId)
 
     await ctx.db.patch(args.id, {
       name: args.name.trim(),
@@ -2946,6 +3001,9 @@ export const updateBill = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      category: billTagging.category,
+      scope: billTagging.scope,
+      deductible: billTagging.deductible,
       isSubscription: subscriptionDetails.isSubscription,
       cancelReminderDays: subscriptionDetails.cancelReminderDays,
       linkedAccountId,
@@ -2977,6 +3035,9 @@ export const updateBill = mutation({
         amount: existing.amount,
         dueDay: existing.dueDay,
         cadence: existing.cadence,
+        category: existing.category ?? 'other',
+        scope: existing.scope ?? 'shared',
+        deductible: existing.deductible ?? false,
         isSubscription: existing.isSubscription ?? false,
         cancelReminderDays: existing.cancelReminderDays,
         linkedAccountId: existing.linkedAccountId ? String(existing.linkedAccountId) : undefined,
@@ -2986,6 +3047,9 @@ export const updateBill = mutation({
         amount: args.amount,
         dueDay: args.dueDay,
         cadence: args.cadence,
+        category: billTagging.category,
+        scope: billTagging.scope,
+        deductible: billTagging.deductible,
         isSubscription: subscriptionDetails.isSubscription,
         cancelReminderDays: subscriptionDetails.cancelReminderDays,
         linkedAccountId: linkedAccountId ? String(linkedAccountId) : undefined,

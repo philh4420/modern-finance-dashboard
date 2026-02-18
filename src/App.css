@@ -2383,6 +2383,49 @@ h2 {
     color-mix(in oklab, var(--surface-card) 93%, white 7%);
 }
 
+.bills-entry-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.24rem;
+}
+
+.bills-inline-tag-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.28rem;
+}
+
+.bills-scope-row td {
+  padding-top: 0.36rem;
+  padding-bottom: 0.36rem;
+  border-top-color: color-mix(in oklab, var(--tone-finance) 28%, var(--stroke));
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--tone-finance) 12%, transparent),
+      color-mix(in oklab, var(--tone-savings) 10%, transparent)
+    );
+}
+
+.bills-scope-row-content {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.bills-scope-row-content strong {
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.bills-scope-row-content small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
 .bills-bulk-actions {
   margin-top: 0.72rem;
   border-radius: 1rem;
@@ -4465,6 +4508,15 @@ tbody td {
   }
 
   .bills-bulk-result-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .bills-inline-tag-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bills-scope-row-content {
     flex-direction: column;
     align-items: flex-start;
   }
