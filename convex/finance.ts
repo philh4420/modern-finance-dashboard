@@ -1513,7 +1513,7 @@ const buildUpcomingCashEvents = (
   loans: LoanDoc[],
   now: Date,
 ) => {
-  const horizonDays = 14
+  const horizonDays = 30
   const events: Array<{
     id: string
     label: string
@@ -2099,6 +2099,7 @@ export const getFinanceData = query({
           subscriptionPriceChanges: [],
           cards: [],
           loans: [],
+          loanEvents: [],
           purchases: [],
           accounts: [],
           goals: [],
@@ -2125,6 +2126,7 @@ export const getFinanceData = query({
       subscriptionPriceChanges,
       cards,
       loans,
+      loanEvents,
       purchases,
       accounts,
       goals,
@@ -2175,6 +2177,11 @@ export const getFinanceData = query({
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .collect(),
+      ctx.db
+        .query('loanEvents')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(720),
       ctx.db
         .query('purchases')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -2330,6 +2337,7 @@ export const getFinanceData = query({
       ...subscriptionPriceChanges.map((entry) => entry.createdAt),
       ...cards.map((entry) => entry.createdAt),
       ...loans.map((entry) => entry.createdAt),
+      ...loanEvents.map((entry) => entry.createdAt),
       ...purchases.map((entry) => entry.createdAt),
       ...accounts.map((entry) => entry.createdAt),
       ...goals.map((entry) => entry.createdAt),
@@ -2355,6 +2363,7 @@ export const getFinanceData = query({
         subscriptionPriceChanges,
         cards,
         loans,
+        loanEvents,
         purchases,
         accounts,
         goals,

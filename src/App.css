@@ -2063,6 +2063,19 @@ h2 {
   gap: 0.65rem;
 }
 
+.dashboard-timeline-window-toggle {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dashboard-timeline-window-btn--active {
+  border-color: color-mix(in oklab, var(--tone-finance) 60%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 14%, var(--surface-card));
+  color: color-mix(in oklab, var(--tone-finance) 62%, black 38%);
+}
+
 .cycle-log-row {
   display: flex;
   justify-content: space-between;
@@ -4474,6 +4487,198 @@ tbody td {
   line-height: 1.3;
 }
 
+.loan-intelligence-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.56rem;
+}
+
+.loan-intelligence-card {
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(120% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  padding: 0.72rem 0.78rem;
+  display: grid;
+  gap: 0.24rem;
+  min-height: 6.8rem;
+}
+
+.loan-intelligence-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.loan-intelligence-card strong {
+  font-size: 1.06rem;
+  letter-spacing: -0.012em;
+}
+
+.loan-intelligence-card small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.34;
+}
+
+.loan-strategy-panel,
+.loan-whatif-panel,
+.loan-refinance-panel,
+.loan-trends-panel {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(140% 140% at 100% -25%, color-mix(in oklab, var(--tone-savings) 9%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.76rem 0.82rem;
+  display: grid;
+  gap: 0.58rem;
+}
+
+.loan-strategy-head,
+.loan-whatif-head,
+.loan-refinance-head,
+.loan-trends-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.78rem;
+}
+
+.loan-strategy-head h3,
+.loan-whatif-head h3,
+.loan-refinance-head h3,
+.loan-trends-head h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  letter-spacing: -0.012em;
+}
+
+.loan-strategy-head p,
+.loan-whatif-head p,
+.loan-refinance-head p,
+.loan-trends-head p {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.loan-strategy-budget {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 11rem;
+}
+
+.loan-strategy-budget span {
+  color: var(--text-muted);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.loan-strategy-grid,
+.loan-whatif-compare,
+.loan-refinance-summary {
+  display: grid;
+  gap: 0.56rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.loan-strategy-grid article,
+.loan-whatif-compare article,
+.loan-refinance-summary article {
+  border-radius: 0.82rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.62rem 0.68rem;
+  display: grid;
+  gap: 0.2rem;
+  min-height: 6.5rem;
+}
+
+.loan-strategy-grid p,
+.loan-whatif-compare p,
+.loan-refinance-summary p,
+.loan-trends-grid p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.loan-strategy-grid strong,
+.loan-whatif-compare strong,
+.loan-refinance-summary strong {
+  font-size: 1rem;
+  letter-spacing: -0.012em;
+}
+
+.loan-strategy-grid small,
+.loan-whatif-compare small,
+.loan-refinance-summary small,
+.loan-trends-grid small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+.loan-whatif-grid,
+.loan-refinance-grid {
+  display: grid;
+  gap: 0.48rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.loan-whatif-grid label,
+.loan-refinance-grid label {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.loan-whatif-grid label span,
+.loan-refinance-grid label span {
+  color: var(--text-muted);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.loan-trends-grid {
+  display: grid;
+  gap: 0.56rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.loan-trends-grid article {
+  border-radius: 0.82rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.62rem 0.68rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.loan-trends-grid svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.loan-trends-grid polyline {
+  fill: none;
+  stroke: color-mix(in oklab, var(--tone-finance) 66%, var(--tone-savings));
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .loan-rows {
   display: grid;
   gap: 0.74rem;
@@ -4739,6 +4944,35 @@ tbody td {
     text-align: left;
     max-width: none;
     margin: 0;
+  }
+
+  .loan-intelligence-grid,
+  .loan-strategy-grid,
+  .loan-whatif-compare,
+  .loan-refinance-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .loan-whatif-grid,
+  .loan-refinance-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .loan-trends-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .loan-strategy-head,
+  .loan-whatif-head,
+  .loan-refinance-head,
+  .loan-trends-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .loan-strategy-budget {
+    min-width: 0;
+    width: 100%;
   }
 
   .income-tab-shell .table-wrap--card {
@@ -5080,6 +5314,15 @@ tbody td {
   .loan-summary-strip,
   .loan-row-metrics,
   .loan-row-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .loan-intelligence-grid,
+  .loan-strategy-grid,
+  .loan-whatif-grid,
+  .loan-whatif-compare,
+  .loan-refinance-grid,
+  .loan-refinance-summary {
     grid-template-columns: 1fr;
   }
 }

@@ -6,39 +6,27 @@ import type {
   CustomCadenceUnitOption,
   LoanEditDraft,
   LoanEntry,
+  LoanEventEntry,
   LoanForm,
   LoanId,
   LoanMinimumPaymentType,
 } from './financeTypes'
+import {
+  analyzeLoanRefinance,
+  buildLoanPortfolioProjection,
+  buildLoanStrategy,
+  runLoanWhatIf,
+  type LoanProjectionModel,
+  type LoanRefinanceOffer,
+} from '../lib/loanIntelligence'
 
 type LoanSortKey = 'name_asc' | 'balance_desc' | 'apr_desc' | 'due_asc' | 'interest_desc'
 type LoanQuickActionType = 'charge' | 'payment' | 'interest' | 'subscription'
 
-type LoanProjection = {
-  id: LoanId
-  balance: number
-  principalBalance: number
-  accruedInterest: number
-  subscriptionCost: number
-  subscriptionPaymentsRemaining: number
-  subscriptionOutstanding: number
-  totalOutstanding: number
-  apr: number
-  projectedInterest: number
-  minimumDue: number
-  subscriptionDueNow: number
-  dueThisCycle: number
-  plannedPayment: number
-  plannedTotalPayment: number
-  projectedAfterPayment: number
-  projectedTotalAfterPayment: number
-  dueInDays: number
-  cadenceLabel: string
-  paymentBelowInterest: boolean
-}
-
 type LoansTabProps = {
   loans: LoanEntry[]
+  loanEvents: LoanEventEntry[]
+  projectedMonthlyNet: number
   monthlyLoanPayments: number
   monthlyLoanBasePayments: number
   monthlyLoanSubscriptionCosts: number
@@ -64,30 +52,7 @@ type LoansTabProps = {
   formatMoney: (value: number) => string
 }
 
-const clampPercent = (value: number) => Math.min(Math.max(value, 0), 100)
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
-const toNumber = (value: number | undefined | null) =>
-  typeof value === 'number' && Number.isFinite(value) ? value : 0
-const normalizePositiveInteger = (value: number | undefined | null) =>
-  typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
-
-const resolveLoanSubscriptionOutstanding = (entry: LoanEntry) => {
-  const subscriptionCost = roundCurrency(Math.max(toNumber(entry.subscriptionCost), 0))
-  if (subscriptionCost <= 0) {
-    return 0
-  }
-
-  const subscriptionPaymentCount = normalizePositiveInteger(entry.subscriptionPaymentCount)
-  if (entry.subscriptionOutstanding !== undefined) {
-    const current = roundCurrency(Math.max(toNumber(entry.subscriptionOutstanding), 0))
-    if (subscriptionPaymentCount === undefined && current <= subscriptionCost + 0.000001) {
-      return roundCurrency(subscriptionCost * 12)
-    }
-    return current
-  }
-
-  return roundCurrency(subscriptionCost * (subscriptionPaymentCount ?? 12))
-}
 
 const computeDueInDays = (dueDay: number) => {
   const now = new Date()
@@ -104,75 +69,36 @@ const computeDueInDays = (dueDay: number) => {
   return Math.round((dueNextMonth.getTime() - today.getTime()) / 86400000)
 }
 
-const normalizeLoanMinimumPaymentType = (
-  value: LoanMinimumPaymentType | undefined | null,
-): LoanMinimumPaymentType => (value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed')
+const buildSparklinePoints = (values: number[], width = 220, height = 58, pad = 6) => {
+  if (values.length === 0) return ''
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min || 1
+  const stepX = values.length > 1 ? (width - pad * 2) / (values.length - 1) : 0
 
-const projectionForLoan = (
-  entry: LoanEntry,
-  cadenceLabel: (cadence: Cadence, customInterval?: number, customUnit?: CustomCadenceUnit) => string,
-): LoanProjection => {
-  const hasExplicitComponents = entry.principalBalance !== undefined || entry.accruedInterest !== undefined
-  const principalBalance = Math.max(
-    hasExplicitComponents ? toNumber(entry.principalBalance) : toNumber(entry.balance),
-    0,
-  )
-  const accruedInterest = Math.max(hasExplicitComponents ? toNumber(entry.accruedInterest) : 0, 0)
-  const balance = roundCurrency(Math.max(hasExplicitComponents ? principalBalance + accruedInterest : toNumber(entry.balance), 0))
-  const apr = Math.max(toNumber(entry.interestRate), 0)
-  const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
-  const projectedInterest = roundCurrency(balance * monthlyRate)
-  const paymentType = normalizeLoanMinimumPaymentType(entry.minimumPaymentType)
-  const minimumPaymentPercent = clampPercent(toNumber(entry.minimumPaymentPercent))
-  const minimumDueRaw =
-    paymentType === 'percent_plus_interest'
-      ? principalBalance * (minimumPaymentPercent / 100) + accruedInterest + projectedInterest
-      : toNumber(entry.minimumPayment)
-  const dueBalance = balance + projectedInterest
-  const minimumDue = roundCurrency(Math.min(dueBalance, Math.max(minimumDueRaw, 0)))
-  const plannedPayment = roundCurrency(Math.min(dueBalance, minimumDue + Math.max(toNumber(entry.extraPayment), 0)))
-  const subscriptionCost = roundCurrency(Math.max(toNumber(entry.subscriptionCost), 0))
-  const subscriptionOutstanding = resolveLoanSubscriptionOutstanding(entry)
-  const subscriptionPaymentsRemaining =
-    subscriptionCost > 0 && subscriptionOutstanding > 0
-      ? Math.max(1, Math.ceil(subscriptionOutstanding / subscriptionCost - 0.000001))
-      : 0
-  const subscriptionDueNow = roundCurrency(
-    Math.min(subscriptionOutstanding, subscriptionCost > 0 ? subscriptionCost : subscriptionOutstanding),
-  )
-  const dueThisCycle = roundCurrency(minimumDue + subscriptionDueNow)
-  const plannedTotalPayment = roundCurrency(plannedPayment + subscriptionDueNow)
-  const projectedTotalAfterPayment = roundCurrency(
-    Math.max(dueBalance - plannedPayment, 0) + Math.max(subscriptionOutstanding - subscriptionDueNow, 0),
-  )
-  const totalOutstanding = roundCurrency(balance + subscriptionOutstanding)
+  return values
+    .map((value, index) => {
+      const x = pad + index * stepX
+      const y = height - pad - ((value - min) / range) * (height - pad * 2)
+      return `${x},${y}`
+    })
+    .join(' ')
+}
 
-  return {
-    id: entry._id,
-    balance,
-    principalBalance: roundCurrency(principalBalance),
-    accruedInterest: roundCurrency(accruedInterest),
-    subscriptionCost,
-    subscriptionPaymentsRemaining,
-    subscriptionOutstanding,
-    totalOutstanding,
-    apr,
-    projectedInterest,
-    minimumDue,
-    subscriptionDueNow,
-    dueThisCycle,
-    plannedPayment,
-    plannedTotalPayment,
-    projectedAfterPayment: roundCurrency(Math.max(dueBalance - plannedPayment, 0)),
-    projectedTotalAfterPayment,
-    dueInDays: computeDueInDays(entry.dueDay),
-    cadenceLabel: cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit),
-    paymentBelowInterest: plannedPayment + 0.000001 < projectedInterest,
+const formatMonthKeyLabel = (value: string, locale = 'en-GB') => {
+  const [year, month] = value.split('-').map(Number)
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return value
   }
+  return new Intl.DateTimeFormat(locale, { month: 'short', year: '2-digit' }).format(
+    new Date(Date.UTC(year, month - 1, 1)),
+  )
 }
 
 export function LoansTab({
   loans,
+  loanEvents,
+  projectedMonthlyNet,
   monthlyLoanPayments,
   monthlyLoanBasePayments,
   monthlyLoanSubscriptionCosts,
@@ -203,14 +129,45 @@ export function LoansTab({
   const [quickAmount, setQuickAmount] = useState('')
   const [quickNotes, setQuickNotes] = useState('')
   const [quickError, setQuickError] = useState<string | null>(null)
+  const [strategyOverpayBudget, setStrategyOverpayBudget] = useState(() =>
+    String(Math.max(roundCurrency(projectedMonthlyNet > 0 ? projectedMonthlyNet : 0), 0)),
+  )
+  const [whatIfLoanId, setWhatIfLoanId] = useState<string | 'all'>('all')
+  const [whatIfExtraPaymentDelta, setWhatIfExtraPaymentDelta] = useState('0')
+  const [whatIfAprDelta, setWhatIfAprDelta] = useState('0')
+  const [whatIfSubscriptionDelta, setWhatIfSubscriptionDelta] = useState('0')
+  const [whatIfDueDayShift, setWhatIfDueDayShift] = useState('0')
+  const [refinanceLoanId, setRefinanceLoanId] = useState('')
+  const [refinanceApr, setRefinanceApr] = useState('8.9')
+  const [refinanceFees, setRefinanceFees] = useState('0')
+  const [refinanceTermMonths, setRefinanceTermMonths] = useState('24')
+  const [trendLoanId, setTrendLoanId] = useState('')
+
+  const parseNumber = (value: string) => {
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  const baselinePortfolio = useMemo(
+    () => buildLoanPortfolioProjection(loans, { maxMonths: 36, loanEvents }),
+    [loanEvents, loans],
+  )
+
+  const modelByLoanId = useMemo(
+    () => new Map(baselinePortfolio.models.map((model) => [model.loanId, model])),
+    [baselinePortfolio.models],
+  )
 
   const projectionsById = useMemo(() => {
-    const map = new Map<LoanId, LoanProjection>()
+    const map = new Map<LoanId, LoanProjectionModel>()
     loans.forEach((entry) => {
-      map.set(entry._id, projectionForLoan(entry, cadenceLabel))
+      const model = modelByLoanId.get(String(entry._id))
+      if (model) {
+        map.set(entry._id, model)
+      }
     })
     return map
-  }, [cadenceLabel, loans])
+  }, [loans, modelByLoanId])
 
   const visibleLoans = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -226,13 +183,15 @@ export function LoansTab({
         case 'name_asc':
           return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
         case 'balance_desc':
-          return (rightProjection?.totalOutstanding ?? 0) - (leftProjection?.totalOutstanding ?? 0)
+          return (rightProjection?.currentOutstanding ?? 0) - (leftProjection?.currentOutstanding ?? 0)
         case 'apr_desc':
           return (rightProjection?.apr ?? 0) - (leftProjection?.apr ?? 0)
         case 'due_asc':
-          return (leftProjection?.dueInDays ?? 999) - (rightProjection?.dueInDays ?? 999)
+          return (
+            computeDueInDays(leftProjection?.dueDay ?? left.dueDay) - computeDueInDays(rightProjection?.dueDay ?? right.dueDay)
+          )
         case 'interest_desc':
-          return (rightProjection?.projectedInterest ?? 0) - (leftProjection?.projectedInterest ?? 0)
+          return (rightProjection?.projectedNextMonthInterest ?? 0) - (leftProjection?.projectedNextMonthInterest ?? 0)
         default:
           return 0
       }
@@ -241,26 +200,110 @@ export function LoansTab({
     return sorted
   }, [loans, projectionsById, search, sortKey])
 
-  const totalProjectedInterest = useMemo(
-    () =>
-      roundCurrency(
-        loans.reduce((sum, entry) => {
-          const projection = projectionsById.get(entry._id)
-          return sum + (projection?.projectedInterest ?? 0)
-        }, 0),
-      ),
-    [loans, projectionsById],
-  )
+  const totalProjectedInterest = baselinePortfolio.projectedNextMonthInterest
 
   const dueSoonCount = useMemo(
-    () => loans.filter((entry) => (projectionsById.get(entry._id)?.dueInDays ?? 999) <= 7).length,
+    () =>
+      loans.filter((entry) => {
+        const projection = projectionsById.get(entry._id)
+        return computeDueInDays(projection?.dueDay ?? entry.dueDay) <= 7
+      }).length,
     [loans, projectionsById],
   )
 
   const belowInterestCount = useMemo(
-    () => loans.filter((entry) => projectionsById.get(entry._id)?.paymentBelowInterest).length,
+    () =>
+      loans.filter((entry) => {
+        const projection = projectionsById.get(entry._id)
+        const firstRow = projection?.rows[0]
+        if (!firstRow) return false
+        return firstRow.plannedLoanPayment + 0.000001 < firstRow.interestAccrued
+      }).length,
     [loans, projectionsById],
   )
+
+  const parsedOverpayBudget = useMemo(() => {
+    const parsed = Number.parseFloat(strategyOverpayBudget)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 0
+    }
+    return parsed
+  }, [strategyOverpayBudget])
+
+  const loanStrategy = useMemo(
+    () => buildLoanStrategy(loans, loanEvents, parsedOverpayBudget),
+    [loanEvents, loans, parsedOverpayBudget],
+  )
+
+  const activeWhatIfLoanId = useMemo(() => {
+    if (whatIfLoanId === 'all') return 'all'
+    return modelByLoanId.has(whatIfLoanId) ? whatIfLoanId : 'all'
+  }, [modelByLoanId, whatIfLoanId])
+
+  const whatIfResult = useMemo(
+    () =>
+      runLoanWhatIf(loans, loanEvents, {
+        loanId: activeWhatIfLoanId,
+        extraPaymentDelta: parseNumber(whatIfExtraPaymentDelta),
+        aprDelta: parseNumber(whatIfAprDelta),
+        subscriptionDelta: parseNumber(whatIfSubscriptionDelta),
+        dueDayShift: Math.trunc(parseNumber(whatIfDueDayShift)),
+      }),
+    [
+      activeWhatIfLoanId,
+      loanEvents,
+      loans,
+      whatIfAprDelta,
+      whatIfDueDayShift,
+      whatIfExtraPaymentDelta,
+      whatIfSubscriptionDelta,
+    ],
+  )
+
+  const activeTrendLoanId = useMemo(() => {
+    if (trendLoanId && modelByLoanId.has(trendLoanId)) {
+      return trendLoanId
+    }
+    return baselinePortfolio.models[0]?.loanId ?? ''
+  }, [baselinePortfolio.models, modelByLoanId, trendLoanId])
+
+  const trendModel = useMemo(
+    () => (activeTrendLoanId ? modelByLoanId.get(activeTrendLoanId) ?? null : null),
+    [activeTrendLoanId, modelByLoanId],
+  )
+
+  const activeRefinanceLoanId = useMemo(() => {
+    if (refinanceLoanId && modelByLoanId.has(refinanceLoanId)) {
+      return refinanceLoanId
+    }
+    return baselinePortfolio.models[0]?.loanId ?? ''
+  }, [baselinePortfolio.models, modelByLoanId, refinanceLoanId])
+
+  const refinanceModel = useMemo(
+    () => (activeRefinanceLoanId ? modelByLoanId.get(activeRefinanceLoanId) ?? null : null),
+    [activeRefinanceLoanId, modelByLoanId],
+  )
+
+  const refinanceOffer = useMemo<LoanRefinanceOffer>(
+    () => ({
+      apr: Math.max(parseNumber(refinanceApr), 0),
+      fees: Math.max(parseNumber(refinanceFees), 0),
+      termMonths: Math.max(Math.trunc(parseNumber(refinanceTermMonths)), 1),
+    }),
+    [refinanceApr, refinanceFees, refinanceTermMonths],
+  )
+
+  const refinanceResult = useMemo(
+    () => (refinanceModel ? analyzeLoanRefinance(refinanceModel, refinanceOffer) : null),
+    [refinanceModel, refinanceOffer],
+  )
+
+  const trendRows = trendModel?.rows.slice(0, 12) ?? []
+  const trendInterestValues = trendRows.map((row) => row.interestAccrued)
+  const trendBalanceValues = trendRows.map((row) => row.endingOutstanding)
+  const trendPaymentValues = trendRows.map((row) => row.totalPayment)
+  const trendSubscriptionValues = trendRows.map((row) => row.subscriptionDue)
+  const trendConsistencyValues = (trendModel?.paymentConsistencyTrend ?? []).slice(-12).map((point) => point.ratio * 100)
 
   const parseQuickAmount = () => {
     const parsed = Number.parseFloat(quickAmount)
@@ -665,6 +708,318 @@ export function LoansTab({
               </article>
             </div>
 
+            <div className="loan-intelligence-grid">
+              <article className="loan-intelligence-card">
+                <p>12m projection</p>
+                <strong>{formatMoney(baselinePortfolio.projectedAnnualInterest)}</strong>
+                <small>
+                  interest · {formatMoney(baselinePortfolio.projectedAnnualPayments)} projected payments over next year
+                </small>
+              </article>
+              <article className="loan-intelligence-card">
+                <p>24m projection</p>
+                <strong>{formatMoney(baselinePortfolio.projected24MonthInterest)}</strong>
+                <small>interest with current payment plan</small>
+              </article>
+              <article className="loan-intelligence-card">
+                <p>36m projection</p>
+                <strong>{formatMoney(baselinePortfolio.projected36MonthInterest)}</strong>
+                <small>interest · consistency score {baselinePortfolio.averagePaymentConsistencyScore.toFixed(1)}/100</small>
+              </article>
+            </div>
+
+            <section className="loan-strategy-panel" aria-label="Loan debt strategy">
+              <header className="loan-strategy-head">
+                <div>
+                  <h3>Debt strategy module</h3>
+                  <p>
+                    Avalanche and Snowball targets are recalculated from your latest balances. Recommendation defaults to the
+                    stronger annual interest saver.
+                  </p>
+                </div>
+                <label className="loan-strategy-budget">
+                  <span>Monthly overpay budget</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    value={strategyOverpayBudget}
+                    onChange={(event) => setStrategyOverpayBudget(event.target.value)}
+                  />
+                </label>
+              </header>
+              <div className="loan-strategy-grid">
+                <article>
+                  <p>Avalanche target</p>
+                  <strong>{loanStrategy.avalancheTarget?.name ?? 'n/a'}</strong>
+                  <small>
+                    {loanStrategy.avalancheTarget
+                      ? `${formatMoney(loanStrategy.avalancheTarget.balance)} · ${loanStrategy.avalancheTarget.apr.toFixed(2)}% APR · ${formatMoney(loanStrategy.avalancheTarget.annualInterestSavings)} annual savings`
+                      : 'No active balances'}
+                  </small>
+                </article>
+                <article>
+                  <p>Snowball target</p>
+                  <strong>{loanStrategy.snowballTarget?.name ?? 'n/a'}</strong>
+                  <small>
+                    {loanStrategy.snowballTarget
+                      ? `${formatMoney(loanStrategy.snowballTarget.balance)} · ${loanStrategy.snowballTarget.apr.toFixed(2)}% APR · ${formatMoney(loanStrategy.snowballTarget.annualInterestSavings)} annual savings`
+                      : 'No active balances'}
+                  </small>
+                </article>
+                <article>
+                  <p>Recommended</p>
+                  <strong>
+                    {loanStrategy.recommendedTarget
+                      ? `${loanStrategy.recommendedMode === 'avalanche' ? 'Avalanche' : 'Snowball'}: ${loanStrategy.recommendedTarget.name}`
+                      : 'n/a'}
+                  </strong>
+                  <small>
+                    {loanStrategy.recommendedTarget
+                      ? `${formatMoney(loanStrategy.recommendedTarget.annualInterestSavings)} annual interest saved vs baseline`
+                      : 'Add loan balances to calculate recommendations'}
+                  </small>
+                </article>
+              </div>
+            </section>
+
+            <section className="loan-whatif-panel" aria-label="Loan what-if simulator">
+              <header className="loan-whatif-head">
+                <div>
+                  <h3>What-if simulator</h3>
+                  <p>Compare baseline vs scenario with changes to extra payment, APR, subscription, and due day.</p>
+                </div>
+              </header>
+              <div className="loan-whatif-grid">
+                <label>
+                  <span>Scope</span>
+                  <select value={activeWhatIfLoanId} onChange={(event) => setWhatIfLoanId(event.target.value)}>
+                    <option value="all">All loans</option>
+                    {baselinePortfolio.models.map((model) => (
+                      <option key={model.loanId} value={model.loanId}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Extra payment delta / month</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={whatIfExtraPaymentDelta}
+                    onChange={(event) => setWhatIfExtraPaymentDelta(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>APR delta (points)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={whatIfAprDelta}
+                    onChange={(event) => setWhatIfAprDelta(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Subscription delta / month</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={whatIfSubscriptionDelta}
+                    onChange={(event) => setWhatIfSubscriptionDelta(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Due day shift (days)</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    step="1"
+                    value={whatIfDueDayShift}
+                    onChange={(event) => setWhatIfDueDayShift(event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="loan-whatif-compare">
+                <article>
+                  <p>Baseline annual interest</p>
+                  <strong>{formatMoney(whatIfResult.baseline.projectedAnnualInterest)}</strong>
+                  <small>{formatMoney(whatIfResult.baseline.totalOutstanding)} total outstanding now</small>
+                </article>
+                <article>
+                  <p>Scenario annual interest</p>
+                  <strong>{formatMoney(whatIfResult.scenario.projectedAnnualInterest)}</strong>
+                  <small>{formatMoney(whatIfResult.scenario.totalOutstanding)} total outstanding now</small>
+                </article>
+                <article>
+                  <p>Delta</p>
+                  <strong className={whatIfResult.delta.annualInterest <= 0 ? 'amount-positive' : 'amount-negative'}>
+                    {whatIfResult.delta.annualInterest > 0 ? '+' : ''}
+                    {formatMoney(whatIfResult.delta.annualInterest)}
+                  </strong>
+                  <small>
+                    next-month interest {whatIfResult.delta.nextMonthInterest > 0 ? '+' : ''}
+                    {formatMoney(whatIfResult.delta.nextMonthInterest)} · annual payment {whatIfResult.delta.annualPayments > 0 ? '+' : ''}
+                    {formatMoney(whatIfResult.delta.annualPayments)}
+                  </small>
+                </article>
+              </div>
+            </section>
+
+            <section className="loan-refinance-panel" aria-label="Loan refinance analyzer">
+              <header className="loan-refinance-head">
+                <div>
+                  <h3>Refinance analyzer</h3>
+                  <p>Compare offer APR, fees, and term against current path. Includes break-even month and cost delta.</p>
+                </div>
+              </header>
+              <div className="loan-refinance-grid">
+                <label>
+                  <span>Loan</span>
+                  <select value={activeRefinanceLoanId} onChange={(event) => setRefinanceLoanId(event.target.value)}>
+                    {baselinePortfolio.models.map((model) => (
+                      <option key={model.loanId} value={model.loanId}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Offer APR %</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    value={refinanceApr}
+                    onChange={(event) => setRefinanceApr(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Fees</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    value={refinanceFees}
+                    onChange={(event) => setRefinanceFees(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Term (months)</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    value={refinanceTermMonths}
+                    onChange={(event) => setRefinanceTermMonths(event.target.value)}
+                  />
+                </label>
+              </div>
+              {refinanceResult ? (
+                <div className="loan-refinance-summary">
+                  <article>
+                    <p>Refinance payment</p>
+                    <strong>{formatMoney(refinanceResult.monthlyPayment)}</strong>
+                    <small>{formatMoney(refinanceResult.totalRefinanceInterest)} interest across term</small>
+                  </article>
+                  <article>
+                    <p>Break-even</p>
+                    <strong>{refinanceResult.breakEvenMonth ? `Month ${refinanceResult.breakEvenMonth}` : 'No break-even'}</strong>
+                    <small>{formatMoney(refinanceResult.remainingCurrentOutstandingAtTerm)} current balance left at term</small>
+                  </article>
+                  <article>
+                    <p>Total cost delta</p>
+                    <strong className={refinanceResult.totalCostDelta <= 0 ? 'amount-positive' : 'amount-negative'}>
+                      {refinanceResult.totalCostDelta > 0 ? '+' : ''}
+                      {formatMoney(refinanceResult.totalCostDelta)}
+                    </strong>
+                    <small>
+                      current {formatMoney(refinanceResult.totalCurrentCost)} vs refinance {formatMoney(refinanceResult.totalRefinanceCost)}
+                    </small>
+                  </article>
+                </div>
+              ) : (
+                <p className="empty-state">Add a loan balance to run refinance analysis.</p>
+              )}
+            </section>
+
+            {trendModel ? (
+              <section className="loan-trends-panel" aria-label="Loan trend visuals">
+                <header className="loan-trends-head">
+                  <div>
+                    <h3>Trend visuals</h3>
+                    <p>Interest trend, balance path, payment consistency, and subscription trend (12 months).</p>
+                  </div>
+                  <label>
+                    <span className="sr-only">Trend loan</span>
+                    <select value={activeTrendLoanId} onChange={(event) => setTrendLoanId(event.target.value)}>
+                      {baselinePortfolio.models.map((model) => (
+                        <option key={model.loanId} value={model.loanId}>
+                          {model.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </header>
+                <div className="loan-trends-grid">
+                  <article>
+                    <p>Interest trend</p>
+                    <svg viewBox="0 0 220 58" role="img" aria-label="Interest trend">
+                      <polyline points={buildSparklinePoints(trendInterestValues)} />
+                    </svg>
+                    <small>
+                      Next month {formatMoney(trendModel.projectedNextMonthInterest)} · 12m{' '}
+                      {formatMoney(trendModel.projectedAnnualInterest)}
+                    </small>
+                  </article>
+                  <article>
+                    <p>Balance path</p>
+                    <svg viewBox="0 0 220 58" role="img" aria-label="Balance path">
+                      <polyline points={buildSparklinePoints(trendBalanceValues)} />
+                    </svg>
+                    <small>
+                      Current {formatMoney(trendModel.currentOutstanding)} · payoff{' '}
+                      {trendModel.projectedPayoffDate ?? 'beyond model window'}
+                    </small>
+                  </article>
+                  <article>
+                    <p>Payment consistency</p>
+                    <svg viewBox="0 0 220 58" role="img" aria-label="Payment consistency trend">
+                      <polyline points={buildSparklinePoints(trendConsistencyValues)} />
+                    </svg>
+                    <small>
+                      Score {trendModel.paymentConsistencyScore.toFixed(1)}/100 · latest{' '}
+                      {trendModel.paymentConsistencyTrend.length > 0
+                        ? formatMonthKeyLabel(trendModel.paymentConsistencyTrend[trendModel.paymentConsistencyTrend.length - 1]!.monthKey)
+                        : 'n/a'}
+                    </small>
+                  </article>
+                  <article>
+                    <p>Subscription trend</p>
+                    <svg viewBox="0 0 220 58" role="img" aria-label="Subscription trend">
+                      <polyline points={buildSparklinePoints(trendSubscriptionValues)} />
+                    </svg>
+                    <small>
+                      {trendModel.subscriptionPaymentsRemaining} payment
+                      {trendModel.subscriptionPaymentsRemaining === 1 ? '' : 's'} left · {formatMoney(trendModel.subscriptionCost)}
+                      /month
+                    </small>
+                  </article>
+                </div>
+                <p className="subnote">
+                  Payment path trend:{' '}
+                  {trendPaymentValues.slice(0, 6).map((value, index) => `M${index + 1} ${formatMoney(value)}`).join(' · ')}
+                </p>
+              </section>
+            ) : null}
+
             <p className="subnote">
               Showing {visibleLoans.length} of {loans.length} loan{loans.length === 1 ? '' : 's'}.
             </p>
@@ -679,20 +1034,26 @@ export function LoansTab({
 
                   const isEditing = loanEditId === entry._id
                   const isQuickOpen = quickAction?.loanId === entry._id
+                  const firstRow = projection.rows[0]
+                  const dueInDays = computeDueInDays(projection.dueDay)
+                  const paymentBelowInterest =
+                    firstRow ? firstRow.plannedLoanPayment + 0.000001 < firstRow.interestAccrued : false
+                  const dueThisCycle = firstRow ? firstRow.totalPayment : 0
+                  const projectedAfterPayment = firstRow ? firstRow.endingOutstanding : projection.currentOutstanding
 
                   return (
                     <article key={entry._id} className="loan-row-card">
                       <header className="loan-row-head">
                         <div>
                           <h3>{entry.name}</h3>
-                          <p>{projection.cadenceLabel}</p>
+                          <p>{cadenceLabel(projection.cadence, projection.customInterval, projection.customUnit)}</p>
                         </div>
                         <div className="loan-row-pills">
-                          <span className="pill pill--neutral">Day {entry.dueDay}</span>
+                          <span className="pill pill--neutral">Day {projection.dueDay}</span>
                           {projection.apr > 0 ? <span className="pill pill--warning">APR {projection.apr.toFixed(2)}%</span> : null}
-                          {projection.paymentBelowInterest ? <span className="pill pill--critical">Payment below interest</span> : null}
+                          {paymentBelowInterest ? <span className="pill pill--critical">Payment below interest</span> : null}
                           <span className="pill pill--cadence">
-                            Due in {projection.dueInDays} day{projection.dueInDays === 1 ? '' : 's'}
+                            Due in {dueInDays} day{dueInDays === 1 ? '' : 's'}
                           </span>
                         </div>
                       </header>
@@ -906,25 +1267,24 @@ export function LoansTab({
                         <div className="loan-row-metrics">
                           <div>
                             <p>Total outstanding</p>
-                            <strong>{formatMoney(projection.totalOutstanding)}</strong>
+                            <strong>{formatMoney(projection.currentOutstanding)}</strong>
                             <small>
-                              {formatMoney(projection.principalBalance)} principal · {formatMoney(projection.accruedInterest)} interest
+                              {formatMoney(projection.currentPrincipal)} principal · {formatMoney(projection.currentInterest)} interest
                               {' · '}
-                              {formatMoney(projection.subscriptionOutstanding)} subscription remaining
+                              {formatMoney(projection.currentSubscriptionOutstanding)} subscription remaining
                             </small>
                           </div>
                           <div>
                             <p>Due this cycle</p>
-                            <strong>{formatMoney(projection.dueThisCycle)}</strong>
+                            <strong>{formatMoney(dueThisCycle)}</strong>
                             <small>
-                              {formatMoney(projection.plannedTotalPayment)} planned ({formatMoney(toNumber(entry.extraPayment))}{' '}
-                              extra)
+                              {formatMoney(firstRow?.plannedLoanPayment ?? 0)} loan + {formatMoney(firstRow?.subscriptionDue ?? 0)} subscription
                             </small>
                           </div>
                           <div>
                             <p>Projected next interest</p>
-                            <strong>{formatMoney(projection.projectedInterest)}</strong>
-                            <small>{formatMoney(projection.projectedTotalAfterPayment)} after planned payment</small>
+                            <strong>{formatMoney(projection.projectedNextMonthInterest)}</strong>
+                            <small>{formatMoney(projectedAfterPayment)} after planned payment</small>
                           </div>
                           <div>
                             <p>Subscription / month</p>
@@ -934,7 +1294,7 @@ export function LoansTab({
                                 ? `${projection.subscriptionPaymentsRemaining} payments left`
                                 : 'No schedule'}
                               {' · '}
-                              {formatMoney(projection.subscriptionDueNow)} due now
+                              {formatMoney(firstRow?.subscriptionDue ?? 0)} due now
                             </small>
                           </div>
                         </div>
@@ -1034,11 +1394,11 @@ export function LoansTab({
 
                           {quickAction.type === 'payment' ? (
                             <p className="form-hint">
-                              Outstanding: <strong>{formatMoney(projection.totalOutstanding)}</strong> ({formatMoney(
-                                projection.subscriptionOutstanding,
+                              Outstanding: <strong>{formatMoney(projection.currentOutstanding)}</strong> ({formatMoney(
+                                projection.currentSubscriptionOutstanding,
                               )}{' '}
-                              subscription remaining, {formatMoney(projection.subscriptionDueNow)} due now +{' '}
-                              {formatMoney(projection.balance)} loan balance)
+                              subscription remaining, {formatMoney(firstRow?.subscriptionDue ?? 0)} due now +{' '}
+                              {formatMoney(projection.currentLoanBalance)} loan balance)
                             </p>
                           ) : null}
 

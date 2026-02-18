@@ -276,6 +276,7 @@ export function DashboardTab({
   const [paymentAmount, setPaymentAmount] = useState('')
   const [chargeCardId, setChargeCardId] = useState<CardId | ''>('')
   const [chargeAmount, setChargeAmount] = useState('')
+  const [timelineWindowDays, setTimelineWindowDays] = useState<14 | 30>(14)
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false)
   const [isSubmittingCharge, setIsSubmittingCharge] = useState(false)
 
@@ -923,6 +924,21 @@ export function DashboardTab({
       reconciliation: riskCenterAlerts.filter((alert) => alert.source === 'reconciliation').length,
     }),
     [riskCenterAlerts],
+  )
+
+  const visibleUpcomingTimelineEvents = useMemo(
+    () => upcomingCashEvents.filter((event) => event.daysAway <= timelineWindowDays),
+    [timelineWindowDays, upcomingCashEvents],
+  )
+
+  const timelineProjectedImpact = useMemo(
+    () => roundCurrency(visibleUpcomingTimelineEvents.reduce((sum, event) => sum + event.amount, 0)),
+    [visibleUpcomingTimelineEvents],
+  )
+
+  const timelineProjectedEndCash = useMemo(
+    () => roundCurrency(summary.liquidReserves + timelineProjectedImpact),
+    [summary.liquidReserves, timelineProjectedImpact],
   )
 
   const paymentAmountValue = Number.parseFloat(paymentAmount)
@@ -1608,14 +1624,36 @@ export function DashboardTab({
           <header className="panel-header">
             <div>
               <p className="panel-kicker">Flow</p>
-              <h2>Upcoming Money Timeline (Next 14 Days)</h2>
+              <h2>Upcoming Money Timeline</h2>
+              <p className="subnote">
+                {timelineWindowDays}-day projected impact {formatMoney(timelineProjectedImpact)} · projected liquid{' '}
+                {formatMoney(timelineProjectedEndCash)}
+              </p>
+            </div>
+            <div className="dashboard-timeline-window-toggle" role="group" aria-label="Timeline window">
+              <button
+                type="button"
+                className={`btn btn-ghost btn--sm ${timelineWindowDays === 14 ? 'dashboard-timeline-window-btn--active' : ''}`}
+                onClick={() => setTimelineWindowDays(14)}
+              >
+                14d
+              </button>
+              <button
+                type="button"
+                className={`btn btn-ghost btn--sm ${timelineWindowDays === 30 ? 'dashboard-timeline-window-btn--active' : ''}`}
+                onClick={() => setTimelineWindowDays(30)}
+              >
+                30d
+              </button>
             </div>
           </header>
-          {upcomingCashEvents.length === 0 ? (
-            <p className="empty-state">No scheduled income, bills, card dues, or loan payments in the next 14 days.</p>
+          {visibleUpcomingTimelineEvents.length === 0 ? (
+            <p className="empty-state">
+              No scheduled income, bills, card dues, or loan payments in the next {timelineWindowDays} days.
+            </p>
           ) : (
             <ul className="timeline-list">
-              {upcomingCashEvents.map((event) => (
+              {visibleUpcomingTimelineEvents.map((event) => (
                 <li key={event.id}>
                   <div>
                     <p>{event.label}</p>

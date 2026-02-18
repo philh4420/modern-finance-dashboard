@@ -152,6 +152,7 @@ function App() {
   const subscriptionPriceChanges = financeState?.data.subscriptionPriceChanges ?? []
   const cards = financeState?.data.cards ?? []
   const loans = financeState?.data.loans ?? []
+  const loanEvents = financeState?.data.loanEvents ?? []
   const purchases = financeState?.data.purchases ?? []
   const accounts = financeState?.data.accounts ?? []
   const goals = financeState?.data.goals ?? []
@@ -382,6 +383,7 @@ function App() {
         billPaymentChecks,
         cards,
         loans,
+        loanEvents,
         purchases,
         accounts,
         goals,
@@ -735,6 +737,8 @@ function App() {
 	        {activeTab === 'loans' ? (
 	          <LoansTab
 	            loans={loans}
+	            loanEvents={loanEvents}
+	            projectedMonthlyNet={summary.projectedMonthlyNet}
 	            monthlyLoanPayments={summary.monthlyLoanPayments}
 	            monthlyLoanBasePayments={summary.monthlyLoanBasePayments}
 	            monthlyLoanSubscriptionCosts={summary.monthlyLoanSubscriptionCosts}
