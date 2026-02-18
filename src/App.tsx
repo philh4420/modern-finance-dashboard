@@ -692,6 +692,7 @@ function App() {
             onUpsertBillPaymentCheck={billsSection.onUpsertBillPaymentCheck}
             onDeleteBillPaymentCheck={billsSection.onDeleteBillPaymentCheck}
             onResolveBillDuplicateOverlap={billsSection.onResolveBillDuplicateOverlap}
+            onRunBillsMonthlyBulkAction={billsSection.onRunBillsMonthlyBulkAction}
             saveBillEdit={billsSection.saveBillEdit}
             startBillEdit={billsSection.startBillEdit}
             cadenceOptions={cadenceOptions}

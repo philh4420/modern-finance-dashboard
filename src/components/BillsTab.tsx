@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type {
+  AccountId,
   AccountEntry,
   BillEditDraft,
   BillEntry,
@@ -155,9 +156,26 @@ type ProviderIntelligenceRow = {
 
 type BillOverlapKind = 'duplicate' | 'overlap'
 type BillOverlapResolution = 'merge' | 'archive_duplicate' | 'mark_intentional'
+type BillsMonthlyBulkAction = 'roll_recurring_forward' | 'mark_all_paid_from_account' | 'reconcile_batch'
 type BillOverlapConfirmationState = {
   match: BillOverlapMatch
   resolution: BillOverlapResolution
+}
+
+type BillsMonthlyBulkActionResult = {
+  batchId: string
+  action: BillsMonthlyBulkAction
+  cycleMonth: string
+  targetMonth: string | null
+  eligibleCount: number
+  createdCount: number
+  updatedCount: number
+  skippedCount: number
+  totalPaidApplied: number
+  totalReconciledAmount: number
+  reconciledFromPlannedCount: number
+  fundingAccountId: string | null
+  fundingAccountName: string | null
 }
 
 type BillOverlapMatch = {
@@ -409,6 +427,11 @@ type BillsTabProps = {
     secondaryBillId: BillId
     resolution: BillOverlapResolution
   }) => Promise<void>
+  onRunBillsMonthlyBulkAction: (args: {
+    action: BillsMonthlyBulkAction
+    cycleMonth: string
+    fundingAccountId?: AccountId
+  }) => Promise<BillsMonthlyBulkActionResult>
   cadenceOptions: CadenceOption[]
   customCadenceUnitOptions: CustomCadenceUnitOption[]
   isCustomCadence: (cadence: Cadence) => boolean
@@ -435,6 +458,7 @@ export function BillsTab({
   saveBillEdit,
   startBillEdit,
   onResolveBillDuplicateOverlap,
+  onRunBillsMonthlyBulkAction,
   cadenceOptions,
   customCadenceUnitOptions,
   isCustomCadence,
@@ -447,6 +471,11 @@ export function BillsTab({
   const [paymentLogBillId, setPaymentLogBillId] = useState<BillId | null>(null)
   const [resolvingOverlapId, setResolvingOverlapId] = useState<string | null>(null)
   const [overlapConfirmation, setOverlapConfirmation] = useState<BillOverlapConfirmationState | null>(null)
+  const [bulkCycleMonth, setBulkCycleMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [bulkFundingAccountId, setBulkFundingAccountId] = useState('')
+  const [runningBulkAction, setRunningBulkAction] = useState<BillsMonthlyBulkAction | null>(null)
+  const [bulkActionError, setBulkActionError] = useState<string | null>(null)
+  const [bulkActionResult, setBulkActionResult] = useState<BillsMonthlyBulkActionResult | null>(null)
   const [paymentLogDraft, setPaymentLogDraft] = useState<BillPaymentLogDraft>(() => ({
     cycleMonth: new Date().toISOString().slice(0, 7),
     expectedAmount: '',
@@ -618,6 +647,21 @@ export function BillsTab({
     })
   }, [accounts])
 
+  const billFundingAccounts = useMemo(
+    () => selectableAccounts.filter((account) => account.type !== 'debt'),
+    [selectableAccounts],
+  )
+
+  useEffect(() => {
+    if (bulkFundingAccountId.length === 0) {
+      return
+    }
+    const stillExists = billFundingAccounts.some((account) => String(account._id) === bulkFundingAccountId)
+    if (!stillExists) {
+      setBulkFundingAccountId('')
+    }
+  }, [billFundingAccounts, bulkFundingAccountId])
+
   const openPaymentLog = (entry: BillEntry) => {
     setPaymentLogBillId(entry._id)
     setPaymentLogDraft({
@@ -658,6 +702,37 @@ export function BillsTab({
       setOverlapConfirmation(null)
     } finally {
       setResolvingOverlapId((current) => (current === match.id ? null : current))
+    }
+  }
+
+  const runBillsBulkAction = async (action: BillsMonthlyBulkAction) => {
+    setBulkActionError(null)
+    setBulkActionResult(null)
+
+    if (!monthKeyPattern.test(bulkCycleMonth)) {
+      setBulkActionError('Choose a valid cycle month first.')
+      return
+    }
+
+    if (action === 'mark_all_paid_from_account' && bulkFundingAccountId.length === 0) {
+      setBulkActionError('Select a funding account before marking all bills paid.')
+      return
+    }
+
+    setRunningBulkAction(action)
+    try {
+      const result = await onRunBillsMonthlyBulkAction({
+        action,
+        cycleMonth: bulkCycleMonth,
+        fundingAccountId:
+          action === 'mark_all_paid_from_account' ? (bulkFundingAccountId as AccountId) : undefined,
+      })
+      setBulkActionResult(result)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Bulk monthly action failed.'
+      setBulkActionError(message)
+    } finally {
+      setRunningBulkAction((current) => (current === action ? null : current))
     }
   }
 
@@ -1202,6 +1277,14 @@ export function BillsTab({
     confirmationSecondaryBill,
     overlapConfirmation?.match.secondaryName ?? 'Secondary bill',
   )
+  const bulkActionResultLabel =
+    bulkActionResult?.action === 'roll_recurring_forward'
+      ? 'Rolled recurring bills'
+      : bulkActionResult?.action === 'mark_all_paid_from_account'
+        ? 'Marked bills paid'
+        : bulkActionResult?.action === 'reconcile_batch'
+          ? 'Batch reconciled bills'
+          : null
 
   return (
     <section className="editor-grid bills-tab-shell" aria-label="Bill management">
@@ -1527,6 +1610,121 @@ export function BillsTab({
                     : 'No bill cycle logs yet'}
                 </small>
               </article>
+            </section>
+
+            <section className="bills-bulk-actions" aria-label="Bills monthly bulk actions">
+              <header className="bills-bulk-actions-head">
+                <div>
+                  <h3>Bulk monthly actions</h3>
+                  <p>Roll recurring bills forward, mark a cycle paid from one account, or reconcile in one pass.</p>
+                </div>
+              </header>
+
+              <div className="bills-bulk-actions-toolbar">
+                <label className="bills-bulk-field" htmlFor="bills-bulk-cycle-month">
+                  <span>Cycle month</span>
+                  <input
+                    id="bills-bulk-cycle-month"
+                    type="month"
+                    value={bulkCycleMonth}
+                    onChange={(event) => setBulkCycleMonth(event.target.value)}
+                  />
+                </label>
+                <label className="bills-bulk-field" htmlFor="bills-bulk-funding-account">
+                  <span>Funding account (for mark paid)</span>
+                  <select
+                    id="bills-bulk-funding-account"
+                    value={bulkFundingAccountId}
+                    onChange={(event) => setBulkFundingAccountId(event.target.value)}
+                  >
+                    <option value="">Select account</option>
+                    {billFundingAccounts.map((account) => (
+                      <option key={account._id} value={account._id}>
+                        {account.name} ({account.type})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="bills-bulk-actions-buttons">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn--sm"
+                  disabled={runningBulkAction !== null}
+                  onClick={() => void runBillsBulkAction('roll_recurring_forward')}
+                >
+                  {runningBulkAction === 'roll_recurring_forward' ? 'Rolling…' : 'Roll recurring into next month'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn--sm"
+                  disabled={runningBulkAction !== null}
+                  onClick={() => void runBillsBulkAction('mark_all_paid_from_account')}
+                >
+                  {runningBulkAction === 'mark_all_paid_from_account' ? 'Applying…' : 'Mark all paid from account'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn--sm"
+                  disabled={runningBulkAction !== null}
+                  onClick={() => void runBillsBulkAction('reconcile_batch')}
+                >
+                  {runningBulkAction === 'reconcile_batch' ? 'Reconciling…' : 'Reconcile in batch'}
+                </button>
+              </div>
+
+              <p className="subnote">
+                Roll creates next-month cycle logs for recurring bills only. Mark paid updates actuals and deducts the
+                applied delta from the selected funding account.
+              </p>
+
+              {bulkActionError ? <p className="bills-bulk-feedback bills-bulk-feedback--error">{bulkActionError}</p> : null}
+
+              {bulkActionResult ? (
+                <article className="bills-bulk-result" aria-live="polite">
+                  <div className="bills-bulk-result-head">
+                    <div>
+                      <p className="panel-kicker">Last bulk run</p>
+                      <h4>{bulkActionResultLabel}</h4>
+                    </div>
+                    <span className="pill pill--good">{bulkActionResult.batchId}</span>
+                  </div>
+                  <div className="bills-bulk-result-grid">
+                    <div>
+                      <p>Scope</p>
+                      <strong>{bulkActionResult.eligibleCount}</strong>
+                      <small>eligible bills in {bulkActionResult.cycleMonth}</small>
+                    </div>
+                    <div>
+                      <p>Created / updated</p>
+                      <strong>
+                        {bulkActionResult.createdCount} / {bulkActionResult.updatedCount}
+                      </strong>
+                      <small>{bulkActionResult.skippedCount} skipped</small>
+                    </div>
+                    <div>
+                      <p>Paid applied</p>
+                      <strong>{formatMoney(bulkActionResult.totalPaidApplied)}</strong>
+                      <small>
+                        {bulkActionResult.fundingAccountName
+                          ? `from ${bulkActionResult.fundingAccountName}`
+                          : 'No funding account debit'}
+                      </small>
+                    </div>
+                    <div>
+                      <p>Reconciled</p>
+                      <strong>{formatMoney(bulkActionResult.totalReconciledAmount)}</strong>
+                      <small>{bulkActionResult.reconciledFromPlannedCount} planned-only items filled</small>
+                    </div>
+                    <div>
+                      <p>Target month</p>
+                      <strong>{bulkActionResult.targetMonth ?? 'Current cycle'}</strong>
+                      <small>roll action writes to next month only</small>
+                    </div>
+                  </div>
+                </article>
+              ) : null}
             </section>
 
             <section className="bills-duplicate-detection" aria-label="Duplicate and overlap detection">

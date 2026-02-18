@@ -38,6 +38,11 @@ const billOverlapResolutionValidator = v.union(
   v.literal('archive_duplicate'),
   v.literal('mark_intentional'),
 )
+const billsMonthlyBulkActionValidator = v.union(
+  v.literal('roll_recurring_forward'),
+  v.literal('mark_all_paid_from_account'),
+  v.literal('reconcile_batch'),
+)
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
@@ -47,6 +52,7 @@ type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
+type BillsMonthlyBulkAction = 'roll_recurring_forward' | 'mark_all_paid_from_account' | 'reconcile_batch'
 type LedgerEntryType =
   | 'purchase'
   | 'purchase_reversal'
@@ -305,6 +311,13 @@ const validateStatementMonth = (value: string, fieldName: string) => {
   if (!/^\d{4}-\d{2}$/.test(value)) {
     throw new Error(`${fieldName} must use YYYY-MM format.`)
   }
+}
+
+const addMonthsToMonthKey = (value: string, monthDelta: number) => {
+  const year = Number.parseInt(value.slice(0, 4), 10)
+  const month = Number.parseInt(value.slice(5, 7), 10)
+  const base = new Date(year, month - 1 + monthDelta, 1)
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`
 }
 
 const toCycleKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
@@ -3178,6 +3191,232 @@ export const resolveBillDuplicateOverlap = mutation({
       secondaryBillId,
       movedCycleLogCount,
       movedPriceChangeCount: secondaryPriceChanges.length,
+    }
+  },
+})
+
+export const runBillsMonthlyBulkAction = mutation({
+  args: {
+    action: billsMonthlyBulkActionValidator,
+    cycleMonth: v.string(),
+    fundingAccountId: v.optional(v.id('accounts')),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const cycleMonth = args.cycleMonth.trim()
+    validateStatementMonth(cycleMonth, 'Cycle month')
+
+    const targetMonth = args.action === 'roll_recurring_forward' ? addMonthsToMonthKey(cycleMonth, 1) : undefined
+    const lookupMonth = targetMonth ?? cycleMonth
+
+    const [bills, checks] = await Promise.all([
+      ctx.db
+        .query('bills')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('billPaymentChecks')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+    ])
+
+    const recurringBills = bills.filter((entry) => entry.cadence !== 'one_time')
+    const eligibleBills = (args.action === 'roll_recurring_forward' ? recurringBills : bills).sort(
+      (left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }) || left.createdAt - right.createdAt,
+    )
+
+    const existingByBillId = new Map<string, Doc<'billPaymentChecks'>>()
+    checks
+      .filter((entry) => entry.cycleMonth === lookupMonth)
+      .forEach((entry) => {
+        const key = String(entry.billId)
+        const current = existingByBillId.get(key)
+        if (!current || entry.updatedAt > current.updatedAt) {
+          existingByBillId.set(key, entry)
+        }
+      })
+
+    let fundingAccount: Doc<'accounts'> | null = null
+    if (args.action === 'mark_all_paid_from_account') {
+      if (!args.fundingAccountId) {
+        throw new Error('Select a funding account to mark all bills paid.')
+      }
+      const account = await ctx.db.get(args.fundingAccountId)
+      ensureOwned(account, identity.subject, 'Funding account not found.')
+      fundingAccount = account
+    }
+
+    let createdCount = 0
+    let updatedCount = 0
+    let skippedCount = 0
+    let totalPaidApplied = 0
+    let totalReconciledAmount = 0
+    let reconciledFromPlannedCount = 0
+
+    for (const bill of eligibleBills) {
+      const existing = existingByBillId.get(String(bill._id))
+
+      if (args.action === 'roll_recurring_forward') {
+        if (existing) {
+          skippedCount += 1
+          continue
+        }
+
+        const result = await upsertBillPaymentCheckRecord(ctx, {
+          userId: identity.subject,
+          input: {
+            billId: bill._id,
+            cycleMonth: targetMonth!,
+            expectedAmount: bill.amount,
+            note: `[bulk-roll:${cycleMonth}]`,
+          },
+          metadata: {
+            mode: 'bulk',
+            action: args.action,
+            sourceCycleMonth: cycleMonth,
+            targetCycleMonth: targetMonth,
+          },
+        })
+        if (result.action === 'created') {
+          createdCount += 1
+        } else {
+          updatedCount += 1
+        }
+        continue
+      }
+
+      if (args.action === 'mark_all_paid_from_account') {
+        const expectedAmount = existing?.expectedAmount ?? bill.amount
+        const previousActual = existing?.actualAmount ?? 0
+        const actualAmount = existing?.actualAmount ?? expectedAmount
+        const paidDay = existing?.paidDay ?? bill.dueDay
+        const note = appendUniqueNoteMarker(
+          existing?.note,
+          `[bulk-paid:${cycleMonth}:${String(fundingAccount!._id)}]`,
+        )
+
+        const result = await upsertBillPaymentCheckRecord(ctx, {
+          userId: identity.subject,
+          input: {
+            billId: bill._id,
+            cycleMonth,
+            expectedAmount,
+            actualAmount,
+            paidDay,
+            note,
+          },
+          metadata: {
+            mode: 'bulk',
+            action: args.action,
+            cycleMonth,
+            fundingAccountId: String(fundingAccount!._id),
+          },
+        })
+        if (result.action === 'created') {
+          createdCount += 1
+        } else {
+          updatedCount += 1
+        }
+
+        totalPaidApplied += roundCurrency(Math.max(actualAmount - previousActual, 0))
+        continue
+      }
+
+      const expectedAmount = existing?.expectedAmount ?? bill.amount
+      const hadActual = existing?.actualAmount !== undefined
+      const actualAmount = existing?.actualAmount ?? expectedAmount
+      const paidDay = existing?.paidDay ?? bill.dueDay
+      const note = appendUniqueNoteMarker(existing?.note, `[batch-reconciled:${cycleMonth}]`)
+
+      const result = await upsertBillPaymentCheckRecord(ctx, {
+        userId: identity.subject,
+        input: {
+          billId: bill._id,
+          cycleMonth,
+          expectedAmount,
+          actualAmount,
+          paidDay,
+          note,
+        },
+        metadata: {
+          mode: 'bulk',
+          action: args.action,
+          cycleMonth,
+        },
+      })
+      if (result.action === 'created') {
+        createdCount += 1
+      } else {
+        updatedCount += 1
+      }
+
+      totalReconciledAmount += actualAmount
+      if (!hadActual) {
+        reconciledFromPlannedCount += 1
+      }
+    }
+
+    totalPaidApplied = roundCurrency(totalPaidApplied)
+    totalReconciledAmount = roundCurrency(totalReconciledAmount)
+
+    if (args.action === 'mark_all_paid_from_account' && fundingAccount && totalPaidApplied > 0) {
+      const nextBalance = roundCurrency(fundingAccount.balance - totalPaidApplied)
+      await ctx.db.patch(fundingAccount._id, {
+        balance: nextBalance,
+      })
+
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'account',
+        entityId: String(fundingAccount._id),
+        action: 'bill_bulk_payment_applied',
+        before: {
+          balance: fundingAccount.balance,
+        },
+        after: {
+          balance: nextBalance,
+        },
+        metadata: {
+          cycleMonth,
+          totalPaidApplied,
+        },
+      })
+    }
+
+    const batchId = `bill-bulk-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'bill_bulk_action',
+      entityId: batchId,
+      action: args.action,
+      metadata: {
+        cycleMonth,
+        targetMonth: targetMonth ?? null,
+        eligibleCount: eligibleBills.length,
+        createdCount,
+        updatedCount,
+        skippedCount,
+        totalPaidApplied,
+        totalReconciledAmount,
+        reconciledFromPlannedCount,
+        fundingAccountId: fundingAccount ? String(fundingAccount._id) : null,
+      },
+    })
+
+    return {
+      batchId,
+      action: args.action as BillsMonthlyBulkAction,
+      cycleMonth,
+      targetMonth: targetMonth ?? null,
+      eligibleCount: eligibleBills.length,
+      createdCount,
+      updatedCount,
+      skippedCount,
+      totalPaidApplied,
+      totalReconciledAmount,
+      reconciledFromPlannedCount,
+      fundingAccountId: fundingAccount ? String(fundingAccount._id) : null,
+      fundingAccountName: fundingAccount?.name ?? null,
     }
   },
 })

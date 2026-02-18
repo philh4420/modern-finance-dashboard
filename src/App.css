@@ -2383,6 +2383,140 @@ h2 {
     color-mix(in oklab, var(--surface-card) 93%, white 7%);
 }
 
+.bills-bulk-actions {
+  margin-top: 0.72rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 80%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-savings) 12%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
+    0 18px 36px -36px color-mix(in oklab, black 45%, transparent);
+  padding: 0.72rem 0.8rem;
+  display: grid;
+  gap: 0.66rem;
+}
+
+.bills-bulk-actions-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.bills-bulk-actions-head h3 {
+  margin: 0.12rem 0 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.bills-bulk-actions-head p {
+  margin: 0.18rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.bills-bulk-actions-toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.52rem;
+}
+
+.bills-bulk-field {
+  display: grid;
+  gap: 0.26rem;
+}
+
+.bills-bulk-field span {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.bills-bulk-actions-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.bills-bulk-feedback {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.bills-bulk-feedback--error {
+  color: color-mix(in oklab, var(--tone-negative) 82%, black 18%);
+}
+
+.bills-bulk-result {
+  border-radius: 0.92rem;
+  border: 1px solid color-mix(in oklab, var(--tone-finance) 36%, var(--stroke));
+  background:
+    radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 40%, transparent);
+  padding: 0.66rem 0.7rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.bills-bulk-result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.52rem;
+}
+
+.bills-bulk-result-head h4 {
+  margin: 0.12rem 0 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.bills-bulk-result-head .pill {
+  max-width: 21rem;
+  overflow-wrap: anywhere;
+}
+
+.bills-bulk-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+  gap: 0.48rem;
+}
+
+.bills-bulk-result-grid > div {
+  border-radius: 0.74rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  padding: 0.5rem 0.56rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.bills-bulk-result-grid p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.bills-bulk-result-grid strong {
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.bills-bulk-result-grid small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.24;
+}
+
 .bills-timeline {
   margin-top: 0.72rem;
   border-radius: 1rem;
@@ -4290,6 +4424,19 @@ tbody td {
     align-items: flex-start;
   }
 
+  .bills-bulk-actions-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .bills-bulk-actions-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .bills-bulk-actions-buttons {
+    width: 100%;
+  }
+
   .bills-subscription-head {
     flex-direction: column;
     align-items: flex-start;
@@ -4315,6 +4462,11 @@ tbody td {
 
   .bills-overlap-confirm-grid {
     grid-template-columns: 1fr;
+  }
+
+  .bills-bulk-result-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 

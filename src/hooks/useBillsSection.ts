@@ -44,6 +44,7 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
   const upsertBillPaymentCheck = useMutation(api.finance.upsertBillPaymentCheck)
   const removeBillPaymentCheck = useMutation(api.finance.removeBillPaymentCheck)
   const resolveBillDuplicateOverlap = useMutation(api.finance.resolveBillDuplicateOverlap)
+  const runBillsMonthlyBulkAction = useMutation(api.finance.runBillsMonthlyBulkAction)
 
   const [billForm, setBillForm] = useState<BillForm>(initialBillForm)
   const [billEditId, setBillEditId] = useState<BillId | null>(null)
@@ -198,6 +199,24 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
     }
   }
 
+  const onRunBillsMonthlyBulkAction = async (args: {
+    action: 'roll_recurring_forward' | 'mark_all_paid_from_account' | 'reconcile_batch'
+    cycleMonth: string
+    fundingAccountId?: AccountId
+  }) => {
+    clearError()
+    try {
+      return await runBillsMonthlyBulkAction({
+        action: args.action,
+        cycleMonth: args.cycleMonth,
+        fundingAccountId: args.fundingAccountId,
+      })
+    } catch (error) {
+      handleMutationError(error)
+      throw error
+    }
+  }
+
   return {
     billForm,
     setBillForm,
@@ -210,6 +229,7 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
     onUpsertBillPaymentCheck,
     onDeleteBillPaymentCheck,
     onResolveBillDuplicateOverlap,
+    onRunBillsMonthlyBulkAction,
     startBillEdit,
     saveBillEdit,
     bills,
