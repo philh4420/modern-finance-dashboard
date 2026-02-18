@@ -1282,7 +1282,11 @@ export function PlanningTab({
                   <p>{alert.name}</p>
                   <small>
                     {alert.daysAway} days • {formatMoney(alert.amount)} due • expected {formatMoney(alert.expectedAvailable)} •{' '}
-                    {alert.autopay ? 'autopay' : 'manual'}
+                    {alert.autopay
+                      ? alert.linkedAccountName
+                        ? `autopay · ${alert.linkedAccountName}`
+                        : 'autopay · no linked account'
+                      : 'manual'}
                   </small>
                 </div>
                 <span className={billRiskPill(alert.risk)}>{alert.risk}</span>

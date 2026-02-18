@@ -254,12 +254,14 @@ export default defineSchema({
     cadence,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnit),
+    linkedAccountId: v.optional(v.id('accounts')),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
-    .index('by_userId_createdAt', ['userId', 'createdAt']),
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_linkedAccountId', ['userId', 'linkedAccountId']),
   billPaymentChecks: defineTable({
     userId: v.string(),
     billId: v.id('bills'),

@@ -42,6 +42,8 @@ type BillRiskAlert = {
   expectedAvailable: number
   risk: BillRiskLevel
   autopay: boolean
+  linkedAccountName?: string
+  linkedAccountProjectedBalance?: number
 }
 
 type AutoAllocationBucket = {
@@ -866,6 +868,73 @@ export const getPhase2Data = query({
       }
     })
 
+    const accountById = new Map(accounts.map((account) => [String(account._id), account]))
+    const autopayProjectedByBillId = new Map<
+      string,
+      {
+        linkedAccountName: string
+        linkedAccountProjectedBalance: number
+      }
+    >()
+    const autopayEvents = bills
+      .map((bill) => {
+        if (!bill.autopay || !bill.linkedAccountId) {
+          return null
+        }
+
+        const nextDate = nextDateForCadence(
+          bill.cadence,
+          bill.createdAt,
+          now,
+          bill.dueDay,
+          bill.customInterval,
+          bill.customUnit,
+        )
+        if (!nextDate) {
+          return null
+        }
+
+        const daysAway = Math.round((startOfDay(nextDate).getTime() - startOfDay(now).getTime()) / 86400000)
+        if (daysAway < 0 || daysAway > 45) {
+          return null
+        }
+
+        return {
+          billId: String(bill._id),
+          linkedAccountId: String(bill.linkedAccountId),
+          amount: bill.amount,
+          dueDate: startOfDay(nextDate),
+          daysAway,
+        }
+      })
+      .filter(
+        (entry): entry is { billId: string; linkedAccountId: string; amount: number; dueDate: Date; daysAway: number } =>
+          Boolean(entry),
+      )
+      .sort(
+        (left, right) =>
+          left.dueDate.getTime() - right.dueDate.getTime() || left.daysAway - right.daysAway || right.amount - left.amount,
+      )
+
+    const accountRunningBalance = new Map<string, number>()
+    autopayEvents.forEach((event) => {
+      const account = accountById.get(event.linkedAccountId)
+      if (!account) {
+        return
+      }
+
+      const projectedBefore = accountRunningBalance.has(event.linkedAccountId)
+        ? accountRunningBalance.get(event.linkedAccountId)!
+        : account.balance
+      const projectedAfter = projectedBefore - event.amount
+
+      accountRunningBalance.set(event.linkedAccountId, projectedAfter)
+      autopayProjectedByBillId.set(event.billId, {
+        linkedAccountName: account.name,
+        linkedAccountProjectedBalance: roundCurrency(projectedBefore),
+      })
+    })
+
     const billRiskAlerts: BillRiskAlert[] = bills
       .map((bill): BillRiskAlert | null => {
         const nextDate = nextDateForCadence(
@@ -883,9 +952,21 @@ export const getPhase2Data = query({
         if (daysAway < 0 || daysAway > 45) {
           return null
         }
-        const expectedAvailable = roundCurrency(liquidReserves + (monthlyNet / 30) * daysAway)
-        const risk: BillRiskLevel =
-          expectedAvailable < bill.amount ? 'critical' : expectedAvailable < bill.amount * 1.25 ? 'warning' : 'good'
+        const autopayProjection = autopayProjectedByBillId.get(String(bill._id))
+        const expectedAvailable = autopayProjection
+          ? autopayProjection.linkedAccountProjectedBalance
+          : roundCurrency(liquidReserves + (monthlyNet / 30) * daysAway)
+        const risk: BillRiskLevel = autopayProjection
+          ? expectedAvailable < bill.amount
+            ? 'critical'
+            : expectedAvailable < bill.amount * 1.25
+              ? 'warning'
+              : 'good'
+          : expectedAvailable < bill.amount
+            ? 'critical'
+            : expectedAvailable < bill.amount * 1.25
+              ? 'warning'
+              : 'good'
         return {
           id: String(bill._id),
           name: bill.name,
@@ -895,6 +976,8 @@ export const getPhase2Data = query({
           expectedAvailable,
           risk,
           autopay: bill.autopay,
+          linkedAccountName: autopayProjection?.linkedAccountName,
+          linkedAccountProjectedBalance: autopayProjection?.linkedAccountProjectedBalance,
         }
       })
       .filter((entry): entry is BillRiskAlert => Boolean(entry))

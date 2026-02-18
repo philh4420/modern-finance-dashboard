@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
-import type { BillEditDraft, BillEntry, BillForm, BillId, BillPaymentCheckId } from '../components/financeTypes'
+import type { AccountId, BillEditDraft, BillEntry, BillForm, BillId, BillPaymentCheckId } from '../components/financeTypes'
 import { isCustomCadence, parseCustomInterval, parseFloatInput, parseIntInput } from '../lib/financeHelpers'
 import type { MutationHandlers } from './useMutationFeedback'
 
@@ -16,6 +16,7 @@ const initialBillForm: BillForm = {
   cadence: 'monthly',
   customInterval: '',
   customUnit: 'weeks',
+  linkedAccountId: '',
   autopay: true,
   notes: '',
 }
@@ -27,6 +28,7 @@ const initialBillEditDraft: BillEditDraft = {
   cadence: 'monthly',
   customInterval: '',
   customUnit: 'weeks',
+  linkedAccountId: '',
   autopay: false,
   notes: '',
 }
@@ -56,6 +58,7 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
         cadence: billForm.cadence,
         customInterval,
         customUnit: isCustomCadence(billForm.cadence) ? billForm.customUnit : undefined,
+        linkedAccountId: billForm.linkedAccountId ? (billForm.linkedAccountId as AccountId) : undefined,
         autopay: billForm.autopay,
         notes: billForm.notes || undefined,
       })
@@ -87,6 +90,7 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
       cadence: entry.cadence,
       customInterval: entry.customInterval ? String(entry.customInterval) : '',
       customUnit: entry.customUnit ?? 'weeks',
+      linkedAccountId: entry.linkedAccountId ? String(entry.linkedAccountId) : '',
       autopay: entry.autopay,
       notes: entry.notes ?? '',
     })
@@ -109,6 +113,7 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
         cadence: billEditDraft.cadence,
         customInterval,
         customUnit: isCustomCadence(billEditDraft.cadence) ? billEditDraft.customUnit : undefined,
+        linkedAccountId: billEditDraft.linkedAccountId ? (billEditDraft.linkedAccountId as AccountId) : undefined,
         autopay: billEditDraft.autopay,
         notes: billEditDraft.notes || undefined,
       })

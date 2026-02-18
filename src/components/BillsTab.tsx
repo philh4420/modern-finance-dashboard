@@ -91,6 +91,14 @@ type BillPaymentLogDraft = {
   note: string
 }
 
+type AutopayRiskLevel = 'good' | 'warning' | 'critical' | 'unlinked'
+
+type AutopayRiskCheck = {
+  level: AutopayRiskLevel
+  projectedBeforeDue?: number
+  linkedAccountName?: string
+}
+
 const billTableColumnCount = 8
 
 type BillsTabProps = {
@@ -182,6 +190,124 @@ export function BillsTab({
     return map
   }, [billPaymentChecks])
 
+  const billLinkedAccounts = useMemo(() => {
+    const map = new Map<BillId, AccountEntry | null>()
+    bills.forEach((entry) => {
+      if (!entry.linkedAccountId) {
+        map.set(entry._id, null)
+        return
+      }
+      const account = accounts.find((candidate) => candidate._id === entry.linkedAccountId) ?? null
+      map.set(entry._id, account)
+    })
+    return map
+  }, [accounts, bills])
+
+  const autopayRiskByBillId = useMemo(() => {
+    const today = startOfDay(new Date())
+    const horizonDays = 45
+    const events: Array<{
+      billId: BillId
+      linkedAccount: AccountEntry
+      amount: number
+      dueDate: Date
+      daysAway: number
+    }> = []
+    const risks = new Map<BillId, AutopayRiskCheck>()
+
+    bills.forEach((entry) => {
+      if (!entry.autopay) {
+        return
+      }
+
+      const linkedAccount = billLinkedAccounts.get(entry._id) ?? null
+      if (!linkedAccount) {
+        risks.set(entry._id, {
+          level: 'unlinked',
+        })
+        return
+      }
+
+      const nextDueDate = nextDateForCadence({
+        cadence: entry.cadence,
+        createdAt: entry.createdAt,
+        dayOfMonth: entry.dueDay,
+        customInterval: entry.customInterval ?? undefined,
+        customUnit: entry.customUnit ?? undefined,
+        now: today,
+      })
+
+      if (!nextDueDate) {
+        return
+      }
+
+      const normalizedDueDate = startOfDay(nextDueDate)
+      const daysAway = Math.round((normalizedDueDate.getTime() - today.getTime()) / msPerDay)
+      if (daysAway < 0 || daysAway > horizonDays) {
+        return
+      }
+
+      events.push({
+        billId: entry._id,
+        linkedAccount,
+        amount: entry.amount,
+        dueDate: normalizedDueDate,
+        daysAway,
+      })
+    })
+
+    events.sort((left, right) => {
+      if (left.dueDate.getTime() !== right.dueDate.getTime()) {
+        return left.dueDate.getTime() - right.dueDate.getTime()
+      }
+      if (left.daysAway !== right.daysAway) {
+        return left.daysAway - right.daysAway
+      }
+      return right.amount - left.amount
+    })
+
+    const runningByAccountId = new Map<string, number>()
+    events.forEach((event) => {
+      const accountId = String(event.linkedAccount._id)
+      const projectedBeforeDue = runningByAccountId.has(accountId)
+        ? runningByAccountId.get(accountId)!
+        : event.linkedAccount.balance
+      const projectedAfterDue = projectedBeforeDue - event.amount
+      runningByAccountId.set(accountId, projectedAfterDue)
+
+      const level: AutopayRiskLevel =
+        projectedBeforeDue < event.amount
+          ? 'critical'
+          : projectedBeforeDue < event.amount * 1.25
+            ? 'warning'
+            : 'good'
+
+      risks.set(event.billId, {
+        level,
+        projectedBeforeDue,
+        linkedAccountName: event.linkedAccount.name,
+      })
+    })
+
+    return risks
+  }, [billLinkedAccounts, bills])
+
+  const selectableAccounts = useMemo(() => {
+    const priority = (type: AccountEntry['type']) => {
+      if (type === 'checking') return 0
+      if (type === 'savings') return 1
+      if (type === 'cash') return 2
+      if (type === 'investment') return 3
+      return 4
+    }
+
+    return [...accounts].sort((left, right) => {
+      const priorityDiff = priority(left.type) - priority(right.type)
+      if (priorityDiff !== 0) return priorityDiff
+      return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+    })
+  }, [accounts])
+
   const openPaymentLog = (entry: BillEntry) => {
     setPaymentLogBillId(entry._id)
     setPaymentLogDraft({
@@ -244,12 +370,27 @@ export function BillsTab({
     let dueIn7DaysAmount = 0
     let overdueCount = 0
     let autopayMonthlyAmount = 0
+    let autopayRiskCriticalCount = 0
+    let autopayRiskWarningCount = 0
+    let autopayRiskUnlinkedCount = 0
+    let autopayRiskCheckedCount = 0
 
     bills.forEach((entry) => {
       const normalizedMonthlyAmount = toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit)
 
       if (entry.autopay) {
         autopayMonthlyAmount += normalizedMonthlyAmount
+        const riskCheck = autopayRiskByBillId.get(entry._id)
+        if (riskCheck) {
+          autopayRiskCheckedCount += 1
+          if (riskCheck.level === 'critical') {
+            autopayRiskCriticalCount += 1
+          } else if (riskCheck.level === 'warning') {
+            autopayRiskWarningCount += 1
+          } else if (riskCheck.level === 'unlinked') {
+            autopayRiskUnlinkedCount += 1
+          }
+        }
       }
 
       if (isVariableBill(entry)) {
@@ -305,8 +446,12 @@ export function BillsTab({
       variableBillCount: variableMonthlyAmounts.length,
       variableVarianceStd,
       variableVariancePercent,
+      autopayRiskCriticalCount,
+      autopayRiskWarningCount,
+      autopayRiskUnlinkedCount,
+      autopayRiskCheckedCount,
     }
-  }, [bills, monthlyBills])
+  }, [autopayRiskByBillId, bills, monthlyBills])
 
   const billVarianceOverview = useMemo(() => {
     const entriesWithVariance = billPaymentChecks.filter((entry) => typeof entry.varianceAmount === 'number')
@@ -557,6 +702,22 @@ export function BillsTab({
             ) : null}
 
             <div className="form-field form-field--span2">
+              <label htmlFor="bill-linked-account">Linked account (for autopay risk)</label>
+              <select
+                id="bill-linked-account"
+                value={billForm.linkedAccountId}
+                onChange={(event) => setBillForm((prev) => ({ ...prev, linkedAccountId: event.target.value }))}
+              >
+                <option value="">No linked account</option>
+                {selectableAccounts.map((account) => (
+                  <option key={account._id} value={account._id}>
+                    {account.name} ({account.type})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field form-field--span2">
               <label className="checkbox-row" htmlFor="bill-autopay">
                 <input
                   id="bill-autopay"
@@ -582,7 +743,7 @@ export function BillsTab({
 
           <p id="bill-form-hint" className="form-hint">
             Tip: use <strong>Custom</strong> for true intervals (every 4 weeks, 6 weeks, 4 months, etc) and{' '}
-            <strong>One Time</strong> for non-recurring bills.
+            <strong>One Time</strong> for non-recurring bills. Link an account to enable autopay balance risk checks.
           </p>
 
           <div className="form-actions">
@@ -658,6 +819,26 @@ export function BillsTab({
                   {billSummary.autopayCoverageAmountGap > 0
                     ? `${formatMoney(billSummary.autopayCoverageAmountGap)} remains manual`
                     : 'All monthly bill volume is autopay-covered'}
+                </small>
+              </article>
+              <article
+                className={
+                  billSummary.autopayRiskCriticalCount > 0
+                    ? 'bills-summary-card bills-summary-card--critical'
+                    : billSummary.autopayRiskWarningCount > 0 || billSummary.autopayRiskUnlinkedCount > 0
+                      ? 'bills-summary-card bills-summary-card--watch'
+                      : 'bills-summary-card bills-summary-card--good'
+                }
+              >
+                <p>Autopay risk checks</p>
+                <strong>
+                  {billSummary.autopayRiskCriticalCount} critical · {billSummary.autopayRiskWarningCount} watch
+                </strong>
+                <small>
+                  {billSummary.autopayRiskCheckedCount} checked
+                  {billSummary.autopayRiskUnlinkedCount > 0
+                    ? ` · ${billSummary.autopayRiskUnlinkedCount} unlinked`
+                    : ' · all checked bills linked'}
                 </small>
               </article>
               <article className="bills-summary-card">
@@ -799,6 +980,8 @@ export function BillsTab({
                     {visibleBills.map((entry) => {
                       const isEditing = billEditId === entry._id
                       const isPaymentLogOpen = paymentLogBillId === entry._id
+                      const linkedAccount = billLinkedAccounts.get(entry._id) ?? null
+                      const autopayRisk = autopayRiskByBillId.get(entry._id)
                       const rowPaymentChecks = billPaymentChecksByBillId.get(entry._id) ?? []
                       const latestPaymentCheck = rowPaymentChecks[0] ?? null
                       const recentVarianceChecks = rowPaymentChecks
@@ -932,19 +1115,75 @@ export function BillsTab({
                             </td>
                             <td>
                               {isEditing ? (
-                                <input
-                                  aria-label="Autopay enabled"
-                                  type="checkbox"
-                                  checked={billEditDraft.autopay}
-                                  onChange={(event) =>
-                                    setBillEditDraft((prev) => ({
-                                      ...prev,
-                                      autopay: event.target.checked,
-                                    }))
-                                  }
-                                />
+                                <div className="cell-stack">
+                                  <label className="checkbox-row" htmlFor={`bill-edit-autopay-${entry._id}`}>
+                                    <input
+                                      id={`bill-edit-autopay-${entry._id}`}
+                                      aria-label="Autopay enabled"
+                                      type="checkbox"
+                                      checked={billEditDraft.autopay}
+                                      onChange={(event) =>
+                                        setBillEditDraft((prev) => ({
+                                          ...prev,
+                                          autopay: event.target.checked,
+                                        }))
+                                      }
+                                    />
+                                    Autopay
+                                  </label>
+                                  <select
+                                    className="inline-select"
+                                    value={billEditDraft.linkedAccountId}
+                                    onChange={(event) =>
+                                      setBillEditDraft((prev) => ({
+                                        ...prev,
+                                        linkedAccountId: event.target.value,
+                                      }))
+                                    }
+                                  >
+                                    <option value="">No linked account</option>
+                                    {selectableAccounts.map((account) => (
+                                      <option key={account._id} value={account._id}>
+                                        {account.name} ({account.type})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
                               ) : entry.autopay ? (
-                                <span className="pill pill--good">Autopay</span>
+                                <div className="cell-stack">
+                                  <span className="pill pill--good">Autopay</span>
+                                  <small>{linkedAccount ? `Linked ${linkedAccount.name}` : 'No linked account'}</small>
+                                  <span
+                                    className={
+                                      autopayRisk === undefined
+                                        ? 'pill pill--neutral'
+                                        : autopayRisk.level === 'critical'
+                                        ? 'pill pill--critical'
+                                        : autopayRisk.level === 'warning'
+                                          ? 'pill pill--warning'
+                                          : autopayRisk.level === 'unlinked'
+                                            ? 'pill pill--neutral'
+                                            : 'pill pill--good'
+                                    }
+                                  >
+                                    {autopayRisk === undefined
+                                      ? 'No near-term due'
+                                      : autopayRisk.level === 'critical'
+                                      ? 'Balance risk'
+                                      : autopayRisk.level === 'warning'
+                                        ? 'Low buffer'
+                                        : autopayRisk.level === 'unlinked'
+                                          ? 'Link account'
+                                          : 'Healthy'}
+                                  </span>
+                                  <small>
+                                    {autopayRisk?.projectedBeforeDue !== undefined
+                                      ? `Projected before due ${formatMoney(autopayRisk.projectedBeforeDue)}`
+                                      : linkedAccount
+                                        ? 'No due event in next 45 days'
+                                        : 'Set linked account for projected risk checks'}
+                                  </small>
+                                </div>
                               ) : (
                                 <span className="pill pill--neutral">Manual</span>
                               )}

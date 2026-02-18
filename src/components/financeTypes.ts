@@ -156,6 +156,7 @@ export type BillForm = {
   cadence: Cadence
   customInterval: string
   customUnit: CustomCadenceUnit
+  linkedAccountId: string
   autopay: boolean
   notes: string
 }
@@ -290,6 +291,8 @@ export type BillRiskAlert = {
   expectedAvailable: number
   risk: 'good' | 'warning' | 'critical'
   autopay: boolean
+  linkedAccountName?: string
+  linkedAccountProjectedBalance?: number
 }
 
 export type ForecastWindow = {

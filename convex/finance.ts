@@ -1390,6 +1390,20 @@ const resolveIncomeDestinationAccountId = async (
   return destinationAccountId
 }
 
+const resolveBillLinkedAccountId = async (
+  ctx: MutationCtx,
+  userId: string,
+  linkedAccountId: Id<'accounts'> | undefined,
+) => {
+  if (!linkedAccountId) {
+    return undefined
+  }
+
+  const linkedAccount = await ctx.db.get(linkedAccountId)
+  ensureOwned(linkedAccount, userId, 'Linked bill account not found.')
+  return linkedAccountId
+}
+
 const getPurchaseExpenseAccountCode = (category: string) => `EXPENSE:PURCHASE:${sanitizeLedgerToken(category)}`
 
 const recordPurchaseLedger = async (ctx: MutationCtx, args: {
@@ -2750,6 +2764,7 @@ export const addBill = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    linkedAccountId: v.optional(v.id('accounts')),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
   },
@@ -2765,6 +2780,7 @@ export const addBill = mutation({
     }
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+    const linkedAccountId = await resolveBillLinkedAccountId(ctx, identity.subject, args.linkedAccountId)
 
     const createdBillId = await ctx.db.insert('bills', {
       userId: identity.subject,
@@ -2774,6 +2790,7 @@ export const addBill = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      linkedAccountId,
       autopay: args.autopay,
       notes: args.notes?.trim() || undefined,
       createdAt: Date.now(),
@@ -2789,6 +2806,7 @@ export const addBill = mutation({
         amount: args.amount,
         dueDay: args.dueDay,
         cadence: args.cadence,
+        linkedAccountId: linkedAccountId ? String(linkedAccountId) : undefined,
       },
     })
   },
@@ -2803,6 +2821,7 @@ export const updateBill = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    linkedAccountId: v.optional(v.id('accounts')),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
   },
@@ -2818,6 +2837,7 @@ export const updateBill = mutation({
     }
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+    const linkedAccountId = await resolveBillLinkedAccountId(ctx, identity.subject, args.linkedAccountId)
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Bill record not found.')
@@ -2829,6 +2849,7 @@ export const updateBill = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      linkedAccountId,
       autopay: args.autopay,
       notes: args.notes?.trim() || undefined,
     })
@@ -2843,12 +2864,14 @@ export const updateBill = mutation({
         amount: existing.amount,
         dueDay: existing.dueDay,
         cadence: existing.cadence,
+        linkedAccountId: existing.linkedAccountId ? String(existing.linkedAccountId) : undefined,
       },
       after: {
         name: args.name.trim(),
         amount: args.amount,
         dueDay: args.dueDay,
         cadence: args.cadence,
+        linkedAccountId: linkedAccountId ? String(linkedAccountId) : undefined,
       },
     })
   },
