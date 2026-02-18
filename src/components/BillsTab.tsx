@@ -19,9 +19,33 @@ import { toMonthlyAmount } from '../lib/incomeMath'
 type BillSortKey = 'name_asc' | 'amount_desc' | 'amount_asc' | 'day_asc' | 'cadence_asc' | 'autopay_first'
 
 const variableBillKeywordPattern = /\b(variable|usage|meter(ed)?|estimated?|seasonal|fluctuat(?:e|es|ing|ion))\b/i
+const monthKeyPattern = /^(\d{4})-(\d{2})$/
 const msPerDay = 86400000
 
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+const toMonthIndex = (date: Date) => date.getFullYear() * 12 + date.getMonth()
+
+const parseMonthKeyIndex = (value: string) => {
+  const match = monthKeyPattern.exec(value)
+  if (!match) return null
+  const year = Number.parseInt(match[1], 10)
+  const month = Number.parseInt(match[2], 10)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null
+  }
+  return year * 12 + (month - 1)
+}
+
+const parseIsoDate = (value: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null
+  }
+  const parsed = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) {
+    return null
+  }
+  return parsed
+}
 
 const clampDayToMonth = (year: number, month: number, day: number) => {
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -112,6 +136,21 @@ type SubscriptionInsightRow = {
   cancelReminderDate: Date | null
   cancelReminderDue: boolean
   latestPriceChange?: SubscriptionPriceChangeEntry
+}
+
+type ProviderIntelligenceAlert = 'good' | 'warning' | 'critical'
+
+type ProviderIntelligenceRow = {
+  id: BillId
+  provider: string
+  total3Months: number
+  total6Months: number
+  total12Months: number
+  avgIncreasePercent: number
+  increaseEvents12Months: number
+  lastIncreasePercent: number
+  priceCreepAlert: ProviderIntelligenceAlert
+  priceCreepReason: string
 }
 
 const billTableColumnCount = 8
@@ -574,6 +613,114 @@ export function BillsTab({
       priceChangesIn90DaysCount,
     }
   }, [bills, cadenceLabel, subscriptionPriceChanges, subscriptionPriceChangesByBillId])
+
+  const providerIntelligence = useMemo(() => {
+    const today = startOfDay(new Date())
+    const currentMonthIndex = toMonthIndex(today)
+    const oneYearAgo = new Date(today.getTime() - 365 * msPerDay)
+
+    const roundNumber = (value: number) => Math.round(value * 100) / 100
+    const alertRank: Record<ProviderIntelligenceAlert, number> = {
+      critical: 2,
+      warning: 1,
+      good: 0,
+    }
+
+    const rows: ProviderIntelligenceRow[] = bills
+      .filter((entry) => entry.isSubscription === true)
+      .map((entry) => {
+        const monthlyBaseline = toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit)
+        const paymentHistory = (billPaymentChecksByBillId.get(entry._id) ?? [])
+          .map((check) => ({
+            monthIndex: parseMonthKeyIndex(check.cycleMonth),
+            amount: check.actualAmount ?? check.expectedAmount,
+          }))
+          .filter(
+            (item): item is { monthIndex: number; amount: number } =>
+              item.monthIndex !== null && Number.isFinite(item.amount) && item.amount >= 0,
+          )
+
+        const totalForWindow = (months: number) => {
+          const startIndex = currentMonthIndex - (months - 1)
+          const observedTotal = paymentHistory
+            .filter((item) => item.monthIndex >= startIndex && item.monthIndex <= currentMonthIndex)
+            .reduce((sum, item) => sum + item.amount, 0)
+
+          if (observedTotal > 0.005) {
+            return observedTotal
+          }
+
+          return monthlyBaseline * months
+        }
+
+        const providerChanges = subscriptionPriceChangesByBillId.get(entry._id) ?? []
+        const increasePercents = providerChanges
+          .map((change) => {
+            if (change.previousAmount <= 0 || change.newAmount <= change.previousAmount + 0.005) {
+              return null
+            }
+            return ((change.newAmount - change.previousAmount) / change.previousAmount) * 100
+          })
+          .filter((value): value is number => value !== null)
+
+        const avgIncreasePercent =
+          increasePercents.length > 0
+            ? increasePercents.reduce((sum, value) => sum + value, 0) / increasePercents.length
+            : 0
+        const increaseEvents12Months = providerChanges.filter((change) => {
+          const effectiveDate = parseIsoDate(change.effectiveDate)
+          if (!effectiveDate || effectiveDate < oneYearAgo) {
+            return false
+          }
+          return change.previousAmount > 0 && change.newAmount > change.previousAmount + 0.005
+        }).length
+        const lastIncreasePercent =
+          increasePercents.length > 0
+            ? increasePercents[0]
+            : 0
+
+        let priceCreepAlert: ProviderIntelligenceAlert = 'good'
+        let priceCreepReason = 'Stable pricing'
+
+        if (avgIncreasePercent >= 8 || increaseEvents12Months >= 2 || lastIncreasePercent >= 10) {
+          priceCreepAlert = 'critical'
+          priceCreepReason = 'Strong price creep signal'
+        } else if (avgIncreasePercent >= 4 || increaseEvents12Months >= 1 || lastIncreasePercent >= 5) {
+          priceCreepAlert = 'warning'
+          priceCreepReason = 'Moderate upward trend'
+        }
+
+        return {
+          id: entry._id,
+          provider: entry.name,
+          total3Months: roundNumber(totalForWindow(3)),
+          total6Months: roundNumber(totalForWindow(6)),
+          total12Months: roundNumber(totalForWindow(12)),
+          avgIncreasePercent: roundNumber(avgIncreasePercent),
+          increaseEvents12Months,
+          lastIncreasePercent: roundNumber(lastIncreasePercent),
+          priceCreepAlert,
+          priceCreepReason,
+        }
+      })
+      .sort((left, right) => {
+        const rankDiff = alertRank[right.priceCreepAlert] - alertRank[left.priceCreepAlert]
+        if (rankDiff !== 0) {
+          return rankDiff
+        }
+        if (left.total12Months !== right.total12Months) {
+          return right.total12Months - left.total12Months
+        }
+        return left.provider.localeCompare(right.provider, undefined, { sensitivity: 'base' })
+      })
+
+    return {
+      rows,
+      criticalCount: rows.filter((row) => row.priceCreepAlert === 'critical').length,
+      warningCount: rows.filter((row) => row.priceCreepAlert === 'warning').length,
+      goodCount: rows.filter((row) => row.priceCreepAlert === 'good').length,
+    }
+  }, [billPaymentChecksByBillId, bills, subscriptionPriceChangesByBillId])
 
   const timelineData = useMemo(() => {
     const today = startOfDay(new Date())
@@ -1153,6 +1300,101 @@ export function BillsTab({
                     </tbody>
                   </table>
                 </div>
+              )}
+            </section>
+
+            <section className="bills-provider-intelligence" aria-label="Provider intelligence card">
+              <header className="bills-provider-intelligence-head">
+                <div>
+                  <h3>Provider intelligence</h3>
+                  <p>Last 3/6/12 month totals, average increase %, and price creep alerts by provider.</p>
+                </div>
+              </header>
+
+              {providerIntelligence.rows.length === 0 ? (
+                <p className="subnote">No subscription providers tracked yet.</p>
+              ) : (
+                <>
+                  <div className="bills-summary-strip">
+                    <article className="bills-summary-card">
+                      <p>Providers tracked</p>
+                      <strong>{providerIntelligence.rows.length}</strong>
+                      <small>Subscription providers with trend analytics</small>
+                    </article>
+                    <article className="bills-summary-card bills-summary-card--critical">
+                      <p>Critical creep alerts</p>
+                      <strong>{providerIntelligence.criticalCount}</strong>
+                      <small>Strong price creep signal</small>
+                    </article>
+                    <article className="bills-summary-card bills-summary-card--watch">
+                      <p>Warning creep alerts</p>
+                      <strong>{providerIntelligence.warningCount}</strong>
+                      <small>Moderate upward trend</small>
+                    </article>
+                    <article className="bills-summary-card bills-summary-card--good">
+                      <p>Stable providers</p>
+                      <strong>{providerIntelligence.goodCount}</strong>
+                      <small>No material creep signal</small>
+                    </article>
+                  </div>
+
+                  <div className="table-wrap table-wrap--card">
+                    <table className="data-table">
+                      <caption className="sr-only">Provider intelligence</caption>
+                      <thead>
+                        <tr>
+                          <th scope="col">Provider</th>
+                          <th scope="col">Last 3 months</th>
+                          <th scope="col">Last 6 months</th>
+                          <th scope="col">Last 12 months</th>
+                          <th scope="col">Avg increase %</th>
+                          <th scope="col">Price creep alert</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {providerIntelligence.rows.map((row) => (
+                          <tr key={row.id}>
+                            <td>
+                              <div className="cell-stack">
+                                <strong>{row.provider}</strong>
+                              </div>
+                            </td>
+                            <td>{formatMoney(row.total3Months)}</td>
+                            <td>{formatMoney(row.total6Months)}</td>
+                            <td>{formatMoney(row.total12Months)}</td>
+                            <td>
+                              <div className="cell-stack">
+                                <strong className={row.avgIncreasePercent > 0 ? 'amount-negative' : undefined}>
+                                  {row.avgIncreasePercent.toFixed(1)}%
+                                </strong>
+                                <small>{row.increaseEvents12Months} increase event(s) in 12m</small>
+                                <small>
+                                  Last increase {row.lastIncreasePercent > 0 ? `${row.lastIncreasePercent.toFixed(1)}%` : 'n/a'}
+                                </small>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="cell-stack">
+                                <span
+                                  className={
+                                    row.priceCreepAlert === 'critical'
+                                      ? 'pill pill--critical'
+                                      : row.priceCreepAlert === 'warning'
+                                        ? 'pill pill--warning'
+                                        : 'pill pill--good'
+                                  }
+                                >
+                                  {row.priceCreepAlert}
+                                </span>
+                                <small>{row.priceCreepReason}</small>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </section>
 
