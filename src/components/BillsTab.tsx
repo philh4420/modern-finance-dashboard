@@ -2333,7 +2333,7 @@ export function BillsTab({
               <p className="empty-state">No bills match your search.</p>
             ) : (
               <div className="table-wrap table-wrap--card">
-                <table className="data-table" data-testid="bills-table">
+                <table className="data-table data-table--bills" data-testid="bills-table">
                   <caption className="sr-only">Bill entries</caption>
                   <thead>
                     <tr>
@@ -2752,7 +2752,7 @@ export function BillsTab({
                               )}
                             </td>
                             <td>
-                              <div className="row-actions">
+                              <div className="row-actions row-actions--bills">
                                 {isEditing ? (
                                   <>
                                     <button

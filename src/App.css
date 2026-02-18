@@ -2324,8 +2324,9 @@ h2 {
 .bills-summary-strip {
   margin-top: 0.72rem;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
-  gap: 0.55rem;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.62rem;
+  align-items: stretch;
 }
 
 .bills-summary-card {
@@ -2337,10 +2338,13 @@ h2 {
   box-shadow:
     inset 0 1px 0 color-mix(in oklab, white 38%, transparent),
     0 16px 34px -34px color-mix(in oklab, black 44%, transparent);
-  padding: 0.62rem 0.7rem;
-  display: grid;
-  gap: 0.2rem;
-  min-height: 6.4rem;
+  padding: 0.8rem 0.86rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.32rem;
+  min-height: 7.35rem;
 }
 
 .bills-summary-card p {
@@ -2352,14 +2356,14 @@ h2 {
 }
 
 .bills-summary-card strong {
-  font-size: 1.1rem;
+  font-size: clamp(1.08rem, 0.95rem + 0.36vw, 1.28rem);
   letter-spacing: -0.01em;
 }
 
 .bills-summary-card small {
   color: var(--text-muted);
-  font-size: 0.78rem;
-  line-height: 1.32;
+  font-size: 0.8rem;
+  line-height: 1.38;
 }
 
 .bills-summary-card--good {
@@ -2426,6 +2430,160 @@ h2 {
   font-size: 0.74rem;
 }
 
+.bills-tab-shell {
+  align-items: stretch;
+  gap: clamp(1rem, 1vw, 1.34rem);
+}
+
+.bills-tab-shell .panel {
+  padding: clamp(1.06rem, 0.95vw + 0.54rem, 1.36rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1.06rem;
+  min-height: 100%;
+}
+
+.bills-tab-shell .panel-form {
+  grid-column: span 4;
+}
+
+.bills-tab-shell .panel-list {
+  grid-column: span 8;
+}
+
+.bills-tab-shell .panel-header {
+  gap: 1rem;
+}
+
+.bills-tab-shell .panel-actions {
+  max-width: 46rem;
+}
+
+.bills-tab-shell .panel-header > div {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.bills-tab-shell .panel-header h2 {
+  margin: 0.06rem 0 0;
+  font-size: clamp(1.16rem, 0.92rem + 0.56vw, 1.5rem);
+  line-height: 1.18;
+  letter-spacing: -0.018em;
+}
+
+.bills-tab-shell .panel-kicker {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+.bills-tab-shell .panel-value {
+  margin: 0.1rem 0 0;
+  font-size: 1.03rem;
+  line-height: 1.4;
+  font-weight: 730;
+}
+
+.bills-tab-shell .panel-list > .subnote {
+  margin-top: 0.42rem;
+  font-size: 0.86rem;
+  line-height: 1.52;
+  max-width: none;
+}
+
+.bills-tab-shell .table-wrap--card {
+  padding-inline: 0.78rem;
+  overflow-x: hidden;
+}
+
+.bills-tab-shell .data-table thead th {
+  font-size: 0.72rem;
+  padding-top: 0.62rem;
+  padding-bottom: 0.62rem;
+}
+
+.bills-tab-shell .data-table tbody td {
+  padding-top: 0.96rem;
+  padding-bottom: 0.96rem;
+}
+
+.data-table--bills thead th {
+  font-size: 0.72rem;
+  letter-spacing: 0.055em;
+}
+
+.data-table--bills {
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.data-table--bills th,
+.data-table--bills td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.data-table--bills th:nth-child(1),
+.data-table--bills td:nth-child(1) {
+  width: 17%;
+}
+
+.data-table--bills th:nth-child(2),
+.data-table--bills td:nth-child(2) {
+  width: 9%;
+}
+
+.data-table--bills th:nth-child(3),
+.data-table--bills td:nth-child(3) {
+  width: 8%;
+}
+
+.data-table--bills th:nth-child(4),
+.data-table--bills td:nth-child(4) {
+  width: 10%;
+}
+
+.data-table--bills th:nth-child(5),
+.data-table--bills td:nth-child(5) {
+  width: 8%;
+}
+
+.data-table--bills th:nth-child(6),
+.data-table--bills td:nth-child(6) {
+  width: 18%;
+}
+
+.data-table--bills th:nth-child(7),
+.data-table--bills td:nth-child(7) {
+  width: 19%;
+}
+
+.data-table--bills th:nth-child(8),
+.data-table--bills td:nth-child(8) {
+  width: 11%;
+}
+
+.data-table--bills tbody td {
+  padding-top: 0.96rem;
+  padding-bottom: 0.96rem;
+  font-size: 0.94rem;
+  line-height: 1.42;
+}
+
+.data-table--bills .cell-stack {
+  gap: 0.34rem;
+}
+
+.data-table--bills .cell-stack small {
+  font-size: 0.8rem;
+  line-height: 1.28;
+}
+
+.data-table--bills .pill {
+  font-size: 0.76rem;
+}
+
 .bills-bulk-actions {
   margin-top: 0.72rem;
   border-radius: 1rem;
@@ -2436,9 +2594,10 @@ h2 {
   box-shadow:
     inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
     0 18px 36px -36px color-mix(in oklab, black 45%, transparent);
-  padding: 0.72rem 0.8rem;
+  padding: 0.84rem 0.9rem;
   display: grid;
-  gap: 0.66rem;
+  gap: 0.74rem;
+  min-height: 8.2rem;
 }
 
 .bills-bulk-actions-head {
@@ -2570,9 +2729,10 @@ h2 {
   box-shadow:
     inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
     0 18px 36px -36px color-mix(in oklab, black 45%, transparent);
-  padding: 0.72rem 0.8rem;
+  padding: 0.84rem 0.9rem;
   display: grid;
-  gap: 0.65rem;
+  gap: 0.74rem;
+  min-height: 8.2rem;
 }
 
 .bills-timeline-head {
@@ -2618,7 +2778,7 @@ h2 {
   border-radius: 0.84rem;
   border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
   background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
-  padding: 0.54rem 0.62rem;
+  padding: 0.64rem 0.72rem;
   display: grid;
   grid-template-columns: minmax(6.5rem, 0.85fr) minmax(10rem, 1.2fr) minmax(6rem, 0.8fr) minmax(7.2rem, 0.9fr) minmax(7.2rem, 0.95fr);
   gap: 0.52rem;
@@ -2666,9 +2826,10 @@ h2 {
   box-shadow:
     inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
     0 18px 36px -36px color-mix(in oklab, black 45%, transparent);
-  padding: 0.72rem 0.8rem;
+  padding: 0.84rem 0.9rem;
   display: grid;
-  gap: 0.65rem;
+  gap: 0.74rem;
+  min-height: 8.2rem;
 }
 
 .bills-subscription-head {
@@ -2701,9 +2862,10 @@ h2 {
   box-shadow:
     inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
     0 18px 36px -36px color-mix(in oklab, black 45%, transparent);
-  padding: 0.72rem 0.8rem;
+  padding: 0.84rem 0.9rem;
   display: grid;
-  gap: 0.65rem;
+  gap: 0.74rem;
+  min-height: 8.2rem;
 }
 
 .bills-provider-intelligence-head {
@@ -2736,9 +2898,10 @@ h2 {
   box-shadow:
     inset 0 1px 0 color-mix(in oklab, white 40%, transparent),
     0 18px 36px -36px color-mix(in oklab, black 45%, transparent);
-  padding: 0.72rem 0.8rem;
+  padding: 0.84rem 0.9rem;
   display: grid;
-  gap: 0.65rem;
+  gap: 0.74rem;
+  min-height: 8.2rem;
 }
 
 .bills-duplicate-detection-head {
@@ -2875,6 +3038,25 @@ h2 {
   margin-top: 1rem;
   border-top: 1px solid color-mix(in oklab, var(--stroke) 75%, transparent);
   padding-top: 0.82rem;
+}
+
+.bills-bulk-actions-head h3,
+.bills-timeline-head h3,
+.bills-subscription-head h3,
+.bills-provider-intelligence-head h3,
+.bills-duplicate-detection-head h3 {
+  font-size: 1.06rem;
+  letter-spacing: -0.014em;
+}
+
+.bills-bulk-actions-head p,
+.bills-timeline-head p,
+.bills-subscription-head p,
+.bills-provider-intelligence-head p,
+.bills-duplicate-detection-head p {
+  font-size: 0.84rem;
+  line-height: 1.42;
+  max-width: 72ch;
 }
 
 .income-breakdown-summary {
@@ -3391,6 +3573,20 @@ tbody td {
 .row-actions--income .btn {
   width: 100%;
   justify-content: center;
+}
+
+.data-table--bills .row-actions--bills {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.data-table--bills .row-actions--bills .btn {
+  width: auto;
+  min-width: 5rem;
+  justify-content: center;
+  padding-inline: 0.58rem;
 }
 
 .table-row--quick td {
@@ -4255,6 +4451,20 @@ tbody td {
   }
 }
 
+@media (min-width: 1360px) {
+  .bills-tab-shell .panel-form {
+    grid-column: span 3;
+  }
+
+  .bills-tab-shell .panel-list {
+    grid-column: span 9;
+  }
+
+  .bills-summary-strip {
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  }
+}
+
 @media (max-width: 860px) {
   .dashboard-tab-shell .panel-header {
     flex-direction: column;
@@ -4465,6 +4675,15 @@ tbody td {
   .bills-timeline-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .bills-tab-shell .table-wrap--card {
+    overflow-x: auto;
+  }
+
+  .data-table--bills {
+    min-width: 62rem;
+    table-layout: auto;
   }
 
   .bills-bulk-actions-head {
