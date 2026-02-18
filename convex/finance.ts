@@ -390,6 +390,32 @@ const sanitizeCadenceDetails = (
   }
 }
 
+const sanitizeSubscriptionDetails = (isSubscription?: boolean, cancelReminderDays?: number) => {
+  const enabled = isSubscription === true
+  if (!enabled) {
+    return {
+      isSubscription: false,
+      cancelReminderDays: undefined,
+    }
+  }
+
+  if (cancelReminderDays === undefined) {
+    return {
+      isSubscription: true,
+      cancelReminderDays: 7,
+    }
+  }
+
+  if (!Number.isInteger(cancelReminderDays) || cancelReminderDays < 0 || cancelReminderDays > 365) {
+    throw new Error('Cancel reminder must be an integer between 0 and 365 days.')
+  }
+
+  return {
+    isSubscription: true,
+    cancelReminderDays,
+  }
+}
+
 const validateLocale = (locale: string) => {
   try {
     new Intl.NumberFormat(locale)
@@ -1573,6 +1599,7 @@ export const getFinanceData = query({
           incomeChangeEvents: [],
           bills: [],
           billPaymentChecks: [],
+          subscriptionPriceChanges: [],
           cards: [],
           loans: [],
           purchases: [],
@@ -1598,6 +1625,7 @@ export const getFinanceData = query({
       incomeChangeEvents,
       bills,
       billPaymentChecks,
+      subscriptionPriceChanges,
       cards,
       loans,
       purchases,
@@ -1635,6 +1663,11 @@ export const getFinanceData = query({
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .take(360),
+      ctx.db
+        .query('subscriptionPriceChanges')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(720),
       ctx.db
         .query('cards')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -1798,6 +1831,7 @@ export const getFinanceData = query({
       ...incomeChangeEvents.map((entry) => entry.createdAt),
       ...bills.map((entry) => entry.createdAt),
       ...billPaymentChecks.map((entry) => entry.updatedAt ?? entry.createdAt),
+      ...subscriptionPriceChanges.map((entry) => entry.createdAt),
       ...cards.map((entry) => entry.createdAt),
       ...loans.map((entry) => entry.createdAt),
       ...purchases.map((entry) => entry.createdAt),
@@ -1822,6 +1856,7 @@ export const getFinanceData = query({
         incomeChangeEvents,
         bills,
         billPaymentChecks,
+        subscriptionPriceChanges,
         cards,
         loans,
         purchases,
@@ -2764,6 +2799,8 @@ export const addBill = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    isSubscription: v.optional(v.boolean()),
+    cancelReminderDays: v.optional(v.number()),
     linkedAccountId: v.optional(v.id('accounts')),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
@@ -2780,6 +2817,7 @@ export const addBill = mutation({
     }
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+    const subscriptionDetails = sanitizeSubscriptionDetails(args.isSubscription, args.cancelReminderDays)
     const linkedAccountId = await resolveBillLinkedAccountId(ctx, identity.subject, args.linkedAccountId)
 
     const createdBillId = await ctx.db.insert('bills', {
@@ -2790,6 +2828,8 @@ export const addBill = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      isSubscription: subscriptionDetails.isSubscription,
+      cancelReminderDays: subscriptionDetails.cancelReminderDays,
       linkedAccountId,
       autopay: args.autopay,
       notes: args.notes?.trim() || undefined,
@@ -2806,6 +2846,8 @@ export const addBill = mutation({
         amount: args.amount,
         dueDay: args.dueDay,
         cadence: args.cadence,
+        isSubscription: subscriptionDetails.isSubscription,
+        cancelReminderDays: subscriptionDetails.cancelReminderDays,
         linkedAccountId: linkedAccountId ? String(linkedAccountId) : undefined,
       },
     })
@@ -2821,6 +2863,8 @@ export const updateBill = mutation({
     cadence: cadenceValidator,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnitValidator),
+    isSubscription: v.optional(v.boolean()),
+    cancelReminderDays: v.optional(v.number()),
     linkedAccountId: v.optional(v.id('accounts')),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
@@ -2837,6 +2881,7 @@ export const updateBill = mutation({
     }
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+    const subscriptionDetails = sanitizeSubscriptionDetails(args.isSubscription, args.cancelReminderDays)
     const linkedAccountId = await resolveBillLinkedAccountId(ctx, identity.subject, args.linkedAccountId)
 
     const existing = await ctx.db.get(args.id)
@@ -2849,10 +2894,26 @@ export const updateBill = mutation({
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
+      isSubscription: subscriptionDetails.isSubscription,
+      cancelReminderDays: subscriptionDetails.cancelReminderDays,
       linkedAccountId,
       autopay: args.autopay,
       notes: args.notes?.trim() || undefined,
     })
+
+    const wasSubscription = existing.isSubscription === true
+    const isSubscription = subscriptionDetails.isSubscription
+    if ((wasSubscription || isSubscription) && Math.abs(existing.amount - args.amount) > 0.005) {
+      await ctx.db.insert('subscriptionPriceChanges', {
+        userId: identity.subject,
+        billId: args.id,
+        previousAmount: roundCurrency(existing.amount),
+        newAmount: roundCurrency(args.amount),
+        effectiveDate: new Date().toISOString().slice(0, 10),
+        note: undefined,
+        createdAt: Date.now(),
+      })
+    }
 
     await recordFinanceAuditEvent(ctx, {
       userId: identity.subject,
@@ -2864,6 +2925,8 @@ export const updateBill = mutation({
         amount: existing.amount,
         dueDay: existing.dueDay,
         cadence: existing.cadence,
+        isSubscription: existing.isSubscription ?? false,
+        cancelReminderDays: existing.cancelReminderDays,
         linkedAccountId: existing.linkedAccountId ? String(existing.linkedAccountId) : undefined,
       },
       after: {
@@ -2871,6 +2934,8 @@ export const updateBill = mutation({
         amount: args.amount,
         dueDay: args.dueDay,
         cadence: args.cadence,
+        isSubscription: subscriptionDetails.isSubscription,
+        cancelReminderDays: subscriptionDetails.cancelReminderDays,
         linkedAccountId: linkedAccountId ? String(linkedAccountId) : undefined,
       },
     })
@@ -2892,9 +2957,18 @@ export const removeBill = mutation({
         q.eq('userId', identity.subject).eq('billId', args.id),
       )
       .collect()
+    const existingSubscriptionPriceChanges = await ctx.db
+      .query('subscriptionPriceChanges')
+      .withIndex('by_userId_billId_createdAt', (q) =>
+        q.eq('userId', identity.subject).eq('billId', args.id),
+      )
+      .collect()
 
     if (existingChecks.length > 0) {
       await Promise.all(existingChecks.map((entry) => ctx.db.delete(entry._id)))
+    }
+    if (existingSubscriptionPriceChanges.length > 0) {
+      await Promise.all(existingSubscriptionPriceChanges.map((entry) => ctx.db.delete(entry._id)))
     }
 
     await ctx.db.delete(args.id)

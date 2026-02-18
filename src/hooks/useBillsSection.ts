@@ -16,6 +16,8 @@ const initialBillForm: BillForm = {
   cadence: 'monthly',
   customInterval: '',
   customUnit: 'weeks',
+  isSubscription: false,
+  cancelReminderDays: '7',
   linkedAccountId: '',
   autopay: true,
   notes: '',
@@ -28,6 +30,8 @@ const initialBillEditDraft: BillEditDraft = {
   cadence: 'monthly',
   customInterval: '',
   customUnit: 'weeks',
+  isSubscription: false,
+  cancelReminderDays: '7',
   linkedAccountId: '',
   autopay: false,
   notes: '',
@@ -50,6 +54,10 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
 
     try {
       const customInterval = isCustomCadence(billForm.cadence) ? parseCustomInterval(billForm.customInterval) : undefined
+      const cancelReminderDays =
+        billForm.isSubscription && billForm.cancelReminderDays.trim().length > 0
+          ? parseIntInput(billForm.cancelReminderDays, 'Cancel reminder days')
+          : undefined
 
       await addBill({
         name: billForm.name,
@@ -58,6 +66,8 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
         cadence: billForm.cadence,
         customInterval,
         customUnit: isCustomCadence(billForm.cadence) ? billForm.customUnit : undefined,
+        isSubscription: billForm.isSubscription,
+        cancelReminderDays,
         linkedAccountId: billForm.linkedAccountId ? (billForm.linkedAccountId as AccountId) : undefined,
         autopay: billForm.autopay,
         notes: billForm.notes || undefined,
@@ -90,6 +100,8 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
       cadence: entry.cadence,
       customInterval: entry.customInterval ? String(entry.customInterval) : '',
       customUnit: entry.customUnit ?? 'weeks',
+      isSubscription: entry.isSubscription ?? false,
+      cancelReminderDays: String(entry.cancelReminderDays ?? 7),
       linkedAccountId: entry.linkedAccountId ? String(entry.linkedAccountId) : '',
       autopay: entry.autopay,
       notes: entry.notes ?? '',
@@ -104,6 +116,10 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
       const customInterval = isCustomCadence(billEditDraft.cadence)
         ? parseCustomInterval(billEditDraft.customInterval)
         : undefined
+      const cancelReminderDays =
+        billEditDraft.isSubscription && billEditDraft.cancelReminderDays.trim().length > 0
+          ? parseIntInput(billEditDraft.cancelReminderDays, 'Cancel reminder days')
+          : undefined
 
       await updateBill({
         id: billEditId,
@@ -113,6 +129,8 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
         cadence: billEditDraft.cadence,
         customInterval,
         customUnit: isCustomCadence(billEditDraft.cadence) ? billEditDraft.customUnit : undefined,
+        isSubscription: billEditDraft.isSubscription,
+        cancelReminderDays,
         linkedAccountId: billEditDraft.linkedAccountId ? (billEditDraft.linkedAccountId as AccountId) : undefined,
         autopay: billEditDraft.autopay,
         notes: billEditDraft.notes || undefined,

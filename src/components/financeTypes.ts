@@ -65,6 +65,7 @@ export type IncomePaymentCheckEntry = Doc<'incomePaymentChecks'>
 export type IncomeChangeEventEntry = Doc<'incomeChangeEvents'>
 export type BillEntry = Doc<'bills'>
 export type BillPaymentCheckEntry = Doc<'billPaymentChecks'>
+export type SubscriptionPriceChangeEntry = Doc<'subscriptionPriceChanges'>
 export type CardEntry = Doc<'cards'>
 export type LoanEntry = Doc<'loans'>
 export type PurchaseEntry = Doc<'purchases'>
@@ -156,6 +157,8 @@ export type BillForm = {
   cadence: Cadence
   customInterval: string
   customUnit: CustomCadenceUnit
+  isSubscription: boolean
+  cancelReminderDays: string
   linkedAccountId: string
   autopay: boolean
   notes: string
@@ -402,6 +405,7 @@ export type IncomePaymentCheckId = Id<'incomePaymentChecks'>
 export type IncomeChangeEventId = Id<'incomeChangeEvents'>
 export type BillId = Id<'bills'>
 export type BillPaymentCheckId = Id<'billPaymentChecks'>
+export type SubscriptionPriceChangeId = Id<'subscriptionPriceChanges'>
 export type CardId = Id<'cards'>
 export type LoanId = Id<'loans'>
 export type PurchaseId = Id<'purchases'>

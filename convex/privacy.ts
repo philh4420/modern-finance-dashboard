@@ -18,6 +18,7 @@ const retentionPolicyKeyValidator = v.union(
 type DeletionTable =
   | 'incomePaymentChecks'
   | 'billPaymentChecks'
+  | 'subscriptionPriceChanges'
   | 'incomeChangeEvents'
   | 'ledgerLines'
   | 'ledgerEntries'
@@ -46,6 +47,7 @@ type DeletionTable =
 const deletionTableValidator = v.union(
   v.literal('incomePaymentChecks'),
   v.literal('billPaymentChecks'),
+  v.literal('subscriptionPriceChanges'),
   v.literal('incomeChangeEvents'),
   v.literal('ledgerLines'),
   v.literal('ledgerEntries'),
@@ -365,6 +367,7 @@ export const requestDeletion = action({
     const deleteTables: DeletionTable[] = [
       'incomePaymentChecks',
       'billPaymentChecks',
+      'subscriptionPriceChanges',
       'incomeChangeEvents',
       'ledgerLines',
       'ledgerEntries',
@@ -514,6 +517,7 @@ export const _collectExportData = internalQuery({
       incomes,
       incomePaymentChecks,
       billPaymentChecks,
+      subscriptionPriceChanges,
       incomeChangeEvents,
       bills,
       cards,
@@ -540,6 +544,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('incomes').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomePaymentChecks').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('billPaymentChecks').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('subscriptionPriceChanges').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomeChangeEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('bills').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cards').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -568,6 +573,7 @@ export const _collectExportData = internalQuery({
       incomes: docsToPortableRows(incomes),
       incomePaymentChecks: docsToPortableRows(incomePaymentChecks),
       billPaymentChecks: docsToPortableRows(billPaymentChecks),
+      subscriptionPriceChanges: docsToPortableRows(subscriptionPriceChanges),
       incomeChangeEvents: docsToPortableRows(incomeChangeEvents),
       bills: docsToPortableRows(bills),
       cards: docsToPortableRows(cards),

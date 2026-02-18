@@ -11,6 +11,7 @@ import type {
   CadenceOption,
   CustomCadenceUnit,
   CustomCadenceUnitOption,
+  SubscriptionPriceChangeEntry,
 } from './financeTypes'
 import { nextDateForCadence, toIsoDate } from '../lib/cadenceDates'
 import { toMonthlyAmount } from '../lib/incomeMath'
@@ -99,12 +100,27 @@ type AutopayRiskCheck = {
   linkedAccountName?: string
 }
 
+type SubscriptionInsightRow = {
+  id: BillId
+  name: string
+  cadenceText: string
+  amount: number
+  annualizedCost: number
+  nextRenewalDate: Date | null
+  daysToRenewal: number | null
+  cancelReminderDays: number
+  cancelReminderDate: Date | null
+  cancelReminderDue: boolean
+  latestPriceChange?: SubscriptionPriceChangeEntry
+}
+
 const billTableColumnCount = 8
 
 type BillsTabProps = {
   accounts: AccountEntry[]
   bills: BillEntry[]
   billPaymentChecks: BillPaymentCheckEntry[]
+  subscriptionPriceChanges: SubscriptionPriceChangeEntry[]
   monthlyBills: number
   billForm: BillForm
   setBillForm: Dispatch<SetStateAction<BillForm>>
@@ -136,6 +152,7 @@ export function BillsTab({
   accounts,
   bills,
   billPaymentChecks,
+  subscriptionPriceChanges,
   monthlyBills,
   billForm,
   setBillForm,
@@ -170,6 +187,10 @@ export function BillsTab({
     () => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }),
     [],
   )
+  const subscriptionDateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+    [],
+  )
 
   const billPaymentChecksByBillId = useMemo(() => {
     const map = new Map<BillId, BillPaymentCheckEntry[]>()
@@ -189,6 +210,23 @@ export function BillsTab({
 
     return map
   }, [billPaymentChecks])
+
+  const subscriptionPriceChangesByBillId = useMemo(() => {
+    const map = new Map<BillId, SubscriptionPriceChangeEntry[]>()
+    subscriptionPriceChanges.forEach((entry) => {
+      const key = entry.billId as BillId
+      const current = map.get(key) ?? []
+      current.push(entry)
+      map.set(key, current)
+    })
+
+    map.forEach((entries, key) => {
+      const sorted = [...entries].sort((left, right) => right.createdAt - left.createdAt)
+      map.set(key, sorted)
+    })
+
+    return map
+  }, [subscriptionPriceChanges])
 
   const billLinkedAccounts = useMemo(() => {
     const map = new Map<BillId, AccountEntry | null>()
@@ -469,6 +507,74 @@ export function BillsTab({
     }
   }, [billPaymentChecks])
 
+  const subscriptionInsights = useMemo(() => {
+    const today = startOfDay(new Date())
+    const recentThreshold = new Date(today.getTime() - 90 * msPerDay)
+
+    const rows: SubscriptionInsightRow[] = bills
+      .filter((entry) => entry.isSubscription === true)
+      .map((entry) => {
+        const nextRenewalDate = nextDateForCadence({
+          cadence: entry.cadence,
+          createdAt: entry.createdAt,
+          dayOfMonth: entry.dueDay,
+          customInterval: entry.customInterval ?? undefined,
+          customUnit: entry.customUnit ?? undefined,
+          now: today,
+        })
+
+        const daysToRenewal = nextRenewalDate
+          ? Math.round((startOfDay(nextRenewalDate).getTime() - today.getTime()) / msPerDay)
+          : null
+
+        const cancelReminderDays = Math.max(entry.cancelReminderDays ?? 7, 0)
+        const cancelReminderDate = nextRenewalDate
+          ? startOfDay(new Date(nextRenewalDate.getTime() - cancelReminderDays * msPerDay))
+          : null
+        const cancelReminderDue = cancelReminderDate ? cancelReminderDate.getTime() <= today.getTime() : false
+        const latestPriceChange = subscriptionPriceChangesByBillId.get(entry._id)?.[0]
+
+        return {
+          id: entry._id,
+          name: entry.name,
+          cadenceText: cadenceLabel(entry.cadence, entry.customInterval, entry.customUnit),
+          amount: entry.amount,
+          annualizedCost: toMonthlyAmount(entry.amount, entry.cadence, entry.customInterval, entry.customUnit) * 12,
+          nextRenewalDate: nextRenewalDate ?? null,
+          daysToRenewal,
+          cancelReminderDays,
+          cancelReminderDate,
+          cancelReminderDue,
+          latestPriceChange,
+        }
+      })
+      .sort((left, right) => {
+        const leftRank = left.daysToRenewal ?? Number.MAX_SAFE_INTEGER
+        const rightRank = right.daysToRenewal ?? Number.MAX_SAFE_INTEGER
+        if (leftRank !== rightRank) {
+          return leftRank - rightRank
+        }
+        return right.annualizedCost - left.annualizedCost
+      })
+
+    const annualizedCostTotal = rows.reduce((sum, row) => sum + row.annualizedCost, 0)
+    const monthlyCostTotal = annualizedCostTotal / 12
+    const cancelReminderDueCount = rows.filter((row) => row.cancelReminderDue).length
+    const renewalsIn30DaysCount = rows.filter((row) => row.daysToRenewal !== null && row.daysToRenewal <= 30).length
+    const priceChangesIn90DaysCount = subscriptionPriceChanges.filter(
+      (entry) => new Date(`${entry.effectiveDate}T00:00:00`) >= recentThreshold,
+    ).length
+
+    return {
+      rows,
+      annualizedCostTotal,
+      monthlyCostTotal,
+      cancelReminderDueCount,
+      renewalsIn30DaysCount,
+      priceChangesIn90DaysCount,
+    }
+  }, [bills, cadenceLabel, subscriptionPriceChanges, subscriptionPriceChangesByBillId])
+
   const timelineData = useMemo(() => {
     const today = startOfDay(new Date())
     const timelineMaxDays = 30
@@ -702,6 +808,45 @@ export function BillsTab({
             ) : null}
 
             <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="bill-is-subscription">
+                <input
+                  id="bill-is-subscription"
+                  type="checkbox"
+                  checked={billForm.isSubscription}
+                  onChange={(event) =>
+                    setBillForm((prev) => ({
+                      ...prev,
+                      isSubscription: event.target.checked,
+                      cancelReminderDays: event.target.checked ? prev.cancelReminderDays || '7' : '',
+                    }))
+                  }
+                />
+                Track as subscription / renewal
+              </label>
+            </div>
+
+            {billForm.isSubscription ? (
+              <div className="form-field">
+                <label htmlFor="bill-cancel-reminder">Cancel reminder (days before renewal)</label>
+                <input
+                  id="bill-cancel-reminder"
+                  type="number"
+                  inputMode="numeric"
+                  min="0"
+                  max="365"
+                  step="1"
+                  value={billForm.cancelReminderDays}
+                  onChange={(event) =>
+                    setBillForm((prev) => ({
+                      ...prev,
+                      cancelReminderDays: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+            ) : null}
+
+            <div className="form-field form-field--span2">
               <label htmlFor="bill-linked-account">Linked account (for autopay risk)</label>
               <select
                 id="bill-linked-account"
@@ -743,7 +888,8 @@ export function BillsTab({
 
           <p id="bill-form-hint" className="form-hint">
             Tip: use <strong>Custom</strong> for true intervals (every 4 weeks, 6 weeks, 4 months, etc) and{' '}
-            <strong>One Time</strong> for non-recurring bills. Link an account to enable autopay balance risk checks.
+            <strong>One Time</strong> for non-recurring bills. Mark subscriptions to get renewal + cancel reminders and
+            link an account to enable autopay balance risk checks.
           </p>
 
           <div className="form-actions">
@@ -873,6 +1019,141 @@ export function BillsTab({
                     : 'No bill cycle logs yet'}
                 </small>
               </article>
+            </section>
+
+            <section className="bills-subscription-module" aria-label="Subscription and renewal module">
+              <header className="bills-subscription-head">
+                <div>
+                  <h3>Subscription renewals</h3>
+                  <p>Track upcoming renewals, annualized cost, price changes, and cancel reminders.</p>
+                </div>
+              </header>
+
+              <div className="bills-summary-strip">
+                <article className="bills-summary-card">
+                  <p>Tracked subscriptions</p>
+                  <strong>{subscriptionInsights.rows.length}</strong>
+                  <small>{formatMoney(subscriptionInsights.monthlyCostTotal)} monthly run-rate</small>
+                </article>
+                <article className="bills-summary-card bills-summary-card--watch">
+                  <p>Annualized cost</p>
+                  <strong>{formatMoney(subscriptionInsights.annualizedCostTotal)}</strong>
+                  <small>Total yearly renewal exposure</small>
+                </article>
+                <article
+                  className={
+                    subscriptionInsights.cancelReminderDueCount > 0
+                      ? 'bills-summary-card bills-summary-card--critical'
+                      : 'bills-summary-card bills-summary-card--good'
+                  }
+                >
+                  <p>Cancel reminders due</p>
+                  <strong>{subscriptionInsights.cancelReminderDueCount}</strong>
+                  <small>Based on reminder lead times</small>
+                </article>
+                <article className="bills-summary-card">
+                  <p>Renewals in next 30 days</p>
+                  <strong>{subscriptionInsights.renewalsIn30DaysCount}</strong>
+                  <small>Upcoming subscription charges</small>
+                </article>
+                <article className="bills-summary-card">
+                  <p>Price changes (90 days)</p>
+                  <strong>{subscriptionInsights.priceChangesIn90DaysCount}</strong>
+                  <small>Amount updates tracked automatically</small>
+                </article>
+              </div>
+
+              {subscriptionInsights.rows.length === 0 ? (
+                <p className="subnote">No subscription bills yet. Enable “Track as subscription / renewal” on a bill to start.</p>
+              ) : (
+                <div className="table-wrap table-wrap--card">
+                  <table className="data-table">
+                    <caption className="sr-only">Subscription renewals</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Subscription</th>
+                        <th scope="col">Renewal</th>
+                        <th scope="col">Annualized</th>
+                        <th scope="col">Cancel reminder</th>
+                        <th scope="col">Price change tracker</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subscriptionInsights.rows.map((row) => (
+                        <tr key={row.id}>
+                          <td>
+                            <div className="cell-stack">
+                              <strong>{row.name}</strong>
+                              <small>{row.cadenceText}</small>
+                              <small>{formatMoney(row.amount)} per cycle</small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="cell-stack">
+                              <strong>
+                                {row.nextRenewalDate ? subscriptionDateFormatter.format(row.nextRenewalDate) : 'No upcoming renewal'}
+                              </strong>
+                              <small>
+                                {row.daysToRenewal === null
+                                  ? 'Outside active schedule'
+                                  : row.daysToRenewal === 0
+                                    ? 'Renews today'
+                                    : `In ${row.daysToRenewal} day${row.daysToRenewal === 1 ? '' : 's'}`}
+                              </small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="cell-stack">
+                              <strong>{formatMoney(row.annualizedCost)}</strong>
+                              <small>{formatMoney(row.annualizedCost / 12)} monthly normalized</small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="cell-stack">
+                              <strong>
+                                {row.cancelReminderDate ? subscriptionDateFormatter.format(row.cancelReminderDate) : 'n/a'}
+                              </strong>
+                              <small>
+                                {row.cancelReminderDays} day{row.cancelReminderDays === 1 ? '' : 's'} before renewal
+                              </small>
+                              <span className={row.cancelReminderDue ? 'pill pill--critical' : 'pill pill--good'}>
+                                {row.cancelReminderDue ? 'Reminder due' : 'On track'}
+                              </span>
+                            </div>
+                          </td>
+                          <td>
+                            {row.latestPriceChange ? (
+                              <div className="cell-stack">
+                                <strong>{row.latestPriceChange.effectiveDate}</strong>
+                                <small>
+                                  {formatMoney(row.latestPriceChange.previousAmount)} → {formatMoney(row.latestPriceChange.newAmount)}
+                                </small>
+                                <small
+                                  className={
+                                    row.latestPriceChange.newAmount > row.latestPriceChange.previousAmount
+                                      ? 'amount-negative'
+                                      : row.latestPriceChange.newAmount < row.latestPriceChange.previousAmount
+                                        ? 'amount-positive'
+                                        : undefined
+                                  }
+                                >
+                                  {row.latestPriceChange.newAmount > row.latestPriceChange.previousAmount
+                                    ? 'Price increased'
+                                    : row.latestPriceChange.newAmount < row.latestPriceChange.previousAmount
+                                      ? 'Price decreased'
+                                      : 'No change'}
+                                </small>
+                              </div>
+                            ) : (
+                              <span className="pill pill--neutral">No change logs yet</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
 
             <section className="bills-timeline" aria-label="Bills due-date timeline">
@@ -1131,6 +1412,39 @@ export function BillsTab({
                                     />
                                     Autopay
                                   </label>
+                                  <label className="checkbox-row" htmlFor={`bill-edit-subscription-${entry._id}`}>
+                                    <input
+                                      id={`bill-edit-subscription-${entry._id}`}
+                                      type="checkbox"
+                                      checked={billEditDraft.isSubscription}
+                                      onChange={(event) =>
+                                        setBillEditDraft((prev) => ({
+                                          ...prev,
+                                          isSubscription: event.target.checked,
+                                          cancelReminderDays: event.target.checked ? prev.cancelReminderDays || '7' : '',
+                                        }))
+                                      }
+                                    />
+                                    Subscription
+                                  </label>
+                                  {billEditDraft.isSubscription ? (
+                                    <input
+                                      className="inline-input"
+                                      type="number"
+                                      inputMode="numeric"
+                                      min="0"
+                                      max="365"
+                                      step="1"
+                                      value={billEditDraft.cancelReminderDays}
+                                      onChange={(event) =>
+                                        setBillEditDraft((prev) => ({
+                                          ...prev,
+                                          cancelReminderDays: event.target.value,
+                                        }))
+                                      }
+                                      placeholder="Reminder days"
+                                    />
+                                  ) : null}
                                   <select
                                     className="inline-select"
                                     value={billEditDraft.linkedAccountId}
@@ -1152,6 +1466,11 @@ export function BillsTab({
                               ) : entry.autopay ? (
                                 <div className="cell-stack">
                                   <span className="pill pill--good">Autopay</span>
+                                  {entry.isSubscription ? (
+                                    <span className="pill pill--cadence">
+                                      Subscription · {entry.cancelReminderDays ?? 7}d reminder
+                                    </span>
+                                  ) : null}
                                   <small>{linkedAccount ? `Linked ${linkedAccount.name}` : 'No linked account'}</small>
                                   <span
                                     className={
@@ -1185,7 +1504,14 @@ export function BillsTab({
                                   </small>
                                 </div>
                               ) : (
-                                <span className="pill pill--neutral">Manual</span>
+                                <div className="cell-stack">
+                                  <span className="pill pill--neutral">Manual</span>
+                                  {entry.isSubscription ? (
+                                    <span className="pill pill--cadence">
+                                      Subscription · {entry.cancelReminderDays ?? 7}d reminder
+                                    </span>
+                                  ) : null}
+                                </div>
                               )}
                             </td>
                             <td>

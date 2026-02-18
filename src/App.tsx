@@ -147,6 +147,7 @@ function App() {
   const incomeChangeEvents = financeState?.data.incomeChangeEvents ?? []
   const bills = financeState?.data.bills ?? []
   const billPaymentChecks = financeState?.data.billPaymentChecks ?? []
+  const subscriptionPriceChanges = financeState?.data.subscriptionPriceChanges ?? []
   const cards = financeState?.data.cards ?? []
   const loans = financeState?.data.loans ?? []
   const purchases = financeState?.data.purchases ?? []
@@ -678,6 +679,7 @@ function App() {
             accounts={accounts}
 	            bills={bills}
             billPaymentChecks={billPaymentChecks}
+            subscriptionPriceChanges={subscriptionPriceChanges}
 	            monthlyBills={summary.monthlyBills}
 	            billForm={billsSection.billForm}
 	            setBillForm={billsSection.setBillForm}

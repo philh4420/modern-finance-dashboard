@@ -254,6 +254,8 @@ export default defineSchema({
     cadence,
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnit),
+    isSubscription: v.optional(v.boolean()),
+    cancelReminderDays: v.optional(v.number()),
     linkedAccountId: v.optional(v.id('accounts')),
     autopay: v.boolean(),
     notes: v.optional(v.string()),
@@ -262,6 +264,18 @@ export default defineSchema({
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt'])
     .index('by_userId_linkedAccountId', ['userId', 'linkedAccountId']),
+  subscriptionPriceChanges: defineTable({
+    userId: v.string(),
+    billId: v.id('bills'),
+    previousAmount: v.number(),
+    newAmount: v.number(),
+    effectiveDate: v.string(),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_billId_createdAt', ['userId', 'billId', 'createdAt']),
   billPaymentChecks: defineTable({
     userId: v.string(),
     billId: v.id('bills'),
