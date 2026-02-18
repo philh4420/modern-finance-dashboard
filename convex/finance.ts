@@ -33,6 +33,11 @@ const cycleRunSourceValidator = v.union(v.literal('manual'), v.literal('automati
 const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
 const cardMinimumPaymentTypeValidator = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
 const incomePaymentStatusValidator = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
+const billOverlapResolutionValidator = v.union(
+  v.literal('merge'),
+  v.literal('archive_duplicate'),
+  v.literal('mark_intentional'),
+)
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
@@ -414,6 +419,40 @@ const sanitizeSubscriptionDetails = (isSubscription?: boolean, cancelReminderDay
     isSubscription: true,
     cancelReminderDays,
   }
+}
+
+const archivedDuplicateNoteMarker = '[archived-duplicate]'
+const intentionalOverlapMarkerPrefix = '[intentional-overlap:'
+
+const buildIntentionalOverlapMarker = (otherBillId: string) => `${intentionalOverlapMarkerPrefix}${otherBillId}]`
+const buildDuplicateOfMarker = (primaryBillId: string) => `[duplicate-of:${primaryBillId}]`
+const buildMergedFromMarker = (secondaryBillId: string) => `[merged-from:${secondaryBillId}]`
+
+const appendUniqueNoteMarker = (notes: string | undefined, marker: string) => {
+  const normalizedMarker = marker.trim()
+  if (normalizedMarker.length === 0) {
+    return notes?.trim() || undefined
+  }
+
+  const base = notes?.trim() ?? ''
+  if (base.toLowerCase().includes(normalizedMarker.toLowerCase())) {
+    return base.length > 0 ? base : undefined
+  }
+
+  const separator = base.length > 0 ? '\n' : ''
+  const combined = `${base}${separator}${normalizedMarker}`.trim()
+  if (combined.length <= 2000) {
+    return combined
+  }
+
+  if (normalizedMarker.length >= 2000) {
+    return normalizedMarker.slice(0, 2000)
+  }
+
+  const availableBase = Math.max(0, 2000 - normalizedMarker.length - 1)
+  const truncatedBase = base.slice(0, availableBase).trim()
+  const truncatedCombined = `${truncatedBase}\n${normalizedMarker}`.trim()
+  return truncatedCombined.length > 0 ? truncatedCombined : undefined
 }
 
 const validateLocale = (locale: string) => {
@@ -2939,6 +2978,207 @@ export const updateBill = mutation({
         linkedAccountId: linkedAccountId ? String(linkedAccountId) : undefined,
       },
     })
+  },
+})
+
+export const resolveBillDuplicateOverlap = mutation({
+  args: {
+    primaryBillId: v.id('bills'),
+    secondaryBillId: v.id('bills'),
+    resolution: billOverlapResolutionValidator,
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    if (args.primaryBillId === args.secondaryBillId) {
+      throw new Error('Primary and secondary bill must be different.')
+    }
+
+    const [primary, secondary] = await Promise.all([ctx.db.get(args.primaryBillId), ctx.db.get(args.secondaryBillId)])
+    ensureOwned(primary, identity.subject, 'Primary bill not found.')
+    ensureOwned(secondary, identity.subject, 'Secondary bill not found.')
+
+    const primaryBillId = String(primary._id)
+    const secondaryBillId = String(secondary._id)
+
+    if (args.resolution === 'mark_intentional') {
+      const primaryNotes = appendUniqueNoteMarker(primary.notes, buildIntentionalOverlapMarker(secondaryBillId))
+      const secondaryNotes = appendUniqueNoteMarker(secondary.notes, buildIntentionalOverlapMarker(primaryBillId))
+      await Promise.all([
+        ctx.db.patch(primary._id, { notes: primaryNotes }),
+        ctx.db.patch(secondary._id, { notes: secondaryNotes }),
+      ])
+
+      await Promise.all([
+        recordFinanceAuditEvent(ctx, {
+          userId: identity.subject,
+          entityType: 'bill',
+          entityId: primaryBillId,
+          action: 'overlap_marked_intentional',
+          metadata: {
+            pairedBillId: secondaryBillId,
+          },
+        }),
+        recordFinanceAuditEvent(ctx, {
+          userId: identity.subject,
+          entityType: 'bill',
+          entityId: secondaryBillId,
+          action: 'overlap_marked_intentional',
+          metadata: {
+            pairedBillId: primaryBillId,
+          },
+        }),
+      ])
+
+      return {
+        resolution: args.resolution,
+        primaryBillId,
+        secondaryBillId,
+      }
+    }
+
+    if (args.resolution === 'archive_duplicate') {
+      const nextSecondaryName = secondary.name.toLowerCase().startsWith('archived - ')
+        ? secondary.name
+        : `Archived - ${secondary.name}`
+      const archivedNotes = appendUniqueNoteMarker(
+        appendUniqueNoteMarker(secondary.notes, archivedDuplicateNoteMarker),
+        buildDuplicateOfMarker(primaryBillId),
+      )
+
+      await ctx.db.patch(secondary._id, {
+        name: nextSecondaryName,
+        cadence: 'one_time',
+        customInterval: undefined,
+        customUnit: undefined,
+        autopay: false,
+        linkedAccountId: undefined,
+        isSubscription: false,
+        cancelReminderDays: undefined,
+        notes: archivedNotes,
+      })
+
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'bill',
+        entityId: secondaryBillId,
+        action: 'duplicate_archived',
+        metadata: {
+          primaryBillId,
+        },
+      })
+
+      return {
+        resolution: args.resolution,
+        primaryBillId,
+        secondaryBillId,
+      }
+    }
+
+    const [primaryChecks, secondaryChecks, secondaryPriceChanges] = await Promise.all([
+      ctx.db
+        .query('billPaymentChecks')
+        .withIndex('by_userId_billId_cycleMonth', (q) => q.eq('userId', identity.subject).eq('billId', primary._id))
+        .collect(),
+      ctx.db
+        .query('billPaymentChecks')
+        .withIndex('by_userId_billId_cycleMonth', (q) => q.eq('userId', identity.subject).eq('billId', secondary._id))
+        .collect(),
+      ctx.db
+        .query('subscriptionPriceChanges')
+        .withIndex('by_userId_billId_createdAt', (q) => q.eq('userId', identity.subject).eq('billId', secondary._id))
+        .collect(),
+    ])
+
+    const primaryChecksByCycle = new Set(primaryChecks.map((entry) => entry.cycleMonth))
+    let movedCycleLogCount = 0
+
+    for (const entry of secondaryChecks) {
+      if (primaryChecksByCycle.has(entry.cycleMonth)) {
+        continue
+      }
+
+      await ctx.db.insert('billPaymentChecks', {
+        userId: identity.subject,
+        billId: primary._id,
+        cycleMonth: entry.cycleMonth,
+        expectedAmount: entry.expectedAmount,
+        actualAmount: entry.actualAmount,
+        varianceAmount: entry.varianceAmount,
+        paidDay: entry.paidDay,
+        note: entry.note,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+      })
+      movedCycleLogCount += 1
+    }
+
+    for (const entry of secondaryPriceChanges) {
+      await ctx.db.insert('subscriptionPriceChanges', {
+        userId: identity.subject,
+        billId: primary._id,
+        previousAmount: entry.previousAmount,
+        newAmount: entry.newAmount,
+        effectiveDate: entry.effectiveDate,
+        note: entry.note,
+        createdAt: entry.createdAt,
+      })
+    }
+
+    const mergedNotes = appendUniqueNoteMarker(primary.notes, buildMergedFromMarker(secondaryBillId))
+    const nextIsSubscription = (primary.isSubscription ?? false) || (secondary.isSubscription ?? false)
+    await ctx.db.patch(primary._id, {
+      notes: mergedNotes,
+      linkedAccountId: primary.linkedAccountId ?? secondary.linkedAccountId,
+      autopay: primary.autopay || secondary.autopay,
+      isSubscription: nextIsSubscription,
+      cancelReminderDays: nextIsSubscription
+        ? primary.cancelReminderDays ?? secondary.cancelReminderDays ?? 7
+        : undefined,
+    })
+
+    if (secondaryChecks.length > 0) {
+      await Promise.all(secondaryChecks.map((entry) => ctx.db.delete(entry._id)))
+    }
+    if (secondaryPriceChanges.length > 0) {
+      await Promise.all(secondaryPriceChanges.map((entry) => ctx.db.delete(entry._id)))
+    }
+    await ctx.db.delete(secondary._id)
+
+    await Promise.all([
+      recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'bill',
+        entityId: primaryBillId,
+        action: 'duplicate_merged_in',
+        metadata: {
+          mergedBillId: secondaryBillId,
+          movedCycleLogCount,
+          movedPriceChangeCount: secondaryPriceChanges.length,
+        },
+      }),
+      recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'bill',
+        entityId: secondaryBillId,
+        action: 'merged_into_primary',
+        before: {
+          name: secondary.name,
+          amount: secondary.amount,
+          cadence: secondary.cadence,
+        },
+        metadata: {
+          primaryBillId,
+        },
+      }),
+    ])
+
+    return {
+      resolution: args.resolution,
+      primaryBillId,
+      secondaryBillId,
+      movedCycleLogCount,
+      movedPriceChangeCount: secondaryPriceChanges.length,
+    }
   },
 })
 

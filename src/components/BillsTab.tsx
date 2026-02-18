@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { Fragment, useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import type {
   AccountEntry,
   BillEditDraft,
@@ -153,6 +153,230 @@ type ProviderIntelligenceRow = {
   priceCreepReason: string
 }
 
+type BillOverlapKind = 'duplicate' | 'overlap'
+type BillOverlapResolution = 'merge' | 'archive_duplicate' | 'mark_intentional'
+type BillOverlapConfirmationState = {
+  match: BillOverlapMatch
+  resolution: BillOverlapResolution
+}
+
+type BillOverlapMatch = {
+  id: string
+  primaryBillId: BillId
+  secondaryBillId: BillId
+  primaryName: string
+  secondaryName: string
+  kind: BillOverlapKind
+  nameSimilarity: number
+  amountDelta: number
+  amountDeltaPercent: number
+  dueDayDelta: number
+  cadenceComparable: boolean
+  reason: string
+}
+
+type BillOverlapSignal = {
+  billId: BillId
+  billName: string
+  duplicateMatches: number
+  overlapMatches: number
+}
+
+const billNameStopWords = new Set([
+  'bill',
+  'payment',
+  'account',
+  'direct',
+  'debit',
+  'dd',
+  'subscription',
+  'service',
+  'charge',
+  'plan',
+  'monthly',
+  'weekly',
+  'annual',
+  'yearly',
+])
+const archivedDuplicateNoteMarker = '[archived-duplicate]'
+const intentionalOverlapMarkerPrefix = '[intentional-overlap:'
+
+const normalizeBillNameForMatch = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const tokenizeBillName = (value: string) =>
+  normalizeBillNameForMatch(value)
+    .split(' ')
+    .filter((token) => token.length > 1 && !billNameStopWords.has(token))
+
+const calculateNameSimilarity = (left: string, right: string) => {
+  const normalizedLeft = normalizeBillNameForMatch(left)
+  const normalizedRight = normalizeBillNameForMatch(right)
+
+  if (normalizedLeft.length === 0 || normalizedRight.length === 0) {
+    return 0
+  }
+
+  if (normalizedLeft === normalizedRight) {
+    return 1
+  }
+
+  if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) {
+    return 0.94
+  }
+
+  const leftTokens = new Set(tokenizeBillName(left))
+  const rightTokens = new Set(tokenizeBillName(right))
+  const tokenUnion = new Set([...leftTokens, ...rightTokens])
+  if (tokenUnion.size === 0) {
+    return 0
+  }
+
+  let intersection = 0
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) {
+      intersection += 1
+    }
+  })
+
+  return intersection / tokenUnion.size
+}
+
+const cadenceGrouping = (entry: BillEntry) => {
+  if (entry.cadence === 'custom') {
+    return `custom:${entry.customInterval ?? 0}:${entry.customUnit ?? 'months'}`
+  }
+  return entry.cadence
+}
+
+const areCadencesComparable = (left: BillEntry, right: BillEntry) => {
+  const leftGroup = cadenceGrouping(left)
+  const rightGroup = cadenceGrouping(right)
+  if (leftGroup === rightGroup) {
+    return true
+  }
+
+  const monthlyLike = new Set(['monthly', 'quarterly', 'yearly'])
+  if (monthlyLike.has(left.cadence) && monthlyLike.has(right.cadence)) {
+    return true
+  }
+
+  return false
+}
+
+const hasArchivedDuplicateMarker = (notes?: string) =>
+  (notes ?? '').toLowerCase().includes(archivedDuplicateNoteMarker)
+
+const hasIntentionalPairMarker = (left: BillEntry, right: BillEntry) => {
+  const leftNotes = (left.notes ?? '').toLowerCase()
+  const rightNotes = (right.notes ?? '').toLowerCase()
+  const leftTargetsRight = leftNotes.includes(`${intentionalOverlapMarkerPrefix}${String(right._id).toLowerCase()}]`)
+  const rightTargetsLeft = rightNotes.includes(`${intentionalOverlapMarkerPrefix}${String(left._id).toLowerCase()}]`)
+  return leftTargetsRight || rightTargetsLeft
+}
+
+const buildBillOverlapMatches = (bills: BillEntry[]) => {
+  const matches: BillOverlapMatch[] = []
+
+  for (let leftIndex = 0; leftIndex < bills.length; leftIndex += 1) {
+    const left = bills[leftIndex]
+    for (let rightIndex = leftIndex + 1; rightIndex < bills.length; rightIndex += 1) {
+      const right = bills[rightIndex]
+
+      if (hasArchivedDuplicateMarker(left.notes) || hasArchivedDuplicateMarker(right.notes)) {
+        continue
+      }
+      if (hasIntentionalPairMarker(left, right)) {
+        continue
+      }
+
+      const nameSimilarity = calculateNameSimilarity(left.name, right.name)
+      if (nameSimilarity < 0.55) {
+        continue
+      }
+
+      const amountDelta = Math.abs(left.amount - right.amount)
+      const amountDeltaPercent = amountDelta / Math.max(Math.max(left.amount, right.amount), 1)
+      const dueDayDelta = Math.abs(left.dueDay - right.dueDay)
+      const cadenceComparable = areCadencesComparable(left, right)
+      const duplicateCandidate =
+        cadenceComparable && nameSimilarity >= 0.9 && amountDeltaPercent <= 0.03 && dueDayDelta <= 2
+      const overlapCandidate =
+        cadenceComparable && nameSimilarity >= 0.65 && amountDeltaPercent <= 0.2 && dueDayDelta <= 7
+
+      if (!duplicateCandidate && !overlapCandidate) {
+        continue
+      }
+
+      const kind: BillOverlapKind = duplicateCandidate ? 'duplicate' : 'overlap'
+      const primary = left.createdAt <= right.createdAt ? left : right
+      const secondary = primary._id === left._id ? right : left
+      matches.push({
+        id: `${left._id}-${right._id}`,
+        primaryBillId: primary._id,
+        secondaryBillId: secondary._id,
+        primaryName: primary.name,
+        secondaryName: secondary.name,
+        kind,
+        nameSimilarity,
+        amountDelta,
+        amountDeltaPercent,
+        dueDayDelta,
+        cadenceComparable,
+        reason:
+          kind === 'duplicate'
+            ? 'Very similar name, amount, and due timing.'
+            : 'Similar name, amount, and due timing.',
+      })
+    }
+  }
+
+  return matches.sort((left, right) => {
+    const kindRank = (value: BillOverlapKind) => (value === 'duplicate' ? 0 : 1)
+    if (kindRank(left.kind) !== kindRank(right.kind)) {
+      return kindRank(left.kind) - kindRank(right.kind)
+    }
+    if (left.nameSimilarity !== right.nameSimilarity) {
+      return right.nameSimilarity - left.nameSimilarity
+    }
+    if (left.amountDeltaPercent !== right.amountDeltaPercent) {
+      return left.amountDeltaPercent - right.amountDeltaPercent
+    }
+    return left.dueDayDelta - right.dueDayDelta
+  })
+}
+
+const getOverlapResolutionCopy = (resolution: BillOverlapResolution) => {
+  if (resolution === 'merge') {
+    return {
+      title: 'Confirm Merge',
+      confirmLabel: 'Confirm merge',
+      description:
+        'This keeps the primary bill, moves non-duplicate cycle logs and subscription price-change history from the secondary bill, then removes the secondary record.',
+    }
+  }
+
+  if (resolution === 'archive_duplicate') {
+    return {
+      title: 'Confirm Archive Duplicate',
+      confirmLabel: 'Confirm archive',
+      description:
+        'This keeps the primary bill and archives the secondary bill by converting it to one-time, disabling autopay/subscription flags, and tagging it as archived duplicate.',
+    }
+  }
+
+  return {
+    title: 'Confirm Intentional Overlap',
+    confirmLabel: 'Confirm intentional',
+    description:
+      'This keeps both bills and tags them as an intentional overlap pair so this specific pair is no longer flagged in duplicate/overlap checks.',
+  }
+}
+
 const billTableColumnCount = 8
 
 type BillsTabProps = {
@@ -180,6 +404,11 @@ type BillsTabProps = {
   onDeleteBillPaymentCheck: (id: BillPaymentCheckId) => Promise<void>
   saveBillEdit: () => Promise<void>
   startBillEdit: (entry: BillEntry) => void
+  onResolveBillDuplicateOverlap: (args: {
+    primaryBillId: BillId
+    secondaryBillId: BillId
+    resolution: BillOverlapResolution
+  }) => Promise<void>
   cadenceOptions: CadenceOption[]
   customCadenceUnitOptions: CustomCadenceUnitOption[]
   isCustomCadence: (cadence: Cadence) => boolean
@@ -205,6 +434,7 @@ export function BillsTab({
   onDeleteBillPaymentCheck,
   saveBillEdit,
   startBillEdit,
+  onResolveBillDuplicateOverlap,
   cadenceOptions,
   customCadenceUnitOptions,
   isCustomCadence,
@@ -215,6 +445,8 @@ export function BillsTab({
   const [sortKey, setSortKey] = useState<BillSortKey>('name_asc')
   const [timelineWindowDays, setTimelineWindowDays] = useState<14 | 30>(14)
   const [paymentLogBillId, setPaymentLogBillId] = useState<BillId | null>(null)
+  const [resolvingOverlapId, setResolvingOverlapId] = useState<string | null>(null)
+  const [overlapConfirmation, setOverlapConfirmation] = useState<BillOverlapConfirmationState | null>(null)
   const [paymentLogDraft, setPaymentLogDraft] = useState<BillPaymentLogDraft>(() => ({
     cycleMonth: new Date().toISOString().slice(0, 7),
     expectedAmount: '',
@@ -230,6 +462,7 @@ export function BillsTab({
     () => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
     [],
   )
+  const billById = useMemo(() => new Map<BillId, BillEntry>(bills.map((entry) => [entry._id, entry])), [bills])
 
   const billPaymentChecksByBillId = useMemo(() => {
     const map = new Map<BillId, BillPaymentCheckEntry[]>()
@@ -400,6 +633,53 @@ export function BillsTab({
     setPaymentLogBillId(null)
   }
 
+  const openOverlapConfirmation = (match: BillOverlapMatch, resolution: BillOverlapResolution) => {
+    setOverlapConfirmation({
+      match,
+      resolution,
+    })
+  }
+
+  const closeOverlapConfirmation = () => {
+    if (resolvingOverlapId) {
+      return
+    }
+    setOverlapConfirmation(null)
+  }
+
+  const resolveOverlapMatch = async (match: BillOverlapMatch, resolution: BillOverlapResolution) => {
+    setResolvingOverlapId(match.id)
+    try {
+      await onResolveBillDuplicateOverlap({
+        primaryBillId: match.primaryBillId,
+        secondaryBillId: match.secondaryBillId,
+        resolution,
+      })
+      setOverlapConfirmation(null)
+    } finally {
+      setResolvingOverlapId((current) => (current === match.id ? null : current))
+    }
+  }
+
+  useEffect(() => {
+    if (!overlapConfirmation) {
+      return
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (!resolvingOverlapId) {
+          setOverlapConfirmation(null)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [overlapConfirmation, resolvingOverlapId])
+
   const visibleBills = useMemo(() => {
     const query = search.trim().toLowerCase()
     const filtered = query
@@ -438,6 +718,50 @@ export function BillsTab({
 
     return sorted
   }, [bills, cadenceLabel, search, sortKey])
+
+  const duplicateOverlapData = useMemo(() => {
+    const matches = buildBillOverlapMatches(bills)
+    const duplicatePairs = matches.filter((entry) => entry.kind === 'duplicate').length
+    const overlapPairs = matches.filter((entry) => entry.kind === 'overlap').length
+
+    const signalsByBillId = new Map<BillId, BillOverlapSignal>()
+    const billNameById = new Map<BillId, string>(bills.map((entry) => [entry._id, entry.name]))
+
+    matches.forEach((match) => {
+      ;([match.primaryBillId, match.secondaryBillId] as BillId[]).forEach((billId) => {
+        const current = signalsByBillId.get(billId)
+        const next = current ?? {
+          billId,
+          billName: billNameById.get(billId) ?? 'Bill',
+          duplicateMatches: 0,
+          overlapMatches: 0,
+        }
+        if (match.kind === 'duplicate') {
+          next.duplicateMatches += 1
+        } else {
+          next.overlapMatches += 1
+        }
+        signalsByBillId.set(billId, next)
+      })
+    })
+
+    const impactedSignals = [...signalsByBillId.values()].sort((left, right) => {
+      const leftScore = left.duplicateMatches * 3 + left.overlapMatches
+      const rightScore = right.duplicateMatches * 3 + right.overlapMatches
+      if (leftScore !== rightScore) {
+        return rightScore - leftScore
+      }
+      return left.billName.localeCompare(right.billName, undefined, { sensitivity: 'base' })
+    })
+
+    return {
+      matches,
+      duplicatePairs,
+      overlapPairs,
+      impactedCount: impactedSignals.length,
+      impactedSignals,
+    }
+  }, [bills])
 
   const billSummary = useMemo(() => {
     const today = startOfDay(new Date())
@@ -842,6 +1166,43 @@ export function BillsTab({
     }
   }, [accounts, bills, cadenceLabel, monthlyBills, timelineWindowDays])
 
+  const overlapConfirmationCopy = overlapConfirmation ? getOverlapResolutionCopy(overlapConfirmation.resolution) : null
+  const confirmationPrimaryBill = overlapConfirmation
+    ? billById.get(overlapConfirmation.match.primaryBillId)
+    : undefined
+  const confirmationSecondaryBill = overlapConfirmation
+    ? billById.get(overlapConfirmation.match.secondaryBillId)
+    : undefined
+  const isConfirmingOverlapAction =
+    overlapConfirmation !== null && resolvingOverlapId === overlapConfirmation.match.id
+
+  const summarizeBillForConfirmation = (entry: BillEntry | undefined, fallbackName: string) => {
+    if (!entry) {
+      return {
+        name: fallbackName,
+        details: 'Bill not available (it may have been updated in another action).',
+      }
+    }
+
+    return {
+      name: entry.name,
+      details: `${formatMoney(entry.amount)} · Due day ${entry.dueDay} · ${cadenceLabel(
+        entry.cadence,
+        entry.customInterval,
+        entry.customUnit,
+      )} · ${entry.autopay ? 'Autopay on' : 'Manual'}${entry.isSubscription ? ' · Subscription' : ''}`,
+    }
+  }
+
+  const confirmationPrimarySummary = summarizeBillForConfirmation(
+    confirmationPrimaryBill,
+    overlapConfirmation?.match.primaryName ?? 'Primary bill',
+  )
+  const confirmationSecondarySummary = summarizeBillForConfirmation(
+    confirmationSecondaryBill,
+    overlapConfirmation?.match.secondaryName ?? 'Secondary bill',
+  )
+
   return (
     <section className="editor-grid bills-tab-shell" aria-label="Bill management">
       <article className="panel panel-form">
@@ -1166,6 +1527,122 @@ export function BillsTab({
                     : 'No bill cycle logs yet'}
                 </small>
               </article>
+            </section>
+
+            <section className="bills-duplicate-detection" aria-label="Duplicate and overlap detection">
+              <header className="bills-duplicate-detection-head">
+                <div>
+                  <h3>Duplicate + overlap detection</h3>
+                  <p>Catch repeated bills with similar name, amount, and due timing before cycle close.</p>
+                </div>
+              </header>
+
+              <div className="bills-summary-strip">
+                <article
+                  className={
+                    duplicateOverlapData.duplicatePairs > 0
+                      ? 'bills-summary-card bills-summary-card--critical'
+                      : 'bills-summary-card bills-summary-card--good'
+                  }
+                >
+                  <p>Potential duplicate pairs</p>
+                  <strong>{duplicateOverlapData.duplicatePairs}</strong>
+                  <small>Near-identical name/amount/due signals</small>
+                </article>
+                <article
+                  className={
+                    duplicateOverlapData.overlapPairs > 0
+                      ? 'bills-summary-card bills-summary-card--watch'
+                      : 'bills-summary-card bills-summary-card--good'
+                  }
+                >
+                  <p>Potential overlap pairs</p>
+                  <strong>{duplicateOverlapData.overlapPairs}</strong>
+                  <small>Likely overlap where one bill may replace another</small>
+                </article>
+                <article className="bills-summary-card">
+                  <p>Impacted bills</p>
+                  <strong>{duplicateOverlapData.impactedCount}</strong>
+                  <small>
+                    {duplicateOverlapData.impactedCount > 0
+                      ? 'Review these before running monthly cycle'
+                      : 'No collisions detected in current bill set'}
+                  </small>
+                </article>
+                <article
+                  className={
+                    duplicateOverlapData.matches.length > 0
+                      ? 'bills-summary-card bills-summary-card--watch'
+                      : 'bills-summary-card bills-summary-card--good'
+                  }
+                >
+                  <p>Pre-close status</p>
+                  <strong>{duplicateOverlapData.matches.length > 0 ? 'Review needed' : 'Clear'}</strong>
+                  <small>
+                    {duplicateOverlapData.matches.length > 0
+                      ? 'Merge/remove overlap pairs before cycle close'
+                      : 'No duplicate or overlap blockers'}
+                  </small>
+                </article>
+              </div>
+
+              {duplicateOverlapData.matches.length === 0 ? (
+                <p className="subnote">No duplicate or overlap bill signals detected right now.</p>
+              ) : (
+                <ul className="bills-overlap-list">
+                  {duplicateOverlapData.matches.slice(0, 10).map((match) => (
+                    <li key={match.id} className="bills-overlap-item">
+                      <div className="bills-overlap-main">
+                        <strong>
+                          {match.primaryName} ↔ {match.secondaryName}
+                        </strong>
+                        <small>{match.reason}</small>
+                        <small>
+                          Keep <strong>{match.primaryName}</strong> · Secondary <strong>{match.secondaryName}</strong>
+                        </small>
+                      </div>
+                      <div className="bills-overlap-metrics">
+                        <span className={match.kind === 'duplicate' ? 'pill pill--critical' : 'pill pill--warning'}>
+                          {match.kind}
+                        </span>
+                        <small>{Math.round(match.nameSimilarity * 100)}% name match</small>
+                        <small>
+                          {formatMoney(match.amountDelta)} delta ({(match.amountDeltaPercent * 100).toFixed(1)}%)
+                        </small>
+                        <small>
+                          {match.dueDayDelta} day{match.dueDayDelta === 1 ? '' : 's'} apart
+                        </small>
+                        <div className="bills-overlap-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn--sm"
+                            disabled={resolvingOverlapId === match.id}
+                            onClick={() => openOverlapConfirmation(match, 'merge')}
+                          >
+                            Merge
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn--sm"
+                            disabled={resolvingOverlapId === match.id}
+                            onClick={() => openOverlapConfirmation(match, 'archive_duplicate')}
+                          >
+                            Archive duplicate
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn--sm"
+                            disabled={resolvingOverlapId === match.id}
+                            onClick={() => openOverlapConfirmation(match, 'mark_intentional')}
+                          >
+                            Mark intentional
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
 
             <section className="bills-subscription-module" aria-label="Subscription and renewal module">
@@ -2044,6 +2521,87 @@ export function BillsTab({
           </>
         )}
       </article>
+
+      {overlapConfirmation && overlapConfirmationCopy ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={closeOverlapConfirmation}>
+          <div
+            className="modal bills-overlap-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bill-overlap-confirm-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="modal__header bills-overlap-confirm-modal__header">
+              <div>
+                <p className="panel-kicker">Bills</p>
+                <h2 id="bill-overlap-confirm-title">{overlapConfirmationCopy.title}</h2>
+                <p className="subnote">{overlapConfirmationCopy.description}</p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn--sm"
+                onClick={closeOverlapConfirmation}
+                disabled={isConfirmingOverlapAction}
+              >
+                Close
+              </button>
+            </header>
+
+            <div className="modal__body bills-overlap-confirm-modal__body">
+              <div className="bills-overlap-confirm-grid">
+                <article className="bills-overlap-confirm-card bills-overlap-confirm-card--keep">
+                  <p>Bill kept</p>
+                  <strong>{confirmationPrimarySummary.name}</strong>
+                  <small>{confirmationPrimarySummary.details}</small>
+                  <span className="pill pill--good">
+                    {overlapConfirmation.resolution === 'mark_intentional' ? 'Keeps bill (tagged)' : 'Keeps active bill'}
+                  </span>
+                </article>
+
+                <article className="bills-overlap-confirm-card bills-overlap-confirm-card--change">
+                  <p>{overlapConfirmation.resolution === 'mark_intentional' ? 'Paired bill' : 'Bill changed'}</p>
+                  <strong>{confirmationSecondarySummary.name}</strong>
+                  <small>{confirmationSecondarySummary.details}</small>
+                  <span
+                    className={
+                      overlapConfirmation.resolution === 'merge'
+                        ? 'pill pill--critical'
+                        : overlapConfirmation.resolution === 'archive_duplicate'
+                          ? 'pill pill--warning'
+                          : 'pill pill--neutral'
+                    }
+                  >
+                    {overlapConfirmation.resolution === 'merge'
+                      ? 'Removed after merge'
+                      : overlapConfirmation.resolution === 'archive_duplicate'
+                        ? 'Archived duplicate'
+                        : 'Tagged intentional pair'}
+                  </span>
+                </article>
+              </div>
+            </div>
+
+            <footer className="modal__footer bills-overlap-confirm-modal__footer">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={closeOverlapConfirmation}
+                disabled={isConfirmingOverlapAction}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={isConfirmingOverlapAction}
+                onClick={() => void resolveOverlapMatch(overlapConfirmation.match, overlapConfirmation.resolution)}
+              >
+                {isConfirmingOverlapAction ? 'Applying…' : overlapConfirmationCopy.confirmLabel}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

@@ -43,6 +43,7 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
   const removeBill = useMutation(api.finance.removeBill)
   const upsertBillPaymentCheck = useMutation(api.finance.upsertBillPaymentCheck)
   const removeBillPaymentCheck = useMutation(api.finance.removeBillPaymentCheck)
+  const resolveBillDuplicateOverlap = useMutation(api.finance.resolveBillDuplicateOverlap)
 
   const [billForm, setBillForm] = useState<BillForm>(initialBillForm)
   const [billEditId, setBillEditId] = useState<BillId | null>(null)
@@ -180,6 +181,23 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
     }
   }
 
+  const onResolveBillDuplicateOverlap = async (args: {
+    primaryBillId: BillId
+    secondaryBillId: BillId
+    resolution: 'merge' | 'archive_duplicate' | 'mark_intentional'
+  }) => {
+    clearError()
+    try {
+      await resolveBillDuplicateOverlap({
+        primaryBillId: args.primaryBillId,
+        secondaryBillId: args.secondaryBillId,
+        resolution: args.resolution,
+      })
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
   return {
     billForm,
     setBillForm,
@@ -191,6 +209,7 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
     onDeleteBill,
     onUpsertBillPaymentCheck,
     onDeleteBillPaymentCheck,
+    onResolveBillDuplicateOverlap,
     startBillEdit,
     saveBillEdit,
     bills,

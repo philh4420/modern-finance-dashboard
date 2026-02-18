@@ -16,6 +16,7 @@ type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'cus
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 
 type PurchaseDoc = Doc<'purchases'>
+type BillDoc = Doc<'bills'>
 type TransactionRuleDoc = Doc<'transactionRules'>
 type IncomeDoc = Doc<'incomes'>
 type IncomePaymentCheckDoc = Doc<'incomePaymentChecks'>
@@ -200,6 +201,146 @@ const resolveIncomeNetAmount = (entry: {
 const toMonthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 
 const normalizeText = (value: string) => value.trim().toLowerCase()
+
+const billNameNoiseTokens = new Set([
+  'bill',
+  'payment',
+  'account',
+  'subscription',
+  'service',
+  'charge',
+  'plan',
+  'monthly',
+  'weekly',
+  'annual',
+  'yearly',
+  'direct',
+  'debit',
+  'dd',
+])
+const archivedDuplicateNoteMarker = '[archived-duplicate]'
+const intentionalOverlapMarkerPrefix = '[intentional-overlap:'
+
+const normalizeBillNameForDuplicateCheck = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+
+const tokenizeBillNameForDuplicateCheck = (value: string) =>
+  normalizeBillNameForDuplicateCheck(value)
+    .split(' ')
+    .filter((token) => token.length > 1 && !billNameNoiseTokens.has(token))
+
+const computeBillNameSimilarity = (left: string, right: string) => {
+  const normalizedLeft = normalizeBillNameForDuplicateCheck(left)
+  const normalizedRight = normalizeBillNameForDuplicateCheck(right)
+  if (normalizedLeft.length === 0 || normalizedRight.length === 0) {
+    return 0
+  }
+  if (normalizedLeft === normalizedRight) {
+    return 1
+  }
+  if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) {
+    return 0.94
+  }
+
+  const leftTokens = new Set(tokenizeBillNameForDuplicateCheck(left))
+  const rightTokens = new Set(tokenizeBillNameForDuplicateCheck(right))
+  const union = new Set([...leftTokens, ...rightTokens])
+  if (union.size === 0) {
+    return 0
+  }
+
+  let intersection = 0
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) {
+      intersection += 1
+    }
+  })
+
+  return intersection / union.size
+}
+
+const billCadenceGroupKey = (bill: BillDoc) => {
+  if (bill.cadence === 'custom') {
+    return `custom:${bill.customInterval ?? 0}:${bill.customUnit ?? 'months'}`
+  }
+  return bill.cadence
+}
+
+const cadenceCompatibleForBillOverlap = (left: BillDoc, right: BillDoc) => {
+  const leftGroup = billCadenceGroupKey(left)
+  const rightGroup = billCadenceGroupKey(right)
+  if (leftGroup === rightGroup) {
+    return true
+  }
+  const monthlyLike = new Set(['monthly', 'quarterly', 'yearly'])
+  return monthlyLike.has(left.cadence) && monthlyLike.has(right.cadence)
+}
+
+const hasArchivedDuplicateMarker = (notes?: string) =>
+  (notes ?? '').toLowerCase().includes(archivedDuplicateNoteMarker)
+
+const hasIntentionalOverlapPairMarker = (left: BillDoc, right: BillDoc) => {
+  const leftNotes = (left.notes ?? '').toLowerCase()
+  const rightNotes = (right.notes ?? '').toLowerCase()
+  const leftTargetsRight = leftNotes.includes(`${intentionalOverlapMarkerPrefix}${String(right._id).toLowerCase()}]`)
+  const rightTargetsLeft = rightNotes.includes(`${intentionalOverlapMarkerPrefix}${String(left._id).toLowerCase()}]`)
+  return leftTargetsRight || rightTargetsLeft
+}
+
+const detectBillDuplicateOverlapCounts = (bills: BillDoc[]) => {
+  let duplicatePairCount = 0
+  let overlapPairCount = 0
+  const impactedBillIds = new Set<string>()
+
+  for (let leftIndex = 0; leftIndex < bills.length; leftIndex += 1) {
+    const left = bills[leftIndex]
+    for (let rightIndex = leftIndex + 1; rightIndex < bills.length; rightIndex += 1) {
+      const right = bills[rightIndex]
+      if (hasArchivedDuplicateMarker(left.notes) || hasArchivedDuplicateMarker(right.notes)) {
+        continue
+      }
+      if (hasIntentionalOverlapPairMarker(left, right)) {
+        continue
+      }
+      const nameSimilarity = computeBillNameSimilarity(left.name, right.name)
+      if (nameSimilarity < 0.55) {
+        continue
+      }
+
+      const amountDelta = Math.abs(left.amount - right.amount)
+      const amountDeltaPercent = amountDelta / Math.max(Math.max(left.amount, right.amount), 1)
+      const dueDayDelta = Math.abs(left.dueDay - right.dueDay)
+      const cadenceComparable = cadenceCompatibleForBillOverlap(left, right)
+      const duplicateCandidate =
+        cadenceComparable && nameSimilarity >= 0.9 && amountDeltaPercent <= 0.03 && dueDayDelta <= 2
+      const overlapCandidate =
+        cadenceComparable && nameSimilarity >= 0.65 && amountDeltaPercent <= 0.2 && dueDayDelta <= 7
+
+      if (!duplicateCandidate && !overlapCandidate) {
+        continue
+      }
+
+      if (duplicateCandidate) {
+        duplicatePairCount += 1
+      } else {
+        overlapPairCount += 1
+      }
+
+      impactedBillIds.add(String(left._id))
+      impactedBillIds.add(String(right._id))
+    }
+  }
+
+  return {
+    duplicatePairCount,
+    overlapPairCount,
+    impactedBillCount: impactedBillIds.size,
+  }
+}
 
 const monthKeyToDate = (monthKey: string) => {
   if (!/^\d{4}-\d{2}$/.test(monthKey)) {
@@ -982,6 +1123,7 @@ export const getPhase2Data = query({
       })
       .filter((entry): entry is BillRiskAlert => Boolean(entry))
       .sort((a, b) => a.daysAway - b.daysAway || b.amount - a.amount)
+    const billDuplicateOverlap = detectBillDuplicateOverlapCounts(bills)
 
     const duplicateMap = new Map<string, number>()
     purchases.forEach((purchase) => {
@@ -1040,6 +1182,12 @@ export const getPhase2Data = query({
         label: 'Review spending anomalies',
         done: anomalyCount === 0,
         detail: `${anomalyCount} anomalies flagged`,
+      },
+      {
+        id: 'bill-duplicates-overlaps',
+        label: 'Resolve duplicate/overlap bills',
+        done: billDuplicateOverlap.duplicatePairCount === 0 && billDuplicateOverlap.overlapPairCount === 0,
+        detail: `${billDuplicateOverlap.duplicatePairCount} duplicate pair(s) · ${billDuplicateOverlap.overlapPairCount} overlap pair(s) across ${billDuplicateOverlap.impactedBillCount} bill(s)`,
       },
       {
         id: 'budget-coverage',
