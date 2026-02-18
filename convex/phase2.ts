@@ -14,6 +14,7 @@ const incomeAllocationTargetValidator = v.union(
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
+type LoanMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 
 type PurchaseDoc = Doc<'purchases'>
 type BillDoc = Doc<'bills'>
@@ -119,6 +120,7 @@ const finiteOrZero = (value: number | undefined | null) =>
 
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
 const roundPercent = (value: number) => Math.round(value * 100) / 100
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 const incomeAllocationTargetLabel: Record<IncomeAllocationTarget, string> = {
   bills: 'Bills',
@@ -459,6 +461,62 @@ const toMonthlyAmount = (
   }
 }
 
+const normalizeLoanMinimumPaymentType = (
+  value: LoanMinimumPaymentType | undefined | null,
+): LoanMinimumPaymentType => (value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed')
+
+const getLoanWorkingBalances = (loan: Doc<'loans'>) => {
+  const hasExplicitComponents = loan.principalBalance !== undefined || loan.accruedInterest !== undefined
+  const principalBalance = Math.max(
+    hasExplicitComponents ? finiteOrZero(loan.principalBalance) : finiteOrZero(loan.balance),
+    0,
+  )
+  const accruedInterest = Math.max(hasExplicitComponents ? finiteOrZero(loan.accruedInterest) : 0, 0)
+  const balance = Math.max(
+    hasExplicitComponents ? principalBalance + accruedInterest : finiteOrZero(loan.balance),
+    0,
+  )
+
+  return {
+    principalBalance: roundCurrency(principalBalance),
+    accruedInterest: roundCurrency(accruedInterest),
+    balance: roundCurrency(balance),
+  }
+}
+
+const estimateLoanDuePayment = (loan: Doc<'loans'>) => {
+  const working = getLoanWorkingBalances(loan)
+  if (working.balance <= 0) {
+    return 0
+  }
+
+  const occurrencesPerMonth = toMonthlyAmount(1, loan.cadence, loan.customInterval, loan.customUnit)
+  const intervalMonths = occurrencesPerMonth > 0 ? 1 / occurrencesPerMonth : 1
+  const apr = finiteOrZero(loan.interestRate)
+  const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
+  const interestAmount = working.balance * monthlyRate * intervalMonths
+  const dueBalance = working.balance + interestAmount
+  const minimumPaymentType = normalizeLoanMinimumPaymentType(loan.minimumPaymentType)
+  const minimumPaymentPercent = clamp(finiteOrZero(loan.minimumPaymentPercent), 0, 100)
+  const minimumDueRaw =
+    minimumPaymentType === 'percent_plus_interest'
+      ? working.principalBalance * (minimumPaymentPercent / 100) + working.accruedInterest + interestAmount
+      : finiteOrZero(loan.minimumPayment)
+  const minimumDue = Math.min(dueBalance, Math.max(minimumDueRaw, 0))
+  const plannedPayment = Math.min(dueBalance, minimumDue + finiteOrZero(loan.extraPayment))
+
+  return roundCurrency(plannedPayment)
+}
+
+const estimateLoanMonthlyPayment = (loan: Doc<'loans'>) => {
+  const duePayment = estimateLoanDuePayment(loan)
+  const occurrencesPerMonth = toMonthlyAmount(1, loan.cadence, loan.customInterval, loan.customUnit)
+  if (occurrencesPerMonth <= 0) {
+    return 0
+  }
+  return roundCurrency(duePayment * occurrencesPerMonth)
+}
+
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
 
 const dateWithClampedDay = (year: number, month: number, day: number) => {
@@ -587,7 +645,7 @@ const buildAutoAllocationSuggestionDrafts = (args: {
   autoAllocationPlan: AutoAllocationPlan
   monthlyCommitments: number
   cards: Array<{ name: string; usedLimit: number; interestRate?: number | null }>
-  loans: Array<{ name: string; balance: number; interestRate?: number | null }>
+  loans: Array<{ name: string; balance: number; subscriptionOutstanding?: number | null; interestRate?: number | null }>
   goals: Array<{ title: string; priority: 'low' | 'medium' | 'high'; targetAmount: number; currentAmount: number }>
   accounts: Array<{ name: string; type: 'checking' | 'savings' | 'investment' | 'cash' | 'debt'; balance: number }>
 }) => {
@@ -612,11 +670,11 @@ const buildAutoAllocationSuggestionDrafts = (args: {
         apr: finiteOrZero(card.interestRate),
       })),
     ...args.loans
-      .filter((loan) => loan.balance > 0)
+      .filter((loan) => loan.balance > 0 || finiteOrZero(loan.subscriptionOutstanding) > 0)
       .map((loan) => ({
         kind: 'loan' as const,
         name: loan.name,
-        balance: loan.balance,
+        balance: loan.balance + finiteOrZero(loan.subscriptionOutstanding),
         apr: finiteOrZero(loan.interestRate),
       })),
   ].sort((a, b) => b.apr - a.apr || b.balance - a.balance)
@@ -975,7 +1033,7 @@ export const getPhase2Data = query({
     const monthlyLoanPayments = loans.reduce(
       (sum, loan) =>
         sum +
-        toMonthlyAmount(finiteOrZero(loan.minimumPayment), loan.cadence, loan.customInterval, loan.customUnit) +
+        estimateLoanMonthlyPayment(loan) +
         finiteOrZero(loan.subscriptionCost),
       0,
     )
@@ -1516,7 +1574,7 @@ export const applyIncomeAutoAllocationNow = mutation({
     const monthlyLoanPayments = loans.reduce(
       (sum, loan) =>
         sum +
-        toMonthlyAmount(finiteOrZero(loan.minimumPayment), loan.cadence, loan.customInterval, loan.customUnit) +
+        estimateLoanMonthlyPayment(loan) +
         finiteOrZero(loan.subscriptionCost),
       0,
     )

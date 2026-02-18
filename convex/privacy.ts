@@ -20,6 +20,7 @@ type DeletionTable =
   | 'billPaymentChecks'
   | 'subscriptionPriceChanges'
   | 'incomeChangeEvents'
+  | 'loanEvents'
   | 'ledgerLines'
   | 'ledgerEntries'
   | 'financeAuditEvents'
@@ -49,6 +50,7 @@ const deletionTableValidator = v.union(
   v.literal('billPaymentChecks'),
   v.literal('subscriptionPriceChanges'),
   v.literal('incomeChangeEvents'),
+  v.literal('loanEvents'),
   v.literal('ledgerLines'),
   v.literal('ledgerEntries'),
   v.literal('financeAuditEvents'),
@@ -369,6 +371,7 @@ export const requestDeletion = action({
       'billPaymentChecks',
       'subscriptionPriceChanges',
       'incomeChangeEvents',
+      'loanEvents',
       'ledgerLines',
       'ledgerEntries',
       'financeAuditEvents',
@@ -519,6 +522,7 @@ export const _collectExportData = internalQuery({
       billPaymentChecks,
       subscriptionPriceChanges,
       incomeChangeEvents,
+      loanEvents,
       bills,
       cards,
       loans,
@@ -546,6 +550,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('billPaymentChecks').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('subscriptionPriceChanges').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomeChangeEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('loanEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('bills').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cards').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('loans').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -575,6 +580,7 @@ export const _collectExportData = internalQuery({
       billPaymentChecks: docsToPortableRows(billPaymentChecks),
       subscriptionPriceChanges: docsToPortableRows(subscriptionPriceChanges),
       incomeChangeEvents: docsToPortableRows(incomeChangeEvents),
+      loanEvents: docsToPortableRows(loanEvents),
       bills: docsToPortableRows(bills),
       cards: docsToPortableRows(cards),
       loans: docsToPortableRows(loans),

@@ -21,6 +21,7 @@ export type InsightSeverity = 'good' | 'warning' | 'critical'
 export type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 export type RuleMatchType = 'contains' | 'exact' | 'starts_with'
 export type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
+export type LoanMinimumPaymentType = 'fixed' | 'percent_plus_interest'
 export type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 export type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
 export type IncomeAllocationTarget = 'bills' | 'savings' | 'goals' | 'debt_overpay'
@@ -81,6 +82,7 @@ export type BillPaymentCheckEntry = Doc<'billPaymentChecks'>
 export type SubscriptionPriceChangeEntry = Doc<'subscriptionPriceChanges'>
 export type CardEntry = Doc<'cards'>
 export type LoanEntry = Doc<'loans'>
+export type LoanEventEntry = Doc<'loanEvents'>
 export type PurchaseEntry = Doc<'purchases'>
 export type AccountEntry = Doc<'accounts'>
 export type GoalEntry = Doc<'goals'>
@@ -200,8 +202,14 @@ export type CardForm = {
 export type LoanForm = {
   name: string
   balance: string
+  principalBalance: string
+  accruedInterest: string
+  minimumPaymentType: LoanMinimumPaymentType
   minimumPayment: string
+  minimumPaymentPercent: string
+  extraPayment: string
   subscriptionCost: string
+  subscriptionPaymentCount: string
   interestRate: string
   dueDay: string
   cadence: Cadence

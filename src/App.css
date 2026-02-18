@@ -4390,6 +4390,240 @@ tbody td {
   gap: 0.45rem;
 }
 
+.loans-tab-shell {
+  align-items: stretch;
+  gap: clamp(1rem, 1vw, 1.34rem);
+}
+
+.loans-tab-shell .panel {
+  padding: clamp(1.06rem, 0.95vw + 0.54rem, 1.36rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1.06rem;
+  min-height: 100%;
+}
+
+.loans-tab-shell .panel-form {
+  grid-column: span 4;
+}
+
+.loans-tab-shell .panel-list {
+  grid-column: span 8;
+}
+
+.loans-tab-shell .panel-header > div {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.loans-tab-shell .panel-header h2 {
+  margin: 0.06rem 0 0;
+  font-size: clamp(1.16rem, 0.92rem + 0.56vw, 1.5rem);
+  line-height: 1.18;
+  letter-spacing: -0.018em;
+}
+
+.loans-tab-shell .panel-kicker {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+.loans-tab-shell .panel-value {
+  margin: 0.1rem 0 0;
+  font-size: 1.03rem;
+  line-height: 1.4;
+  font-weight: 730;
+}
+
+.loan-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.6rem;
+  align-items: stretch;
+}
+
+.loan-summary-card {
+  border-radius: 0.94rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 12%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  padding: 0.75rem 0.82rem;
+  display: grid;
+  gap: 0.2rem;
+  min-height: 6.9rem;
+}
+
+.loan-summary-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.loan-summary-card strong {
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+}
+
+.loan-summary-card small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.loan-rows {
+  display: grid;
+  gap: 0.74rem;
+}
+
+.loan-row-card {
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 80%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-savings) 9%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 40%, transparent);
+  padding: 0.84rem 0.9rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.loan-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.loan-row-head h3 {
+  margin: 0;
+  font-size: 1.03rem;
+  letter-spacing: -0.015em;
+}
+
+.loan-row-head p {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.loan-row-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+  justify-content: flex-end;
+}
+
+.loan-row-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.58rem;
+}
+
+.loan-row-metrics > div {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.58rem 0.62rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.loan-row-metrics p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.loan-row-metrics strong {
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.loan-row-metrics small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.loan-row-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.52rem;
+}
+
+.loan-row-edit-grid label {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.loan-row-edit-grid label span {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.loan-row-edit-notes {
+  grid-column: 1 / -1;
+}
+
+.loan-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.loan-quick-action {
+  border-radius: 0.86rem;
+  border: 1px solid color-mix(in oklab, var(--tone-finance) 32%, var(--stroke));
+  background:
+    radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.64rem 0.7rem;
+  display: grid;
+  gap: 0.54rem;
+}
+
+.loan-quick-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.loan-quick-action-grid label {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.loan-quick-action-grid label span {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.loan-quick-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.inline-error {
+  margin: 0;
+  color: color-mix(in oklab, var(--tone-negative) 82%, black 18%);
+  font-size: 0.8rem;
+}
+
 .empty-state {
   margin: 0.9rem 0 0;
   color: var(--text-muted);
@@ -4460,6 +4694,14 @@ tbody td {
     grid-column: span 9;
   }
 
+  .loans-tab-shell .panel-form {
+    grid-column: span 4;
+  }
+
+  .loans-tab-shell .panel-list {
+    grid-column: span 8;
+  }
+
   .bills-summary-strip {
     grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
   }
@@ -4483,6 +4725,17 @@ tbody td {
   }
 
   .income-tab-shell .panel-value {
+    text-align: left;
+    max-width: none;
+    margin: 0;
+  }
+
+  .loans-tab-shell .panel-header {
+    flex-direction: column;
+    gap: 0.58rem;
+  }
+
+  .loans-tab-shell .panel-value {
     text-align: left;
     max-width: none;
     margin: 0;
@@ -4739,6 +4992,31 @@ tbody td {
     flex-direction: column;
     align-items: flex-start;
   }
+
+  .loan-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .loan-row-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .loan-row-pills {
+    justify-content: flex-start;
+  }
+
+  .loan-row-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .loan-row-edit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .loan-quick-action-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 620px) {
@@ -4796,6 +5074,12 @@ tbody td {
   }
 
   .bills-timeline-item {
+    grid-template-columns: 1fr;
+  }
+
+  .loan-summary-strip,
+  .loan-row-metrics,
+  .loan-row-edit-grid {
     grid-template-columns: 1fr;
   }
 }

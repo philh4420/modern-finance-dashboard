@@ -32,6 +32,7 @@ const goalPriorityValidator = v.union(v.literal('low'), v.literal('medium'), v.l
 const cycleRunSourceValidator = v.union(v.literal('manual'), v.literal('automatic'))
 const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
 const cardMinimumPaymentTypeValidator = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
+const loanMinimumPaymentTypeValidator = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
 const incomePaymentStatusValidator = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
 const billOverlapResolutionValidator = v.union(
   v.literal('merge'),
@@ -62,8 +63,11 @@ type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'cus
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 type InsightSeverity = 'good' | 'warning' | 'critical'
 type CycleRunSource = 'manual' | 'automatic'
+type LoanEventSource = 'manual' | 'monthly_cycle'
 type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 type CardMinimumPaymentType = 'fixed' | 'percent_plus_interest'
+type LoanMinimumPaymentType = 'fixed' | 'percent_plus_interest'
+type LoanEventType = 'interest_accrual' | 'payment' | 'charge' | 'subscription_fee'
 type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
 type BillCategory =
@@ -199,6 +203,12 @@ const validateDayOfMonth = (value: number, fieldName: string) => {
   }
 }
 
+const validatePositiveInteger = (value: number, fieldName: string, maxValue = 360) => {
+  if (!Number.isInteger(value) || value < 1 || value > maxValue) {
+    throw new Error(`${fieldName} must be an integer between 1 and ${maxValue}.`)
+  }
+}
+
 const validateUsedLimitAgainstCreditLimit = (args: {
   creditLimit: number
   usedLimit: number
@@ -279,7 +289,239 @@ const normalizeCardMinimumPaymentType = (
   value: CardMinimumPaymentType | undefined | null,
 ): CardMinimumPaymentType => (value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed')
 
+const normalizeLoanMinimumPaymentType = (
+  value: LoanMinimumPaymentType | undefined | null,
+): LoanMinimumPaymentType => (value === 'percent_plus_interest' ? 'percent_plus_interest' : 'fixed')
+
 const clampPercent = (value: number) => clamp(value, 0, 100)
+
+const getLoanWorkingBalances = (loan: LoanDoc) => {
+  const hasExplicitComponents = loan.principalBalance !== undefined || loan.accruedInterest !== undefined
+  const principalBalance = Math.max(
+    hasExplicitComponents ? finiteOrZero(loan.principalBalance) : finiteOrZero(loan.balance),
+    0,
+  )
+  const accruedInterest = Math.max(hasExplicitComponents ? finiteOrZero(loan.accruedInterest) : 0, 0)
+  const balance = Math.max(
+    hasExplicitComponents ? principalBalance + accruedInterest : finiteOrZero(loan.balance),
+    0,
+  )
+
+  return {
+    principalBalance: roundCurrency(principalBalance),
+    accruedInterest: roundCurrency(accruedInterest),
+    balance: roundCurrency(balance),
+  }
+}
+
+const normalizePositiveInteger = (value: number | undefined | null) =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
+
+const getLoanSubscriptionOutstanding = (loan: LoanDoc) => {
+  const subscriptionCost = roundCurrency(Math.max(finiteOrZero(loan.subscriptionCost), 0))
+  if (subscriptionCost <= 0) {
+    return 0
+  }
+
+  const normalizedConfiguredPaymentCount = normalizePositiveInteger(loan.subscriptionPaymentCount)
+
+  if (loan.subscriptionOutstanding !== undefined) {
+    const current = roundCurrency(Math.max(finiteOrZero(loan.subscriptionOutstanding), 0))
+    if (
+      normalizedConfiguredPaymentCount === undefined &&
+      current <= subscriptionCost + 0.000001 &&
+      subscriptionCost > 0
+    ) {
+      return roundCurrency(subscriptionCost * 12)
+    }
+    return current
+  }
+
+  const fallbackPaymentCount = normalizedConfiguredPaymentCount ?? 12
+  return roundCurrency(subscriptionCost * fallbackPaymentCount)
+}
+
+const getSubscriptionPaymentsRemaining = (subscriptionCost: number, subscriptionOutstanding: number) => {
+  const safeCost = roundCurrency(Math.max(subscriptionCost, 0))
+  const safeOutstanding = roundCurrency(Math.max(subscriptionOutstanding, 0))
+  if (safeCost <= 0 || safeOutstanding <= 0) {
+    return undefined
+  }
+  return Math.max(1, Math.ceil(safeOutstanding / safeCost - 0.000001))
+}
+
+const getLoanSubscriptionPaymentsRemaining = (loan: LoanDoc) => {
+  const safeCost = roundCurrency(Math.max(finiteOrZero(loan.subscriptionCost), 0))
+  const safeOutstanding = getLoanSubscriptionOutstanding(loan)
+  return getSubscriptionPaymentsRemaining(safeCost, safeOutstanding)
+}
+
+const getLoanTotalOutstanding = (loan: LoanDoc) => {
+  const working = getLoanWorkingBalances(loan)
+  return roundCurrency(working.balance + getLoanSubscriptionOutstanding(loan))
+}
+
+const resolveLoanPaymentPlan = (args: {
+  principalBalance: number
+  accruedInterest: number
+  dueBalance: number
+  minimumPayment: number
+  minimumPaymentType?: LoanMinimumPaymentType
+  minimumPaymentPercent?: number
+  extraPayment?: number
+}) => {
+  const minimumPaymentType = normalizeLoanMinimumPaymentType(args.minimumPaymentType)
+  const minimumPayment = finiteOrZero(args.minimumPayment)
+  const minimumPaymentPercent = clampPercent(finiteOrZero(args.minimumPaymentPercent))
+  const extraPayment = finiteOrZero(args.extraPayment)
+
+  const minimumDueRaw =
+    minimumPaymentType === 'percent_plus_interest'
+      ? args.principalBalance * (minimumPaymentPercent / 100) + args.accruedInterest
+      : minimumPayment
+  const minimumDue = Math.min(args.dueBalance, Math.max(minimumDueRaw, 0))
+  const plannedPayment = Math.min(args.dueBalance, minimumDue + extraPayment)
+  const interestPayment = Math.min(args.accruedInterest, plannedPayment)
+  const principalPayment = Math.min(args.principalBalance, Math.max(plannedPayment - interestPayment, 0))
+
+  return {
+    minimumPaymentType,
+    minimumPayment,
+    minimumPaymentPercent,
+    extraPayment,
+    minimumDue: roundCurrency(minimumDue),
+    plannedPayment: roundCurrency(plannedPayment),
+    interestPayment: roundCurrency(interestPayment),
+    principalPayment: roundCurrency(principalPayment),
+  }
+}
+
+const applyPaymentToLoan = (
+  state: {
+    principalBalance: number
+    accruedInterest: number
+  },
+  paymentAmount: number,
+) => {
+  let remaining = Math.max(paymentAmount, 0)
+  const interestPayment = Math.min(state.accruedInterest, remaining)
+  const nextAccruedInterest = Math.max(state.accruedInterest - interestPayment, 0)
+  remaining -= interestPayment
+
+  const principalPayment = Math.min(state.principalBalance, remaining)
+  const nextPrincipalBalance = Math.max(state.principalBalance - principalPayment, 0)
+  remaining -= principalPayment
+
+  const appliedAmount = interestPayment + principalPayment
+  const nextBalance = nextPrincipalBalance + nextAccruedInterest
+
+  return {
+    principalBalance: roundCurrency(nextPrincipalBalance),
+    accruedInterest: roundCurrency(nextAccruedInterest),
+    balance: roundCurrency(nextBalance),
+    appliedAmount: roundCurrency(appliedAmount),
+    interestPayment: roundCurrency(interestPayment),
+    principalPayment: roundCurrency(principalPayment),
+    unappliedAmount: roundCurrency(Math.max(remaining, 0)),
+  }
+}
+
+const resolveLoanBalancesForWrite = (args: {
+  balance: number
+  principalBalance?: number
+  accruedInterest?: number
+}) => {
+  const hasPrincipal = args.principalBalance !== undefined
+  const hasAccruedInterest = args.accruedInterest !== undefined
+
+  const principalBalance = hasPrincipal
+    ? Math.max(finiteOrZero(args.principalBalance), 0)
+    : hasAccruedInterest
+      ? Math.max(args.balance - Math.max(finiteOrZero(args.accruedInterest), 0), 0)
+      : Math.max(args.balance, 0)
+
+  const accruedInterest = hasAccruedInterest
+    ? Math.max(finiteOrZero(args.accruedInterest), 0)
+    : Math.max(args.balance - principalBalance, 0)
+
+  const balance = hasPrincipal || hasAccruedInterest ? principalBalance + accruedInterest : Math.max(args.balance, 0)
+
+  return {
+    principalBalance: roundCurrency(principalBalance),
+    accruedInterest: roundCurrency(accruedInterest),
+    balance: roundCurrency(balance),
+  }
+}
+
+const resolveLoanSubscriptionOutstandingForWrite = (args: {
+  existing?: LoanDoc
+  subscriptionCost?: number
+  subscriptionPaymentCount?: number
+  subscriptionOutstanding?: number
+}) => {
+  if (args.subscriptionOutstanding !== undefined) {
+    validateNonNegative(args.subscriptionOutstanding, 'Loan subscription outstanding')
+    return roundCurrency(Math.max(args.subscriptionOutstanding, 0))
+  }
+
+  const nextSubscriptionCost = roundCurrency(
+    Math.max(finiteOrZero(args.subscriptionCost ?? args.existing?.subscriptionCost), 0),
+  )
+  if (!args.existing) {
+    if (nextSubscriptionCost <= 0) {
+      return 0
+    }
+    const nextPaymentCount = args.subscriptionPaymentCount ?? 12
+    return roundCurrency(nextSubscriptionCost * nextPaymentCount)
+  }
+
+  if (nextSubscriptionCost <= 0) {
+    return 0
+  }
+
+  if (args.subscriptionCost !== undefined || args.subscriptionPaymentCount !== undefined) {
+    const nextPaymentCount =
+      normalizePositiveInteger(args.subscriptionPaymentCount) ?? getLoanSubscriptionPaymentsRemaining(args.existing) ?? 12
+    return roundCurrency(Math.max(nextSubscriptionCost * nextPaymentCount, 0))
+  }
+
+  return getLoanSubscriptionOutstanding(args.existing)
+}
+
+const resolveLoanPaymentConfigForWrite = (args: {
+  minimumPayment: number
+  minimumPaymentType?: LoanMinimumPaymentType
+  minimumPaymentPercent?: number
+  extraPayment?: number
+}) => {
+  const minimumPaymentType = normalizeLoanMinimumPaymentType(args.minimumPaymentType)
+
+  if (minimumPaymentType === 'fixed') {
+    validatePositive(args.minimumPayment, 'Loan minimum payment')
+  } else {
+    validateNonNegative(args.minimumPayment, 'Loan minimum payment')
+    if (args.minimumPaymentPercent === undefined) {
+      throw new Error('Minimum payment % is required for % + interest loans.')
+    }
+    validateNonNegative(args.minimumPaymentPercent, 'Loan minimum payment %')
+    if (args.minimumPaymentPercent > 100) {
+      throw new Error('Loan minimum payment % must be 100 or less.')
+    }
+  }
+
+  if (args.extraPayment !== undefined) {
+    validateNonNegative(args.extraPayment, 'Loan extra payment')
+  }
+
+  return {
+    minimumPaymentType,
+    minimumPaymentPercent:
+      minimumPaymentType === 'percent_plus_interest'
+        ? clampPercent(finiteOrZero(args.minimumPaymentPercent))
+        : undefined,
+    extraPayment: roundCurrency(Math.max(finiteOrZero(args.extraPayment), 0)),
+  }
+}
 
 const validateRequiredText = (value: string, fieldName: string) => {
   const trimmed = value.trim()
@@ -787,9 +1029,19 @@ const applyCardMonthlyLifecycle = (card: CardDoc, cycles: number) => {
 }
 
 const applyLoanMonthlyLifecycle = (loan: LoanDoc, cycles: number) => {
-  let balance = finiteOrZero(loan.balance)
-  const monthlyPayment = toMonthlyAmount(
+  const working = getLoanWorkingBalances(loan)
+  let principalBalance = working.principalBalance
+  let accruedInterest = working.accruedInterest
+  const minimumPayment = toMonthlyAmount(
     finiteOrZero(loan.minimumPayment),
+    loan.cadence,
+    loan.customInterval,
+    loan.customUnit,
+  )
+  const minimumPaymentType = normalizeLoanMinimumPaymentType(loan.minimumPaymentType)
+  const minimumPaymentPercent = clampPercent(finiteOrZero(loan.minimumPaymentPercent))
+  const extraPayment = toMonthlyAmount(
+    finiteOrZero(loan.extraPayment),
     loan.cadence,
     loan.customInterval,
     loan.customUnit,
@@ -798,20 +1050,48 @@ const applyLoanMonthlyLifecycle = (loan: LoanDoc, cycles: number) => {
   const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
   let interestAccrued = 0
   let paymentsApplied = 0
+  let interestPaid = 0
+  let principalPaid = 0
 
   for (let cycle = 0; cycle < cycles; cycle += 1) {
-    const interest = balance * monthlyRate
-    balance += interest
+    const balanceBeforeInterest = principalBalance + accruedInterest
+    const interest = balanceBeforeInterest * monthlyRate
+    accruedInterest += interest
     interestAccrued += interest
-    const payment = Math.min(balance, monthlyPayment)
-    balance -= payment
-    paymentsApplied += payment
+
+    const dueBalance = principalBalance + accruedInterest
+    const paymentPlan = resolveLoanPaymentPlan({
+      principalBalance,
+      accruedInterest,
+      dueBalance,
+      minimumPayment,
+      minimumPaymentType,
+      minimumPaymentPercent,
+      extraPayment,
+    })
+    const paymentOutcome = applyPaymentToLoan(
+      {
+        principalBalance,
+        accruedInterest,
+      },
+      paymentPlan.plannedPayment,
+    )
+
+    principalBalance = paymentOutcome.principalBalance
+    accruedInterest = paymentOutcome.accruedInterest
+    paymentsApplied += paymentOutcome.appliedAmount
+    interestPaid += paymentOutcome.interestPayment
+    principalPaid += paymentOutcome.principalPayment
   }
 
   return {
-    balance: roundCurrency(Math.max(balance, 0)),
+    principalBalance: roundCurrency(Math.max(principalBalance, 0)),
+    accruedInterest: roundCurrency(Math.max(accruedInterest, 0)),
+    balance: roundCurrency(Math.max(principalBalance + accruedInterest, 0)),
     interestAccrued: roundCurrency(interestAccrued),
     paymentsApplied: roundCurrency(paymentsApplied),
+    interestPaid: roundCurrency(interestPaid),
+    principalPaid: roundCurrency(principalPaid),
   }
 }
 
@@ -831,6 +1111,75 @@ const estimateCardMonthlyPayment = (card: CardDoc) => {
   })
 
   return roundCurrency(paymentPlan.plannedPayment)
+}
+
+const estimateLoanDuePayment = (loan: LoanDoc) => {
+  const working = getLoanWorkingBalances(loan)
+  if (working.balance <= 0) {
+    return 0
+  }
+
+  const occurrencesPerMonth = toMonthlyAmount(1, loan.cadence, loan.customInterval, loan.customUnit)
+  const intervalMonths = occurrencesPerMonth > 0 ? 1 / occurrencesPerMonth : 1
+  const apr = finiteOrZero(loan.interestRate)
+  const monthlyRate = apr > 0 ? apr / 100 / 12 : 0
+  const interestAmount = working.balance * monthlyRate * intervalMonths
+  const dueBalance = working.balance + interestAmount
+
+  const paymentPlan = resolveLoanPaymentPlan({
+    principalBalance: working.principalBalance,
+    accruedInterest: working.accruedInterest + interestAmount,
+    dueBalance,
+    minimumPayment: finiteOrZero(loan.minimumPayment),
+    minimumPaymentType: normalizeLoanMinimumPaymentType(loan.minimumPaymentType),
+    minimumPaymentPercent: clampPercent(finiteOrZero(loan.minimumPaymentPercent)),
+    extraPayment: finiteOrZero(loan.extraPayment),
+  })
+
+  return roundCurrency(paymentPlan.plannedPayment)
+}
+
+const estimateLoanMonthlyPayment = (loan: LoanDoc) => {
+  const duePayment = estimateLoanDuePayment(loan)
+  const occurrencesPerMonth = toMonthlyAmount(1, loan.cadence, loan.customInterval, loan.customUnit)
+
+  if (occurrencesPerMonth <= 0) {
+    return 0
+  }
+
+  return roundCurrency(duePayment * occurrencesPerMonth)
+}
+
+const insertLoanEvent = async (
+  ctx: MutationCtx,
+  args: {
+    userId: string
+    loanId: Id<'loans'>
+    eventType: LoanEventType
+    source: LoanEventSource
+    amount: number
+    principalDelta: number
+    interestDelta: number
+    resultingBalance: number
+    occurredAt: number
+    cycleKey?: string
+    notes?: string
+  },
+) => {
+  await ctx.db.insert('loanEvents', {
+    userId: args.userId,
+    loanId: args.loanId,
+    eventType: args.eventType,
+    source: args.source,
+    amount: roundCurrency(args.amount),
+    principalDelta: roundCurrency(args.principalDelta),
+    interestDelta: roundCurrency(args.interestDelta),
+    resultingBalance: roundCurrency(Math.max(args.resultingBalance, 0)),
+    occurredAt: args.occurredAt,
+    cycleKey: args.cycleKey,
+    notes: args.notes,
+    createdAt: Date.now(),
+  })
 }
 
 type CardCycleAggregate = {
@@ -1013,10 +1362,24 @@ const runLoanMonthlyCycleForUser = async (
 
     const summary = applyLoanMonthlyLifecycle(loan, cycles)
     const newCycleDate = addCalendarMonthsKeepingDay(startOfDay(new Date(cycleAnchor)), cycles).getTime()
+    const subscriptionCost = roundCurrency(Math.max(finiteOrZero(loan.subscriptionCost), 0))
+    const currentSubscriptionOutstanding = getLoanSubscriptionOutstanding(loan)
+    const subscriptionDueForCycles = roundCurrency(
+      Math.min(currentSubscriptionOutstanding, Math.max(subscriptionCost * cycles, 0)),
+    )
+    const nextSubscriptionOutstanding = roundCurrency(Math.max(currentSubscriptionOutstanding - subscriptionDueForCycles, 0))
+    const nextSubscriptionPaymentCount = getSubscriptionPaymentsRemaining(subscriptionCost, nextSubscriptionOutstanding)
+    const totalLoanPaymentsApplied = roundCurrency(summary.paymentsApplied + subscriptionDueForCycles)
+    const totalOutstandingAfterCycle = roundCurrency(summary.balance + nextSubscriptionOutstanding)
 
     await ctx.db.patch(loan._id, {
       balance: summary.balance,
+      principalBalance: summary.principalBalance,
+      accruedInterest: summary.accruedInterest,
+      subscriptionOutstanding: nextSubscriptionOutstanding,
+      subscriptionPaymentCount: nextSubscriptionPaymentCount,
       lastCycleAt: newCycleDate,
+      lastInterestAppliedAt: summary.interestAccrued > 0 ? newCycleDate : loan.lastInterestAppliedAt,
     })
 
     const loanToken = sanitizeLedgerToken(loan.name)
@@ -1045,9 +1408,23 @@ const runLoanMonthlyCycleForUser = async (
           },
         ],
       })
+
+      await insertLoanEvent(ctx, {
+        userId,
+        loanId: loan._id,
+        eventType: 'interest_accrual',
+        source: 'monthly_cycle',
+        amount: summary.interestAccrued,
+        principalDelta: 0,
+        interestDelta: summary.interestAccrued,
+        resultingBalance: totalOutstandingAfterCycle,
+        occurredAt: newCycleDate,
+        cycleKey,
+        notes: `${cycles} monthly cycle${cycles === 1 ? '' : 's'} applied`,
+      })
     }
 
-    if (summary.paymentsApplied > 0) {
+    if (totalLoanPaymentsApplied > 0) {
       await insertLedgerEntry(ctx, {
         userId,
         entryType: 'cycle_loan_payment',
@@ -1060,14 +1437,44 @@ const runLoanMonthlyCycleForUser = async (
           {
             lineType: 'debit',
             accountCode: liabilityAccount,
-            amount: summary.paymentsApplied,
+            amount: totalLoanPaymentsApplied,
           },
           {
             lineType: 'credit',
             accountCode: cashAccount,
-            amount: summary.paymentsApplied,
+            amount: totalLoanPaymentsApplied,
           },
         ],
+      })
+
+      await insertLoanEvent(ctx, {
+        userId,
+        loanId: loan._id,
+        eventType: 'payment',
+        source: 'monthly_cycle',
+        amount: totalLoanPaymentsApplied,
+        principalDelta: -summary.principalPaid,
+        interestDelta: -summary.interestPaid,
+        resultingBalance: totalOutstandingAfterCycle,
+        occurredAt: newCycleDate,
+        cycleKey,
+        notes: `${cycles} monthly cycle${cycles === 1 ? '' : 's'} applied${subscriptionDueForCycles > 0 ? ' (subscription included)' : ''}`,
+      })
+    }
+
+    if (subscriptionDueForCycles > 0) {
+      await insertLoanEvent(ctx, {
+        userId,
+        loanId: loan._id,
+        eventType: 'subscription_fee',
+        source: 'monthly_cycle',
+        amount: subscriptionDueForCycles,
+        principalDelta: 0,
+        interestDelta: 0,
+        resultingBalance: totalOutstandingAfterCycle,
+        occurredAt: newCycleDate,
+        cycleKey,
+        notes: `${cycles} monthly cycle${cycles === 1 ? '' : 's'} subscription schedule`,
       })
     }
 
@@ -1080,13 +1487,15 @@ const runLoanMonthlyCycleForUser = async (
         cycleKey,
         cyclesApplied: cycles,
         summary,
+        subscriptionDueForCycles,
+        totalLoanPaymentsApplied,
       },
     })
 
     updatedLoans += 1
     cyclesApplied += cycles
     interestAccrued += summary.interestAccrued
-    paymentsApplied += summary.paymentsApplied
+    paymentsApplied += totalLoanPaymentsApplied
   }
 
   return {
@@ -1234,7 +1643,7 @@ const buildUpcomingCashEvents = (
       label: `${entry.name} payment`,
       type: 'loan',
       date: nextDate.toISOString().slice(0, 10),
-      amount: -(finiteOrZero(entry.minimumPayment) + finiteOrZero(entry.subscriptionCost)),
+      amount: -(estimateLoanDuePayment(entry) + finiteOrZero(entry.subscriptionCost)),
       daysAway,
       cadence: entry.cadence,
       customInterval: entry.customInterval,
@@ -1601,15 +2010,14 @@ const computeMonthCloseSnapshotSummary = async (ctx: MutationCtx, userId: string
   )
   const monthlyCardSpend = cards.reduce((sum, entry) => sum + estimateCardMonthlyPayment(entry), 0)
   const monthlyLoanBasePayments = loans.reduce(
-    (sum, entry) =>
-      sum + toMonthlyAmount(finiteOrZero(entry.minimumPayment), entry.cadence, entry.customInterval, entry.customUnit),
+    (sum, entry) => sum + estimateLoanMonthlyPayment(entry),
     0,
   )
   const monthlyLoanSubscriptionCosts = loans.reduce((sum, entry) => sum + finiteOrZero(entry.subscriptionCost), 0)
   const monthlyCommitments = monthlyBills + monthlyCardSpend + monthlyLoanBasePayments + monthlyLoanSubscriptionCosts
 
   const cardUsedTotal = cards.reduce((sum, entry) => sum + finiteOrZero(entry.usedLimit), 0)
-  const totalLoanBalance = loans.reduce((sum, entry) => sum + finiteOrZero(entry.balance), 0)
+  const totalLoanBalance = loans.reduce((sum, entry) => sum + getLoanTotalOutstanding(entry), 0)
   const accountDebts = accounts.reduce((sum, entry) => {
     if (entry.type === 'debt') {
       return sum + Math.abs(entry.balance)
@@ -1819,8 +2227,7 @@ export const getFinanceData = query({
       0,
     )
     const monthlyLoanBasePayments = loans.reduce(
-      (sum, entry) =>
-        sum + toMonthlyAmount(finiteOrZero(entry.minimumPayment), entry.cadence, entry.customInterval, entry.customUnit),
+      (sum, entry) => sum + estimateLoanMonthlyPayment(entry),
       0,
     )
     const monthlyLoanSubscriptionCosts = loans.reduce((sum, entry) => sum + finiteOrZero(entry.subscriptionCost), 0)
@@ -1830,7 +2237,7 @@ export const getFinanceData = query({
 
     const cardLimitTotal = cards.reduce((sum, entry) => sum + entry.creditLimit, 0)
     const cardUsedTotal = cards.reduce((sum, entry) => sum + entry.usedLimit, 0)
-    const totalLoanBalance = loans.reduce((sum, entry) => sum + finiteOrZero(entry.balance), 0)
+    const totalLoanBalance = loans.reduce((sum, entry) => sum + getLoanTotalOutstanding(entry), 0)
     const cardUtilizationPercent = cardLimitTotal > 0 ? (cardUsedTotal / cardLimitTotal) * 100 : 0
 
     const now = new Date()
@@ -3536,8 +3943,15 @@ export const addLoan = mutation({
   args: {
     name: v.string(),
     balance: v.number(),
+    principalBalance: v.optional(v.number()),
+    accruedInterest: v.optional(v.number()),
     minimumPayment: v.number(),
+    minimumPaymentType: v.optional(loanMinimumPaymentTypeValidator),
+    minimumPaymentPercent: v.optional(v.number()),
+    extraPayment: v.optional(v.number()),
     subscriptionCost: v.optional(v.number()),
+    subscriptionPaymentCount: v.optional(v.number()),
+    subscriptionOutstanding: v.optional(v.number()),
     interestRate: v.optional(v.number()),
     dueDay: v.number(),
     cadence: cadenceValidator,
@@ -3550,38 +3964,91 @@ export const addLoan = mutation({
 
     validateRequiredText(args.name, 'Loan name')
     validateNonNegative(args.balance, 'Loan balance')
-    validatePositive(args.minimumPayment, 'Loan minimum payment')
+    if (args.principalBalance !== undefined) {
+      validateNonNegative(args.principalBalance, 'Loan principal balance')
+    }
+    if (args.accruedInterest !== undefined) {
+      validateNonNegative(args.accruedInterest, 'Loan accrued interest')
+    }
+    const paymentConfig = resolveLoanPaymentConfigForWrite({
+      minimumPayment: args.minimumPayment,
+      minimumPaymentType: args.minimumPaymentType,
+      minimumPaymentPercent: args.minimumPaymentPercent,
+      extraPayment: args.extraPayment,
+    })
     validateOptionalText(args.notes, 'Notes', 2000)
 
     if (args.subscriptionCost !== undefined) {
       validateNonNegative(args.subscriptionCost, 'Loan subscription cost')
+    }
+    if (args.subscriptionPaymentCount !== undefined) {
+      validatePositiveInteger(args.subscriptionPaymentCount, 'Loan subscription payments left')
+    }
+    if (args.subscriptionOutstanding !== undefined) {
+      validateNonNegative(args.subscriptionOutstanding, 'Loan subscription outstanding')
     }
 
     if (args.interestRate !== undefined) {
       validateNonNegative(args.interestRate, 'Loan interest rate')
     }
 
-    if (args.dueDay < 1 || args.dueDay > 31) {
-      throw new Error('Due day must be between 1 and 31.')
-    }
+    validateDayOfMonth(args.dueDay, 'Due day')
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
+    const balances = resolveLoanBalancesForWrite({
+      balance: args.balance,
+      principalBalance: args.principalBalance,
+      accruedInterest: args.accruedInterest,
+    })
+    const subscriptionCost = roundCurrency(Math.max(finiteOrZero(args.subscriptionCost), 0))
+    const requestedSubscriptionPaymentCount =
+      subscriptionCost > 0 ? normalizePositiveInteger(args.subscriptionPaymentCount) ?? 12 : undefined
+    const subscriptionOutstanding = resolveLoanSubscriptionOutstandingForWrite({
+      subscriptionCost: args.subscriptionCost,
+      subscriptionPaymentCount: requestedSubscriptionPaymentCount,
+      subscriptionOutstanding: args.subscriptionOutstanding,
+    })
+    const subscriptionPaymentCount = getSubscriptionPaymentsRemaining(subscriptionCost, subscriptionOutstanding)
+    const now = Date.now()
 
     const createdLoanId = await ctx.db.insert('loans', {
       userId: identity.subject,
       name: args.name.trim(),
-      balance: args.balance,
+      balance: balances.balance,
+      principalBalance: balances.principalBalance,
+      accruedInterest: balances.accruedInterest,
       minimumPayment: args.minimumPayment,
+      minimumPaymentType: paymentConfig.minimumPaymentType,
+      minimumPaymentPercent: paymentConfig.minimumPaymentPercent,
+      extraPayment: paymentConfig.extraPayment,
       subscriptionCost: args.subscriptionCost,
+      subscriptionPaymentCount,
+      subscriptionOutstanding,
       interestRate: args.interestRate,
       dueDay: args.dueDay,
       cadence: args.cadence,
       customInterval: cadenceDetails.customInterval,
       customUnit: cadenceDetails.customUnit,
       notes: args.notes?.trim() || undefined,
-      lastCycleAt: Date.now(),
-      createdAt: Date.now(),
+      lastCycleAt: now,
+      lastInterestAppliedAt: now,
+      createdAt: now,
     })
+
+    if (balances.balance > 0) {
+      await insertLoanEvent(ctx, {
+        userId: identity.subject,
+        loanId: createdLoanId,
+        eventType: 'charge',
+        source: 'manual',
+        amount: balances.balance,
+        principalDelta: balances.principalBalance,
+        interestDelta: balances.accruedInterest,
+        resultingBalance: roundCurrency(balances.balance + subscriptionOutstanding),
+        occurredAt: now,
+        notes: 'Initial loan balance',
+      })
+    }
 
     await recordFinanceAuditEvent(ctx, {
       userId: identity.subject,
@@ -3590,9 +4057,16 @@ export const addLoan = mutation({
       action: 'created',
       after: {
         name: args.name.trim(),
-        balance: args.balance,
+        balance: balances.balance,
+        principalBalance: balances.principalBalance,
+        accruedInterest: balances.accruedInterest,
         minimumPayment: args.minimumPayment,
+        minimumPaymentType: paymentConfig.minimumPaymentType,
+        minimumPaymentPercent: paymentConfig.minimumPaymentPercent ?? 0,
+        extraPayment: paymentConfig.extraPayment,
         subscriptionCost: args.subscriptionCost ?? 0,
+        subscriptionPaymentCount: subscriptionPaymentCount ?? 0,
+        subscriptionOutstanding,
         interestRate: args.interestRate ?? 0,
       },
     })
@@ -3604,8 +4078,15 @@ export const updateLoan = mutation({
     id: v.id('loans'),
     name: v.string(),
     balance: v.number(),
+    principalBalance: v.optional(v.number()),
+    accruedInterest: v.optional(v.number()),
     minimumPayment: v.number(),
+    minimumPaymentType: v.optional(loanMinimumPaymentTypeValidator),
+    minimumPaymentPercent: v.optional(v.number()),
+    extraPayment: v.optional(v.number()),
     subscriptionCost: v.optional(v.number()),
+    subscriptionPaymentCount: v.optional(v.number()),
+    subscriptionOutstanding: v.optional(v.number()),
     interestRate: v.optional(v.number()),
     dueDay: v.number(),
     cadence: cadenceValidator,
@@ -3615,34 +4096,80 @@ export const updateLoan = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Loan record not found.')
 
     validateRequiredText(args.name, 'Loan name')
     validateNonNegative(args.balance, 'Loan balance')
-    validatePositive(args.minimumPayment, 'Loan minimum payment')
+    if (args.principalBalance !== undefined) {
+      validateNonNegative(args.principalBalance, 'Loan principal balance')
+    }
+    if (args.accruedInterest !== undefined) {
+      validateNonNegative(args.accruedInterest, 'Loan accrued interest')
+    }
+    const minimumPaymentType = normalizeLoanMinimumPaymentType(args.minimumPaymentType ?? existing.minimumPaymentType)
+    const paymentConfig = resolveLoanPaymentConfigForWrite({
+      minimumPayment: args.minimumPayment,
+      minimumPaymentType,
+      minimumPaymentPercent: args.minimumPaymentPercent ?? existing.minimumPaymentPercent,
+      extraPayment: args.extraPayment ?? existing.extraPayment,
+    })
     validateOptionalText(args.notes, 'Notes', 2000)
 
     if (args.subscriptionCost !== undefined) {
       validateNonNegative(args.subscriptionCost, 'Loan subscription cost')
+    }
+    if (args.subscriptionPaymentCount !== undefined) {
+      validatePositiveInteger(args.subscriptionPaymentCount, 'Loan subscription payments left')
+    }
+    if (args.subscriptionOutstanding !== undefined) {
+      validateNonNegative(args.subscriptionOutstanding, 'Loan subscription outstanding')
     }
 
     if (args.interestRate !== undefined) {
       validateNonNegative(args.interestRate, 'Loan interest rate')
     }
 
-    if (args.dueDay < 1 || args.dueDay > 31) {
-      throw new Error('Due day must be between 1 and 31.')
-    }
+    validateDayOfMonth(args.dueDay, 'Due day')
 
     const cadenceDetails = sanitizeCadenceDetails(args.cadence, args.customInterval, args.customUnit)
-
-    const existing = await ctx.db.get(args.id)
-    ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const hasExplicitBalances = args.principalBalance !== undefined || args.accruedInterest !== undefined
+    const existingBalances = getLoanWorkingBalances(existing)
+    const balances = hasExplicitBalances
+      ? resolveLoanBalancesForWrite({
+          balance: args.balance,
+          principalBalance: args.principalBalance,
+          accruedInterest: args.accruedInterest,
+        })
+      : resolveLoanBalancesForWrite({
+          balance: args.balance,
+          accruedInterest: Math.min(existingBalances.accruedInterest, Math.max(args.balance, 0)),
+        })
+    const nextSubscriptionCost = roundCurrency(Math.max(finiteOrZero(args.subscriptionCost ?? existing.subscriptionCost), 0))
+    const nextSubscriptionPaymentCount =
+      nextSubscriptionCost > 0
+        ? normalizePositiveInteger(args.subscriptionPaymentCount) ?? getLoanSubscriptionPaymentsRemaining(existing) ?? 12
+        : undefined
+    const subscriptionOutstanding = resolveLoanSubscriptionOutstandingForWrite({
+      existing,
+      subscriptionCost: args.subscriptionCost,
+      subscriptionPaymentCount: nextSubscriptionPaymentCount,
+      subscriptionOutstanding: args.subscriptionOutstanding,
+    })
+    const subscriptionPaymentCount = getSubscriptionPaymentsRemaining(nextSubscriptionCost, subscriptionOutstanding)
 
     await ctx.db.patch(args.id, {
       name: args.name.trim(),
-      balance: args.balance,
+      balance: balances.balance,
+      principalBalance: balances.principalBalance,
+      accruedInterest: balances.accruedInterest,
       minimumPayment: args.minimumPayment,
+      minimumPaymentType: paymentConfig.minimumPaymentType,
+      minimumPaymentPercent: paymentConfig.minimumPaymentPercent,
+      extraPayment: paymentConfig.extraPayment,
       subscriptionCost: args.subscriptionCost,
+      subscriptionPaymentCount,
+      subscriptionOutstanding,
       interestRate: args.interestRate,
       dueDay: args.dueDay,
       cadence: args.cadence,
@@ -3659,15 +4186,29 @@ export const updateLoan = mutation({
       before: {
         name: existing.name,
         balance: existing.balance,
+        principalBalance: existing.principalBalance ?? existing.balance,
+        accruedInterest: existing.accruedInterest ?? 0,
         minimumPayment: existing.minimumPayment,
+        minimumPaymentType: normalizeLoanMinimumPaymentType(existing.minimumPaymentType),
+        minimumPaymentPercent: existing.minimumPaymentPercent ?? 0,
+        extraPayment: existing.extraPayment ?? 0,
         subscriptionCost: existing.subscriptionCost ?? 0,
+        subscriptionPaymentCount: existing.subscriptionPaymentCount ?? 0,
+        subscriptionOutstanding: getLoanSubscriptionOutstanding(existing),
         interestRate: existing.interestRate ?? 0,
       },
       after: {
         name: args.name.trim(),
-        balance: args.balance,
+        balance: balances.balance,
+        principalBalance: balances.principalBalance,
+        accruedInterest: balances.accruedInterest,
         minimumPayment: args.minimumPayment,
+        minimumPaymentType: paymentConfig.minimumPaymentType,
+        minimumPaymentPercent: paymentConfig.minimumPaymentPercent ?? 0,
+        extraPayment: paymentConfig.extraPayment,
         subscriptionCost: args.subscriptionCost ?? 0,
+        subscriptionPaymentCount: subscriptionPaymentCount ?? 0,
+        subscriptionOutstanding,
         interestRate: args.interestRate ?? 0,
       },
     })
@@ -3682,6 +4223,16 @@ export const removeLoan = mutation({
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const existingEvents = await ctx.db
+      .query('loanEvents')
+      .withIndex('by_userId_loanId_createdAt', (q) =>
+        q.eq('userId', identity.subject).eq('loanId', args.id),
+      )
+      .collect()
+
+    if (existingEvents.length > 0) {
+      await Promise.all(existingEvents.map((event) => ctx.db.delete(event._id)))
+    }
 
     await ctx.db.delete(args.id)
 
@@ -3694,6 +4245,321 @@ export const removeLoan = mutation({
         name: existing.name,
         balance: existing.balance,
         minimumPayment: existing.minimumPayment,
+        removedEvents: existingEvents.length,
+      },
+    })
+  },
+})
+
+export const addLoanCharge = mutation({
+  args: {
+    id: v.id('loans'),
+    amount: v.number(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validatePositive(args.amount, 'Charge amount')
+    validateOptionalText(args.notes, 'Charge notes', 2000)
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const working = getLoanWorkingBalances(existing)
+    const subscriptionCost = roundCurrency(Math.max(finiteOrZero(existing.subscriptionCost), 0))
+    const subscriptionOutstanding = getLoanSubscriptionOutstanding(existing)
+    const subscriptionPaymentCount = getSubscriptionPaymentsRemaining(subscriptionCost, subscriptionOutstanding)
+    const nextPrincipalBalance = roundCurrency(working.principalBalance + args.amount)
+    const nextBalance = roundCurrency(nextPrincipalBalance + working.accruedInterest)
+    const nextTotalOutstanding = roundCurrency(nextBalance + subscriptionOutstanding)
+    const now = Date.now()
+
+    await ctx.db.patch(args.id, {
+      principalBalance: nextPrincipalBalance,
+      accruedInterest: working.accruedInterest,
+      balance: nextBalance,
+      subscriptionPaymentCount,
+      subscriptionOutstanding,
+    })
+
+    await insertLoanEvent(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      eventType: 'charge',
+      source: 'manual',
+      amount: args.amount,
+      principalDelta: args.amount,
+      interestDelta: 0,
+      resultingBalance: nextTotalOutstanding,
+      occurredAt: now,
+      notes: args.notes?.trim() || undefined,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'loan',
+      entityId: String(args.id),
+      action: 'quick_charge',
+      before: {
+        principalBalance: working.principalBalance,
+        accruedInterest: working.accruedInterest,
+        balance: working.balance,
+        subscriptionOutstanding,
+      },
+      after: {
+        principalBalance: nextPrincipalBalance,
+        accruedInterest: working.accruedInterest,
+        balance: nextBalance,
+        subscriptionOutstanding,
+      },
+      metadata: {
+        amount: args.amount,
+        totalOutstanding: nextTotalOutstanding,
+        notes: args.notes?.trim() || undefined,
+      },
+    })
+  },
+})
+
+export const recordLoanPayment = mutation({
+  args: {
+    id: v.id('loans'),
+    amount: v.number(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validatePositive(args.amount, 'Payment amount')
+    validateOptionalText(args.notes, 'Payment notes', 2000)
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const working = getLoanWorkingBalances(existing)
+    const subscriptionCost = roundCurrency(Math.max(finiteOrZero(existing.subscriptionCost), 0))
+    const subscriptionOutstanding = getLoanSubscriptionOutstanding(existing)
+    const subscriptionDueNow = roundCurrency(
+      Math.min(subscriptionOutstanding, subscriptionCost > 0 ? subscriptionCost : subscriptionOutstanding),
+    )
+    const totalOutstanding = roundCurrency(working.balance + subscriptionOutstanding)
+
+    if (args.amount > totalOutstanding + 0.000001) {
+      throw new Error(`Payment amount cannot exceed total outstanding (${roundCurrency(totalOutstanding)}).`)
+    }
+
+    let remainingPayment = roundCurrency(args.amount)
+    const subscriptionPayment = roundCurrency(Math.min(subscriptionDueNow, remainingPayment))
+    const nextSubscriptionOutstanding = roundCurrency(Math.max(subscriptionOutstanding - subscriptionPayment, 0))
+    const subscriptionPaymentCount = getSubscriptionPaymentsRemaining(subscriptionCost, nextSubscriptionOutstanding)
+    remainingPayment = roundCurrency(Math.max(remainingPayment - subscriptionPayment, 0))
+
+    const paymentOutcome = applyPaymentToLoan(
+      {
+        principalBalance: working.principalBalance,
+        accruedInterest: working.accruedInterest,
+      },
+      remainingPayment,
+    )
+
+    const totalApplied = roundCurrency(subscriptionPayment + paymentOutcome.appliedAmount)
+    if (totalApplied <= 0) {
+      throw new Error('No outstanding loan balance or subscription dues to pay down.')
+    }
+
+    const now = Date.now()
+    const resultingTotalOutstanding = roundCurrency(paymentOutcome.balance + nextSubscriptionOutstanding)
+    await ctx.db.patch(args.id, {
+      principalBalance: paymentOutcome.principalBalance,
+      accruedInterest: paymentOutcome.accruedInterest,
+      balance: paymentOutcome.balance,
+      subscriptionPaymentCount,
+      subscriptionOutstanding: nextSubscriptionOutstanding,
+    })
+
+    await insertLoanEvent(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      eventType: 'payment',
+      source: 'manual',
+      amount: totalApplied,
+      principalDelta: -paymentOutcome.principalPayment,
+      interestDelta: -paymentOutcome.interestPayment,
+      resultingBalance: resultingTotalOutstanding,
+      occurredAt: now,
+      notes: args.notes?.trim() || undefined,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'loan',
+      entityId: String(args.id),
+      action: 'quick_payment',
+      before: {
+        principalBalance: working.principalBalance,
+        accruedInterest: working.accruedInterest,
+        balance: working.balance,
+        subscriptionOutstanding,
+        totalOutstanding,
+      },
+      after: {
+        principalBalance: paymentOutcome.principalBalance,
+        accruedInterest: paymentOutcome.accruedInterest,
+        balance: paymentOutcome.balance,
+        subscriptionOutstanding: nextSubscriptionOutstanding,
+        totalOutstanding: resultingTotalOutstanding,
+      },
+      metadata: {
+        requestedAmount: args.amount,
+        appliedAmount: totalApplied,
+        subscriptionDueNow,
+        subscriptionPayment,
+        loanPayment: paymentOutcome.appliedAmount,
+        interestPayment: paymentOutcome.interestPayment,
+        principalPayment: paymentOutcome.principalPayment,
+        unappliedAmount: roundCurrency(Math.max(args.amount - totalApplied, 0)),
+        notes: args.notes?.trim() || undefined,
+      },
+    })
+  },
+})
+
+export const applyLoanInterestNow = mutation({
+  args: {
+    id: v.id('loans'),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validateOptionalText(args.notes, 'Interest notes', 2000)
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const working = getLoanWorkingBalances(existing)
+    const subscriptionCost = roundCurrency(Math.max(finiteOrZero(existing.subscriptionCost), 0))
+    const subscriptionOutstanding = getLoanSubscriptionOutstanding(existing)
+    const subscriptionPaymentCount = getSubscriptionPaymentsRemaining(subscriptionCost, subscriptionOutstanding)
+    const apr = finiteOrZero(existing.interestRate)
+    if (apr <= 0) {
+      throw new Error('Loan APR must be greater than 0 to accrue interest.')
+    }
+
+    if (working.balance <= 0) {
+      throw new Error('No outstanding loan balance to accrue interest on.')
+    }
+
+    const monthlyRate = apr / 100 / 12
+    const interestAmount = roundCurrency(working.balance * monthlyRate)
+    if (interestAmount <= 0) {
+      throw new Error('Calculated interest is zero. Check the loan balance and APR.')
+    }
+
+    const nextAccruedInterest = roundCurrency(working.accruedInterest + interestAmount)
+    const nextBalance = roundCurrency(working.principalBalance + nextAccruedInterest)
+    const nextTotalOutstanding = roundCurrency(nextBalance + subscriptionOutstanding)
+    const now = Date.now()
+
+    await ctx.db.patch(args.id, {
+      principalBalance: working.principalBalance,
+      accruedInterest: nextAccruedInterest,
+      balance: nextBalance,
+      subscriptionPaymentCount,
+      subscriptionOutstanding,
+      lastInterestAppliedAt: now,
+    })
+
+    await insertLoanEvent(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      eventType: 'interest_accrual',
+      source: 'manual',
+      amount: interestAmount,
+      principalDelta: 0,
+      interestDelta: interestAmount,
+      resultingBalance: nextTotalOutstanding,
+      occurredAt: now,
+      notes: args.notes?.trim() || undefined,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'loan',
+      entityId: String(args.id),
+      action: 'quick_interest',
+      before: {
+        principalBalance: working.principalBalance,
+        accruedInterest: working.accruedInterest,
+        balance: working.balance,
+        subscriptionOutstanding,
+      },
+      after: {
+        principalBalance: working.principalBalance,
+        accruedInterest: nextAccruedInterest,
+        balance: nextBalance,
+        subscriptionOutstanding,
+      },
+      metadata: {
+        apr,
+        interestAmount,
+        totalOutstanding: nextTotalOutstanding,
+        notes: args.notes?.trim() || undefined,
+      },
+    })
+  },
+})
+
+export const applyLoanSubscriptionNow = mutation({
+  args: {
+    id: v.id('loans'),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validateOptionalText(args.notes, 'Subscription notes', 2000)
+
+    const existing = await ctx.db.get(args.id)
+    ensureOwned(existing, identity.subject, 'Loan record not found.')
+    const subscriptionCost = roundCurrency(Math.max(finiteOrZero(existing.subscriptionCost), 0))
+    if (subscriptionCost <= 0) {
+      throw new Error('Loan subscription cost must be greater than 0.')
+    }
+
+    const working = getLoanWorkingBalances(existing)
+    const currentSubscriptionOutstanding = getLoanSubscriptionOutstanding(existing)
+    const nextSubscriptionOutstanding = roundCurrency(currentSubscriptionOutstanding + subscriptionCost)
+    const subscriptionPaymentCount = getSubscriptionPaymentsRemaining(subscriptionCost, nextSubscriptionOutstanding)
+    const nextTotalOutstanding = roundCurrency(working.balance + nextSubscriptionOutstanding)
+    const now = Date.now()
+
+    await ctx.db.patch(args.id, {
+      principalBalance: working.principalBalance,
+      accruedInterest: working.accruedInterest,
+      balance: working.balance,
+      subscriptionPaymentCount,
+      subscriptionOutstanding: nextSubscriptionOutstanding,
+    })
+
+    await insertLoanEvent(ctx, {
+      userId: identity.subject,
+      loanId: args.id,
+      eventType: 'subscription_fee',
+      source: 'manual',
+      amount: subscriptionCost,
+      principalDelta: 0,
+      interestDelta: 0,
+      resultingBalance: nextTotalOutstanding,
+      occurredAt: now,
+      notes: args.notes?.trim() || undefined,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'loan',
+      entityId: String(args.id),
+      action: 'quick_subscription_fee',
+      metadata: {
+        amount: subscriptionCost,
+        previousSubscriptionOutstanding: currentSubscriptionOutstanding,
+        nextSubscriptionOutstanding,
+        totalOutstanding: nextTotalOutstanding,
+        notes: args.notes?.trim() || undefined,
       },
     })
   },

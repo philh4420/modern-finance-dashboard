@@ -749,6 +749,10 @@ function App() {
             onDeleteLoan={loansSection.onDeleteLoan}
             saveLoanEdit={loansSection.saveLoanEdit}
             startLoanEdit={loansSection.startLoanEdit}
+            onQuickAddLoanCharge={loansSection.onQuickAddLoanCharge}
+            onQuickRecordLoanPayment={loansSection.onQuickRecordLoanPayment}
+            onQuickApplyLoanInterest={loansSection.onQuickApplyLoanInterest}
+            onQuickApplyLoanSubscription={loansSection.onQuickApplyLoanSubscription}
             cadenceOptions={cadenceOptions}
             customCadenceUnitOptions={customCadenceUnitOptions}
             isCustomCadence={isCustomCadence}

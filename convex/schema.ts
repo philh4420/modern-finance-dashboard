@@ -149,6 +149,14 @@ const consentType = v.union(v.literal('diagnostics'), v.literal('analytics'))
 const exportStatus = v.union(v.literal('processing'), v.literal('ready'), v.literal('failed'), v.literal('expired'))
 const deletionJobStatus = v.union(v.literal('running'), v.literal('completed'), v.literal('failed'))
 const cardMinimumPaymentType = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
+const loanMinimumPaymentType = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
+const loanEventType = v.union(
+  v.literal('interest_accrual'),
+  v.literal('payment'),
+  v.literal('charge'),
+  v.literal('subscription_fee'),
+)
+const loanEventSource = v.union(v.literal('manual'), v.literal('monthly_cycle'))
 const incomePaymentStatus = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
 const incomeChangeDirection = v.union(v.literal('increase'), v.literal('decrease'), v.literal('no_change'))
 const incomeAllocationTarget = v.union(
@@ -334,10 +342,18 @@ export default defineSchema({
     userId: v.string(),
     name: v.string(),
     balance: v.number(),
+    principalBalance: v.optional(v.number()),
+    accruedInterest: v.optional(v.number()),
+    subscriptionOutstanding: v.optional(v.number()),
     minimumPayment: v.number(),
+    minimumPaymentType: v.optional(loanMinimumPaymentType),
+    minimumPaymentPercent: v.optional(v.number()),
+    extraPayment: v.optional(v.number()),
     subscriptionCost: v.optional(v.number()),
+    subscriptionPaymentCount: v.optional(v.number()),
     interestRate: v.optional(v.number()),
     lastCycleAt: v.optional(v.number()),
+    lastInterestAppliedAt: v.optional(v.number()),
     dueDay: v.number(),
     cadence,
     customInterval: v.optional(v.number()),
@@ -347,6 +363,23 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  loanEvents: defineTable({
+    userId: v.string(),
+    loanId: v.id('loans'),
+    eventType: loanEventType,
+    source: loanEventSource,
+    amount: v.number(),
+    principalDelta: v.number(),
+    interestDelta: v.number(),
+    resultingBalance: v.number(),
+    occurredAt: v.number(),
+    cycleKey: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_loanId_createdAt', ['userId', 'loanId', 'createdAt']),
   purchases: defineTable({
     userId: v.string(),
     item: v.string(),
