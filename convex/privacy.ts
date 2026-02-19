@@ -42,6 +42,8 @@ type DeletionTable =
   | 'cards'
   | 'loans'
   | 'accounts'
+  | 'accountTransfers'
+  | 'accountReconciliationChecks'
   | 'goals'
   | 'financePreferences'
   | 'consentLogs'
@@ -76,6 +78,8 @@ const deletionTableValidator = v.union(
   v.literal('cards'),
   v.literal('loans'),
   v.literal('accounts'),
+  v.literal('accountTransfers'),
+  v.literal('accountReconciliationChecks'),
   v.literal('goals'),
   v.literal('financePreferences'),
   v.literal('consentLogs'),
@@ -635,6 +639,8 @@ export const requestDeletion = action({
       'cards',
       'loans',
       'accounts',
+      'accountTransfers',
+      'accountReconciliationChecks',
       'goals',
       'financePreferences',
       'consentLogs',
@@ -775,6 +781,8 @@ export const _collectExportData = internalQuery({
       loans,
       purchases,
       accounts,
+      accountTransfers,
+      accountReconciliationChecks,
       goals,
       transactionRules,
       envelopeBudgets,
@@ -807,6 +815,8 @@ export const _collectExportData = internalQuery({
       ctx.db.query('loans').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('purchases').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('accounts').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('accountTransfers').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('accountReconciliationChecks').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('goals').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('transactionRules').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('envelopeBudgets').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -841,6 +851,8 @@ export const _collectExportData = internalQuery({
       loans: docsToPortableRows(loans),
       purchases: docsToPortableRows(purchases),
       accounts: docsToPortableRows(accounts),
+      accountTransfers: docsToPortableRows(accountTransfers),
+      accountReconciliationChecks: docsToPortableRows(accountReconciliationChecks),
       goals: docsToPortableRows(goals),
       transactionRules: docsToPortableRows(transactionRules),
       envelopeBudgets: docsToPortableRows(envelopeBudgets),

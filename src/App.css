@@ -2532,6 +2532,162 @@ h2 {
   letter-spacing: 0.07em;
 }
 
+.accounts-phase2-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.accounts-phase2-card {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 9%, transparent), transparent 65%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.74rem 0.8rem;
+  display: grid;
+  gap: 0.58rem;
+}
+
+.accounts-phase2-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.62rem;
+}
+
+.accounts-phase2-head h3 {
+  margin: 0;
+  font-size: 0.96rem;
+  letter-spacing: -0.01em;
+}
+
+.accounts-phase2-head p {
+  margin: 0.16rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.79rem;
+  line-height: 1.35;
+}
+
+.accounts-phase2-form {
+  display: grid;
+  gap: 0.44rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.accounts-phase2-form label {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.accounts-phase2-form label span {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.accounts-phase2-form input,
+.accounts-phase2-form select {
+  width: 100%;
+}
+
+.accounts-phase2-field--span2 {
+  grid-column: 1 / -1;
+}
+
+.accounts-phase2-form .btn {
+  justify-self: start;
+}
+
+.accounts-reconciliation-log,
+.accounts-activity-feed {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-savings) 9%, transparent), transparent 65%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.74rem 0.8rem;
+  display: grid;
+  gap: 0.56rem;
+}
+
+.accounts-reconciliation-log-head,
+.accounts-activity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.62rem;
+  flex-wrap: wrap;
+}
+
+.accounts-reconciliation-log-head h3,
+.accounts-activity-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.accounts-reconciliation-log-head small,
+.accounts-activity-head small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.data-table--accounts-reconciliation {
+  min-width: 48rem;
+}
+
+.accounts-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.44rem;
+}
+
+.accounts-activity-item {
+  border-radius: 0.82rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 75%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.54rem 0.6rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.accounts-activity-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.52rem;
+  flex-wrap: wrap;
+}
+
+.accounts-activity-item-head p {
+  margin: 0;
+  font-weight: 650;
+  font-size: 0.84rem;
+}
+
+.accounts-activity-item small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.accounts-activity-item-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.52rem;
+}
+
+.accounts-activity-item-meta strong {
+  font-size: 0.86rem;
+}
+
 .editor-grid--cards .panel-form {
   grid-column: span 3;
 }
@@ -6514,6 +6670,31 @@ tbody td {
     align-items: flex-start;
   }
 
+  .accounts-phase2-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .accounts-phase2-head,
+  .accounts-reconciliation-log-head,
+  .accounts-activity-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .accounts-phase2-form {
+    grid-template-columns: 1fr;
+  }
+
+  .data-table--accounts-reconciliation {
+    min-width: 58rem;
+  }
+
+  .accounts-activity-item-head,
+  .accounts-activity-item-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .bills-bulk-actions-head {
     flex-direction: column;
     align-items: flex-start;
@@ -6664,6 +6845,10 @@ tbody td {
   .accounts-inline-grid,
   .accounts-inline-grid--balances {
     grid-template-columns: 1fr;
+  }
+
+  .data-table--accounts-reconciliation {
+    min-width: 34rem;
   }
 
   .forecast-axis-labels {

@@ -158,6 +158,8 @@ function App() {
   const loanCycleAuditEntries = financeState?.data.loanCycleAuditEntries ?? []
   const purchases = financeState?.data.purchases ?? []
   const accounts = financeState?.data.accounts ?? []
+  const accountTransfers = financeState?.data.accountTransfers ?? []
+  const accountReconciliationChecks = financeState?.data.accountReconciliationChecks ?? []
   const goals = financeState?.data.goals ?? []
   const cycleAuditLogs = financeState?.data.cycleAuditLogs ?? []
   const cycleStepAlerts = financeState?.data.cycleStepAlerts ?? []
@@ -914,6 +916,8 @@ function App() {
         {activeTab === 'accounts' ? (
           <AccountsTab
             accounts={accounts}
+            accountTransfers={accountTransfers}
+            accountReconciliationChecks={accountReconciliationChecks}
             accountForm={accountsSection.accountForm}
             setAccountForm={accountsSection.setAccountForm}
             accountEditId={accountsSection.accountEditId}
@@ -924,6 +928,12 @@ function App() {
             onDeleteAccount={accountsSection.onDeleteAccount}
             saveAccountEdit={accountsSection.saveAccountEdit}
             startAccountEdit={accountsSection.startAccountEdit}
+            accountTransferForm={accountsSection.accountTransferForm}
+            setAccountTransferForm={accountsSection.setAccountTransferForm}
+            submitAccountTransfer={accountsSection.submitAccountTransfer}
+            accountReconciliationForm={accountsSection.accountReconciliationForm}
+            setAccountReconciliationForm={accountsSection.setAccountReconciliationForm}
+            submitAccountReconciliation={accountsSection.submitAccountReconciliation}
             projectedMonthlyNet={summary.projectedMonthlyNet}
             accountTypeOptions={accountTypeOptions}
             accountPurposeOptions={accountPurposeOptions}

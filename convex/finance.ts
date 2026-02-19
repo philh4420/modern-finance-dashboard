@@ -2484,6 +2484,8 @@ export const getFinanceData = query({
           loanCycleAuditEntries: [],
           purchases: [],
           accounts: [],
+          accountTransfers: [],
+          accountReconciliationChecks: [],
           goals: [],
           cycleAuditLogs: [],
           cycleStepAlerts: [],
@@ -2514,6 +2516,8 @@ export const getFinanceData = query({
       loanCycleAuditEntries,
       purchases,
       accounts,
+      accountTransfers,
+      accountReconciliationChecks,
       goals,
       cycleAuditLogs,
       cycleStepAlerts,
@@ -2584,6 +2588,16 @@ export const getFinanceData = query({
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .collect(),
+      ctx.db
+        .query('accountTransfers')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(300),
+      ctx.db
+        .query('accountReconciliationChecks')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(360),
       ctx.db
         .query('goals')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
@@ -2751,6 +2765,8 @@ export const getFinanceData = query({
       ...loanCycleAuditEntries.map((entry) => entry.createdAt),
       ...purchases.map((entry) => entry.createdAt),
       ...accounts.map((entry) => entry.createdAt),
+      ...accountTransfers.map((entry) => entry.createdAt),
+      ...accountReconciliationChecks.map((entry) => entry.updatedAt ?? entry.createdAt),
       ...goals.map((entry) => entry.createdAt),
       ...cycleAuditLogs.map((entry) => entry.createdAt),
       ...cycleStepAlerts.map((entry) => entry.createdAt),
@@ -2780,6 +2796,8 @@ export const getFinanceData = query({
         loanCycleAuditEntries,
         purchases,
         accounts,
+        accountTransfers,
+        accountReconciliationChecks,
         goals,
         cycleAuditLogs,
         cycleStepAlerts,
@@ -6815,6 +6833,33 @@ export const removeAccount = mutation({
       )
       .collect()
 
+    const [sourceTransfers, destinationTransfers, reconciliationChecks] = await Promise.all([
+      ctx.db
+        .query('accountTransfers')
+        .withIndex('by_userId_sourceAccountId_createdAt', (q) => q.eq('userId', identity.subject).eq('sourceAccountId', args.id))
+        .collect(),
+      ctx.db
+        .query('accountTransfers')
+        .withIndex('by_userId_destinationAccountId_createdAt', (q) =>
+          q.eq('userId', identity.subject).eq('destinationAccountId', args.id),
+        )
+        .collect(),
+      ctx.db
+        .query('accountReconciliationChecks')
+        .withIndex('by_userId_accountId_cycleMonth', (q) => q.eq('userId', identity.subject).eq('accountId', args.id))
+        .collect(),
+    ])
+
+    const transferIds = new Set<string>()
+    const transfersToDelete: Array<Id<'accountTransfers'>> = []
+    for (const transfer of [...sourceTransfers, ...destinationTransfers]) {
+      const id = String(transfer._id)
+      if (!transferIds.has(id)) {
+        transferIds.add(id)
+        transfersToDelete.push(transfer._id)
+      }
+    }
+
     await Promise.all(
       mappedIncomeEntries.map((income) =>
         ctx.db.patch(income._id, {
@@ -6822,6 +6867,9 @@ export const removeAccount = mutation({
         }),
       ),
     )
+
+    await Promise.all(transfersToDelete.map((id) => ctx.db.delete(id)))
+    await Promise.all(reconciliationChecks.map((entry) => ctx.db.delete(entry._id)))
 
     await ctx.db.delete(args.id)
 
@@ -6841,8 +6889,258 @@ export const removeAccount = mutation({
       },
       metadata: {
         detachedIncomeMappings: mappedIncomeEntries.length,
+        removedTransferEntries: transfersToDelete.length,
+        removedReconciliationEntries: reconciliationChecks.length,
       },
     })
+  },
+})
+
+export const addAccountTransfer = mutation({
+  args: {
+    sourceAccountId: v.id('accounts'),
+    destinationAccountId: v.id('accounts'),
+    amount: v.number(),
+    transferDate: v.string(),
+    reference: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validatePositive(args.amount, 'Transfer amount')
+    validateIsoDate(args.transferDate, 'Transfer date')
+    validateOptionalText(args.reference, 'Transfer reference', 120)
+    validateOptionalText(args.note, 'Transfer note', 800)
+
+    if (args.sourceAccountId === args.destinationAccountId) {
+      throw new Error('Choose different source and destination accounts.')
+    }
+
+    const [sourceAccount, destinationAccount] = await Promise.all([
+      ctx.db.get(args.sourceAccountId),
+      ctx.db.get(args.destinationAccountId),
+    ])
+
+    ensureOwned(sourceAccount, identity.subject, 'Source account not found.')
+    ensureOwned(destinationAccount, identity.subject, 'Destination account not found.')
+
+    const sourceNext = applyAccountBalanceDelta(sourceAccount, -args.amount)
+    const destinationNext = applyAccountBalanceDelta(destinationAccount, args.amount)
+
+    await Promise.all([
+      ctx.db.patch(sourceAccount._id, {
+        balance: sourceNext.balance,
+        ledgerBalance: sourceNext.ledgerBalance,
+        pendingBalance: sourceNext.pendingBalance,
+      }),
+      ctx.db.patch(destinationAccount._id, {
+        balance: destinationNext.balance,
+        ledgerBalance: destinationNext.ledgerBalance,
+        pendingBalance: destinationNext.pendingBalance,
+      }),
+    ])
+
+    const transferId = await ctx.db.insert('accountTransfers', {
+      userId: identity.subject,
+      sourceAccountId: args.sourceAccountId,
+      destinationAccountId: args.destinationAccountId,
+      amount: roundCurrency(args.amount),
+      transferDate: args.transferDate,
+      reference: args.reference?.trim() || undefined,
+      note: args.note?.trim() || undefined,
+      createdAt: Date.now(),
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'account_transfer',
+      entityId: String(transferId),
+      action: 'created',
+      before: {
+        sourceAccount: {
+          id: String(sourceAccount._id),
+          balance: sourceAccount.balance,
+          ledgerBalance: sourceAccount.ledgerBalance ?? sourceAccount.balance,
+          pendingBalance: sourceAccount.pendingBalance ?? 0,
+        },
+        destinationAccount: {
+          id: String(destinationAccount._id),
+          balance: destinationAccount.balance,
+          ledgerBalance: destinationAccount.ledgerBalance ?? destinationAccount.balance,
+          pendingBalance: destinationAccount.pendingBalance ?? 0,
+        },
+      },
+      after: {
+        sourceAccount: {
+          id: String(sourceAccount._id),
+          balance: sourceNext.balance,
+          ledgerBalance: sourceNext.ledgerBalance,
+          pendingBalance: sourceNext.pendingBalance,
+        },
+        destinationAccount: {
+          id: String(destinationAccount._id),
+          balance: destinationNext.balance,
+          ledgerBalance: destinationNext.ledgerBalance,
+          pendingBalance: destinationNext.pendingBalance,
+        },
+      },
+      metadata: {
+        amount: roundCurrency(args.amount),
+        transferDate: args.transferDate,
+        sourceAccountName: sourceAccount.name,
+        destinationAccountName: destinationAccount.name,
+        reference: args.reference?.trim() || null,
+      },
+    })
+
+    return { transferId }
+  },
+})
+
+export const upsertAccountReconciliationCheck = mutation({
+  args: {
+    accountId: v.id('accounts'),
+    cycleMonth: v.string(),
+    statementStartBalance: v.number(),
+    statementEndBalance: v.number(),
+    reconciled: v.boolean(),
+    applyAdjustment: v.optional(v.boolean()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+
+    validateStatementMonth(args.cycleMonth, 'Cycle month')
+    validateFinite(args.statementStartBalance, 'Statement start balance')
+    validateFinite(args.statementEndBalance, 'Statement end balance')
+    validateOptionalText(args.note, 'Reconciliation note', 1200)
+
+    const account = await ctx.db.get(args.accountId)
+    ensureOwned(account, identity.subject, 'Account not found.')
+
+    const existingChecks = await ctx.db
+      .query('accountReconciliationChecks')
+      .withIndex('by_userId_accountId_cycleMonth', (q) =>
+        q.eq('userId', identity.subject).eq('accountId', args.accountId).eq('cycleMonth', args.cycleMonth),
+      )
+      .collect()
+
+    const existing = existingChecks
+      .sort((left, right) => (right.updatedAt ?? right.createdAt) - (left.updatedAt ?? left.createdAt))[0] ?? null
+
+    const startBalances = resolveAccountBalancesForRead(account)
+    let nextLedgerBalance = startBalances.ledgerBalance
+    let nextBalance = startBalances.balance
+    let adjustmentApplied = 0
+
+    if (args.applyAdjustment === true) {
+      adjustmentApplied = roundCurrency(args.statementEndBalance - nextLedgerBalance)
+      if (Math.abs(adjustmentApplied) > 0.000001) {
+        const adjustmentPatch = applyAccountBalanceDelta(account, adjustmentApplied)
+        nextLedgerBalance = adjustmentPatch.ledgerBalance
+        nextBalance = adjustmentPatch.balance
+        await ctx.db.patch(account._id, {
+          balance: adjustmentPatch.balance,
+          ledgerBalance: adjustmentPatch.ledgerBalance,
+          pendingBalance: adjustmentPatch.pendingBalance,
+        })
+
+        await recordFinanceAuditEvent(ctx, {
+          userId: identity.subject,
+          entityType: 'account',
+          entityId: String(account._id),
+          action: 'reconciliation_adjustment',
+          before: {
+            balance: account.balance,
+            ledgerBalance: startBalances.ledgerBalance,
+            pendingBalance: startBalances.pendingBalance,
+          },
+          after: {
+            balance: adjustmentPatch.balance,
+            ledgerBalance: adjustmentPatch.ledgerBalance,
+            pendingBalance: adjustmentPatch.pendingBalance,
+          },
+          metadata: {
+            cycleMonth: args.cycleMonth,
+            adjustmentApplied,
+          },
+        })
+      }
+    }
+
+    const unmatchedDelta = roundCurrency(args.statementEndBalance - nextLedgerBalance)
+    const now = Date.now()
+    const normalizedNote = args.note?.trim() || undefined
+    let checkId: Id<'accountReconciliationChecks'>
+
+    if (existing) {
+      checkId = existing._id
+      await ctx.db.patch(existing._id, {
+        statementStartBalance: roundCurrency(args.statementStartBalance),
+        statementEndBalance: roundCurrency(args.statementEndBalance),
+        ledgerEndBalance: roundCurrency(nextLedgerBalance),
+        unmatchedDelta,
+        reconciled: args.reconciled,
+        note: normalizedNote,
+        updatedAt: now,
+      })
+    } else {
+      checkId = await ctx.db.insert('accountReconciliationChecks', {
+        userId: identity.subject,
+        accountId: args.accountId,
+        cycleMonth: args.cycleMonth,
+        statementStartBalance: roundCurrency(args.statementStartBalance),
+        statementEndBalance: roundCurrency(args.statementEndBalance),
+        ledgerEndBalance: roundCurrency(nextLedgerBalance),
+        unmatchedDelta,
+        reconciled: args.reconciled,
+        note: normalizedNote,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'account_reconciliation',
+      entityId: String(checkId),
+      action: existing ? 'updated' : 'created',
+      before: existing
+        ? {
+            statementStartBalance: existing.statementStartBalance,
+            statementEndBalance: existing.statementEndBalance,
+            ledgerEndBalance: existing.ledgerEndBalance,
+            unmatchedDelta: existing.unmatchedDelta,
+            reconciled: existing.reconciled,
+            note: existing.note ?? null,
+          }
+        : undefined,
+      after: {
+        statementStartBalance: roundCurrency(args.statementStartBalance),
+        statementEndBalance: roundCurrency(args.statementEndBalance),
+        ledgerEndBalance: roundCurrency(nextLedgerBalance),
+        unmatchedDelta,
+        reconciled: args.reconciled,
+        note: normalizedNote ?? null,
+      },
+      metadata: {
+        accountId: String(args.accountId),
+        accountName: account.name,
+        cycleMonth: args.cycleMonth,
+        adjustmentApplied: roundCurrency(adjustmentApplied),
+        resultingAccountBalance: roundCurrency(nextBalance),
+      },
+    })
+
+    return {
+      checkId,
+      cycleMonth: args.cycleMonth,
+      unmatchedDelta,
+      reconciled: args.reconciled,
+      adjustmentApplied: roundCurrency(adjustmentApplied),
+      ledgerEndBalance: roundCurrency(nextLedgerBalance),
+    }
   },
 })
 

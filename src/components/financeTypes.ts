@@ -92,6 +92,8 @@ export type LoanEventEntry = Doc<'loanEvents'>
 export type LoanCycleAuditEntry = Doc<'loanCycleAuditEntries'>
 export type PurchaseEntry = Doc<'purchases'>
 export type AccountEntry = Doc<'accounts'>
+export type AccountTransferEntry = Doc<'accountTransfers'>
+export type AccountReconciliationCheckEntry = Doc<'accountReconciliationChecks'>
 export type GoalEntry = Doc<'goals'>
 export type CycleAuditLogEntry = Doc<'cycleAuditLogs'>
 export type CycleStepAlertEntry = Doc<'cycleStepAlerts'>
@@ -317,6 +319,25 @@ export type AccountForm = {
   pendingBalance: string
   balance: string
   liquid: boolean
+}
+
+export type AccountTransferForm = {
+  sourceAccountId: string
+  destinationAccountId: string
+  amount: string
+  transferDate: string
+  reference: string
+  note: string
+}
+
+export type AccountReconciliationForm = {
+  accountId: string
+  cycleMonth: string
+  statementStartBalance: string
+  statementEndBalance: string
+  reconciled: boolean
+  applyAdjustment: boolean
+  note: string
 }
 
 export type GoalForm = {

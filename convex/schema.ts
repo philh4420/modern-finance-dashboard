@@ -553,6 +553,38 @@ export default defineSchema({
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  accountTransfers: defineTable({
+    userId: v.string(),
+    sourceAccountId: v.id('accounts'),
+    destinationAccountId: v.id('accounts'),
+    amount: v.number(),
+    transferDate: v.string(),
+    reference: v.optional(v.string()),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_transferDate', ['userId', 'transferDate'])
+    .index('by_userId_sourceAccountId_createdAt', ['userId', 'sourceAccountId', 'createdAt'])
+    .index('by_userId_destinationAccountId_createdAt', ['userId', 'destinationAccountId', 'createdAt']),
+  accountReconciliationChecks: defineTable({
+    userId: v.string(),
+    accountId: v.id('accounts'),
+    cycleMonth: v.string(),
+    statementStartBalance: v.number(),
+    statementEndBalance: v.number(),
+    ledgerEndBalance: v.number(),
+    unmatchedDelta: v.number(),
+    reconciled: v.boolean(),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_accountId_cycleMonth', ['userId', 'accountId', 'cycleMonth'])
+    .index('by_userId_cycleMonth_createdAt', ['userId', 'cycleMonth', 'createdAt']),
   goals: defineTable({
     userId: v.string(),
     title: v.string(),

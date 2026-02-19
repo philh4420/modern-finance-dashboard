@@ -1,8 +1,15 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
-import type { AccountEditDraft, AccountEntry, AccountForm, AccountId } from '../components/financeTypes'
-import { parseFloatInput } from '../lib/financeHelpers'
+import type {
+  AccountEditDraft,
+  AccountEntry,
+  AccountForm,
+  AccountId,
+  AccountReconciliationForm,
+  AccountTransferForm,
+} from '../components/financeTypes'
+import { parseFloatInput, toIsoToday } from '../lib/financeHelpers'
 import type { MutationHandlers } from './useMutationFeedback'
 
 type UseAccountsSectionArgs = {
@@ -29,14 +36,59 @@ const initialAccountEditDraft: AccountEditDraft = {
   liquid: true,
 }
 
+const initialTransferForm = (): AccountTransferForm => ({
+  sourceAccountId: '',
+  destinationAccountId: '',
+  amount: '',
+  transferDate: toIsoToday(),
+  reference: '',
+  note: '',
+})
+
+const initialReconciliationForm = (): AccountReconciliationForm => ({
+  accountId: '',
+  cycleMonth: new Date().toISOString().slice(0, 7),
+  statementStartBalance: '',
+  statementEndBalance: '',
+  reconciled: true,
+  applyAdjustment: false,
+  note: '',
+})
+
 export const useAccountsSection = ({ accounts, clearError, handleMutationError }: UseAccountsSectionArgs) => {
   const addAccount = useMutation(api.finance.addAccount)
   const updateAccount = useMutation(api.finance.updateAccount)
   const removeAccount = useMutation(api.finance.removeAccount)
+  const addAccountTransfer = useMutation(api.finance.addAccountTransfer)
+  const upsertAccountReconciliationCheck = useMutation(api.finance.upsertAccountReconciliationCheck)
 
   const [accountForm, setAccountForm] = useState<AccountForm>(initialAccountForm)
   const [accountEditId, setAccountEditId] = useState<AccountId | null>(null)
   const [accountEditDraft, setAccountEditDraft] = useState<AccountEditDraft>(initialAccountEditDraft)
+  const [accountTransferForm, setAccountTransferForm] = useState<AccountTransferForm>(initialTransferForm)
+  const [accountReconciliationForm, setAccountReconciliationForm] = useState<AccountReconciliationForm>(
+    initialReconciliationForm,
+  )
+
+  useEffect(() => {
+    const availableIds = new Set(accounts.map((entry) => String(entry._id)))
+    const firstId = accounts[0]?._id ? String(accounts[0]._id) : ''
+
+    setAccountTransferForm((prev) => {
+      const nextSource = availableIds.has(prev.sourceAccountId) ? prev.sourceAccountId : firstId
+      const nextDestination = availableIds.has(prev.destinationAccountId) ? prev.destinationAccountId : ''
+      return {
+        ...prev,
+        sourceAccountId: nextSource,
+        destinationAccountId: nextDestination === nextSource ? '' : nextDestination,
+      }
+    })
+
+    setAccountReconciliationForm((prev) => ({
+      ...prev,
+      accountId: availableIds.has(prev.accountId) ? prev.accountId : firstId,
+    }))
+  }, [accounts])
 
   const onAddAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -113,6 +165,85 @@ export const useAccountsSection = ({ accounts, clearError, handleMutationError }
     }
   }
 
+  const submitAccountTransfer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    clearError()
+
+    try {
+      if (accountTransferForm.sourceAccountId.length === 0) {
+        throw new Error('Select a source account.')
+      }
+      if (accountTransferForm.destinationAccountId.length === 0) {
+        throw new Error('Select a destination account.')
+      }
+      if (accountTransferForm.sourceAccountId === accountTransferForm.destinationAccountId) {
+        throw new Error('Source and destination must be different accounts.')
+      }
+
+      const amount = parseFloatInput(accountTransferForm.amount, 'Transfer amount')
+      if (amount <= 0) {
+        throw new Error('Transfer amount must be greater than 0.')
+      }
+
+      await addAccountTransfer({
+        sourceAccountId: accountTransferForm.sourceAccountId as AccountId,
+        destinationAccountId: accountTransferForm.destinationAccountId as AccountId,
+        amount,
+        transferDate: accountTransferForm.transferDate,
+        reference: accountTransferForm.reference || undefined,
+        note: accountTransferForm.note || undefined,
+      })
+
+      setAccountTransferForm((prev) => ({
+        ...initialTransferForm(),
+        sourceAccountId: prev.sourceAccountId,
+        destinationAccountId: prev.destinationAccountId,
+      }))
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
+  const submitAccountReconciliation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    clearError()
+
+    try {
+      if (accountReconciliationForm.accountId.length === 0) {
+        throw new Error('Select an account to reconcile.')
+      }
+      if (!/^\d{4}-\d{2}$/.test(accountReconciliationForm.cycleMonth)) {
+        throw new Error('Cycle month must use YYYY-MM format.')
+      }
+
+      const statementStartBalance = parseFloatInput(
+        accountReconciliationForm.statementStartBalance,
+        'Statement start balance',
+      )
+      const statementEndBalance = parseFloatInput(accountReconciliationForm.statementEndBalance, 'Statement end balance')
+
+      await upsertAccountReconciliationCheck({
+        accountId: accountReconciliationForm.accountId as AccountId,
+        cycleMonth: accountReconciliationForm.cycleMonth,
+        statementStartBalance,
+        statementEndBalance,
+        reconciled: accountReconciliationForm.reconciled,
+        applyAdjustment: accountReconciliationForm.applyAdjustment,
+        note: accountReconciliationForm.note || undefined,
+      })
+
+      setAccountReconciliationForm((prev) => ({
+        ...prev,
+        statementStartBalance: '',
+        statementEndBalance: '',
+        note: '',
+        applyAdjustment: false,
+      }))
+    } catch (error) {
+      handleMutationError(error)
+    }
+  }
+
   return {
     accountForm,
     setAccountForm,
@@ -124,6 +255,12 @@ export const useAccountsSection = ({ accounts, clearError, handleMutationError }
     onDeleteAccount,
     startAccountEdit,
     saveAccountEdit,
+    accountTransferForm,
+    setAccountTransferForm,
+    submitAccountTransfer,
+    accountReconciliationForm,
+    setAccountReconciliationForm,
+    submitAccountReconciliation,
     accounts,
   }
 }
