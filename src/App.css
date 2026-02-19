@@ -2407,6 +2407,362 @@ h2 {
   font-size: 0.75rem;
 }
 
+.accounts-phase3-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.38fr) minmax(0, 1fr);
+  gap: 0.62rem;
+}
+
+.accounts-phase3-card {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 65%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.78rem 0.84rem;
+  display: grid;
+  gap: 0.58rem;
+}
+
+.accounts-phase3-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.accounts-phase3-head h3 {
+  margin: 0;
+  font-size: 0.96rem;
+  letter-spacing: -0.01em;
+}
+
+.accounts-phase3-head p {
+  margin: 0.16rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.79rem;
+  line-height: 1.35;
+}
+
+.accounts-forecast-window-toggle {
+  display: flex;
+  gap: 0.28rem;
+  flex-wrap: wrap;
+}
+
+.accounts-forecast-window-btn--active {
+  border-color: color-mix(in oklab, var(--tone-finance) 52%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 14%, var(--surface-card));
+}
+
+.accounts-forecast-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.44rem;
+}
+
+.accounts-forecast-summary article {
+  border-radius: 0.82rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.52rem 0.58rem;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.accounts-forecast-summary article p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.accounts-forecast-summary article strong {
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.accounts-forecast-chart-wrap {
+  border-radius: 0.88rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 70%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.44rem 0.5rem 0.38rem;
+}
+
+.accounts-forecast-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.accounts-forecast-zero-line {
+  stroke: color-mix(in oklab, var(--stroke) 76%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.accounts-forecast-line {
+  fill: none;
+  stroke: color-mix(in oklab, var(--tone-finance) 64%, black 12%);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.accounts-forecast-point {
+  stroke: color-mix(in oklab, white 80%, transparent);
+  stroke-width: 1;
+}
+
+.accounts-forecast-point--healthy {
+  fill: color-mix(in oklab, var(--tone-positive) 58%, black 10%);
+}
+
+.accounts-forecast-point--warning {
+  fill: color-mix(in oklab, var(--tone-warning) 62%, black 8%);
+}
+
+.accounts-forecast-point--critical {
+  fill: color-mix(in oklab, var(--tone-negative) 68%, black 10%);
+}
+
+.accounts-forecast-axis-labels {
+  margin-top: 0.14rem;
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 0.69rem;
+  letter-spacing: 0.04em;
+}
+
+.accounts-forecast-risk-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.32rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+
+.accounts-forecast-risk-list li {
+  border-radius: 0.72rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.44rem 0.48rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.accounts-forecast-risk-list li p {
+  margin: 0;
+  font-size: 0.79rem;
+  color: var(--text-main);
+}
+
+.accounts-forecast-event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.accounts-forecast-event {
+  border-radius: 0.78rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.46rem 0.52rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.62rem;
+  align-items: baseline;
+}
+
+.accounts-forecast-event-main {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.accounts-forecast-event-main p {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.accounts-forecast-event-main small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.accounts-forecast-event-amount {
+  display: grid;
+  gap: 0.08rem;
+  text-align: right;
+}
+
+.accounts-forecast-event-amount strong {
+  font-size: 0.84rem;
+}
+
+.accounts-forecast-event-amount small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.accounts-alert-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+  justify-content: flex-end;
+}
+
+.accounts-alert-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.accounts-alert-list li {
+  border-radius: 0.78rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.48rem 0.54rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.accounts-alert-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+  align-items: baseline;
+}
+
+.accounts-alert-head p {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.accounts-alert-list li small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.accounts-trend-panel {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-savings) 10%, transparent), transparent 65%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.78rem 0.84rem;
+  display: grid;
+  gap: 0.58rem;
+}
+
+.accounts-trend-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.accounts-trend-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.accounts-trend-head small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.accounts-trend-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+
+.accounts-trend-card {
+  border-radius: 0.86rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.56rem 0.62rem;
+  display: grid;
+  gap: 0.36rem;
+}
+
+.accounts-trend-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.42rem;
+  align-items: flex-start;
+}
+
+.accounts-trend-card header h4 {
+  margin: 0;
+  font-size: 0.86rem;
+  letter-spacing: -0.01em;
+}
+
+.accounts-trend-card header small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.accounts-trend-balance {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.accounts-trend-balance p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.accounts-trend-balance strong {
+  font-size: 0.93rem;
+  letter-spacing: -0.01em;
+}
+
+.accounts-trend-windows {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.accounts-trend-window {
+  border-radius: 0.72rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 96%, white 4%);
+  padding: 0.34rem 0.36rem;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.accounts-trend-window p {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.accounts-trend-window small {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
 .accounts-tab-shell .table-wrap--card {
   padding-inline: 0.78rem;
   overflow-x: hidden;
@@ -6662,6 +7018,37 @@ tbody td {
 
   .accounts-summary-strip,
   .accounts-purpose-list {
+    grid-template-columns: 1fr;
+  }
+
+  .accounts-phase3-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .accounts-phase3-head,
+  .accounts-trend-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .accounts-forecast-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .accounts-forecast-event {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .accounts-forecast-event-amount {
+    text-align: left;
+  }
+
+  .accounts-trend-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .accounts-trend-windows {
     grid-template-columns: 1fr;
   }
 

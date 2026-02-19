@@ -916,6 +916,10 @@ function App() {
         {activeTab === 'accounts' ? (
           <AccountsTab
             accounts={accounts}
+            incomes={incomes}
+            bills={bills}
+            cards={cards}
+            loans={loans}
             accountTransfers={accountTransfers}
             accountReconciliationChecks={accountReconciliationChecks}
             accountForm={accountsSection.accountForm}
