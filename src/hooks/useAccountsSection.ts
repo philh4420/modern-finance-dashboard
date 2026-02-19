@@ -12,6 +12,9 @@ type UseAccountsSectionArgs = {
 const initialAccountForm: AccountForm = {
   name: '',
   type: 'checking',
+  purpose: 'spending',
+  ledgerBalance: '',
+  pendingBalance: '0',
   balance: '',
   liquid: true,
 }
@@ -19,6 +22,9 @@ const initialAccountForm: AccountForm = {
 const initialAccountEditDraft: AccountEditDraft = {
   name: '',
   type: 'checking',
+  purpose: 'spending',
+  ledgerBalance: '',
+  pendingBalance: '0',
   balance: '',
   liquid: true,
 }
@@ -37,10 +43,17 @@ export const useAccountsSection = ({ accounts, clearError, handleMutationError }
     clearError()
 
     try {
+      const ledgerBalance = parseFloatInput(accountForm.ledgerBalance, 'Account ledger balance')
+      const pendingBalance = parseFloatInput(accountForm.pendingBalance || '0', 'Account pending balance')
+      const balance = ledgerBalance + pendingBalance
+
       await addAccount({
         name: accountForm.name,
         type: accountForm.type,
-        balance: parseFloatInput(accountForm.balance, 'Account balance'),
+        purpose: accountForm.purpose,
+        ledgerBalance,
+        pendingBalance,
+        balance,
         liquid: accountForm.liquid,
       })
 
@@ -67,6 +80,9 @@ export const useAccountsSection = ({ accounts, clearError, handleMutationError }
     setAccountEditDraft({
       name: entry.name,
       type: entry.type,
+      purpose: entry.purpose ?? (entry.type === 'debt' ? 'debt' : 'spending'),
+      ledgerBalance: String(entry.ledgerBalance ?? entry.balance),
+      pendingBalance: String(entry.pendingBalance ?? 0),
       balance: String(entry.balance),
       liquid: entry.liquid,
     })
@@ -77,11 +93,18 @@ export const useAccountsSection = ({ accounts, clearError, handleMutationError }
 
     clearError()
     try {
+      const ledgerBalance = parseFloatInput(accountEditDraft.ledgerBalance, 'Account ledger balance')
+      const pendingBalance = parseFloatInput(accountEditDraft.pendingBalance || '0', 'Account pending balance')
+      const balance = ledgerBalance + pendingBalance
+
       await updateAccount({
         id: accountEditId,
         name: accountEditDraft.name,
         type: accountEditDraft.type,
-        balance: parseFloatInput(accountEditDraft.balance, 'Account balance'),
+        purpose: accountEditDraft.purpose,
+        ledgerBalance,
+        pendingBalance,
+        balance,
         liquid: accountEditDraft.liquid,
       })
       setAccountEditId(null)

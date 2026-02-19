@@ -16,6 +16,7 @@ export type TabKey =
 export type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 export type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 export type AccountType = 'checking' | 'savings' | 'investment' | 'cash' | 'debt'
+export type AccountPurpose = 'bills' | 'emergency' | 'spending' | 'goals' | 'debt'
 export type GoalPriority = 'low' | 'medium' | 'high'
 export type InsightSeverity = 'good' | 'warning' | 'critical'
 export type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
@@ -311,6 +312,9 @@ export type PurchaseImportInput = {
 export type AccountForm = {
   name: string
   type: AccountType
+  purpose: AccountPurpose
+  ledgerBalance: string
+  pendingBalance: string
   balance: string
   liquid: boolean
 }
@@ -491,6 +495,11 @@ export type CustomCadenceUnitOption = {
 
 export type AccountTypeOption = {
   value: AccountType
+  label: string
+}
+
+export type AccountPurposeOption = {
+  value: AccountPurpose
   label: string
 }
 

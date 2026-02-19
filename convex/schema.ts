@@ -108,6 +108,13 @@ const accountType = v.union(
   v.literal('cash'),
   v.literal('debt'),
 )
+const accountPurpose = v.union(
+  v.literal('bills'),
+  v.literal('emergency'),
+  v.literal('spending'),
+  v.literal('goals'),
+  v.literal('debt'),
+)
 
 const goalPriority = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
 const cycleRunSource = v.union(v.literal('manual'), v.literal('automatic'))
@@ -538,6 +545,9 @@ export default defineSchema({
     name: v.string(),
     type: accountType,
     balance: v.number(),
+    ledgerBalance: v.optional(v.number()),
+    pendingBalance: v.optional(v.number()),
+    purpose: v.optional(accountPurpose),
     liquid: v.boolean(),
     createdAt: v.number(),
   })

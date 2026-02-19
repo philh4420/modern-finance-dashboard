@@ -1,4 +1,5 @@
 import type {
+  AccountPurposeOption,
   AccountTypeOption,
   BillCategoryOption,
   BillScopeOption,
@@ -45,6 +46,14 @@ export const accountTypeOptions: AccountTypeOption[] = [
   { value: 'savings', label: 'Savings' },
   { value: 'investment', label: 'Investment' },
   { value: 'cash', label: 'Cash' },
+  { value: 'debt', label: 'Debt' },
+]
+
+export const accountPurposeOptions: AccountPurposeOption[] = [
+  { value: 'bills', label: 'Bills' },
+  { value: 'emergency', label: 'Emergency' },
+  { value: 'spending', label: 'Spending' },
+  { value: 'goals', label: 'Goals' },
   { value: 'debt', label: 'Debt' },
 ]
 

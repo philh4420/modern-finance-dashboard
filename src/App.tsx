@@ -37,6 +37,7 @@ import { usePurchasesSection } from './hooks/usePurchasesSection'
 import { useReconciliationSection } from './hooks/useReconciliationSection'
 import { useSettingsSection } from './hooks/useSettingsSection'
 import {
+  accountPurposeOptions,
   billCategoryOptions,
   billScopeOptions,
   accountTypeOptions,
@@ -50,6 +51,7 @@ import {
 } from './lib/financeConstants'
 import { initDiagnostics, setDiagnosticsConsent } from './lib/diagnostics'
 import {
+  accountPurposeLabel,
   accountTypeLabel,
   cadenceLabel,
   isCustomCadence,
@@ -922,8 +924,11 @@ function App() {
             onDeleteAccount={accountsSection.onDeleteAccount}
             saveAccountEdit={accountsSection.saveAccountEdit}
             startAccountEdit={accountsSection.startAccountEdit}
+            projectedMonthlyNet={summary.projectedMonthlyNet}
             accountTypeOptions={accountTypeOptions}
+            accountPurposeOptions={accountPurposeOptions}
             accountTypeLabel={accountTypeLabel}
+            accountPurposeLabel={accountPurposeLabel}
             formatMoney={formatSection.formatMoney}
           />
         ) : null}

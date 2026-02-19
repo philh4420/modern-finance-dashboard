@@ -28,6 +28,13 @@ const accountTypeValidator = v.union(
   v.literal('cash'),
   v.literal('debt'),
 )
+const accountPurposeValidator = v.union(
+  v.literal('bills'),
+  v.literal('emergency'),
+  v.literal('spending'),
+  v.literal('goals'),
+  v.literal('debt'),
+)
 
 const goalPriorityValidator = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
 const cycleRunSourceValidator = v.union(v.literal('manual'), v.literal('automatic'))
@@ -88,6 +95,8 @@ type LoanMutationType =
 type LoanMutationSource = 'manual' | 'automatic' | 'monthly_cycle'
 type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
+type AccountType = 'checking' | 'savings' | 'investment' | 'cash' | 'debt'
+type AccountPurpose = 'bills' | 'emergency' | 'spending' | 'goals' | 'debt'
 type BillCategory =
   | 'housing'
   | 'utilities'
@@ -864,6 +873,82 @@ const validateCurrencyCode = (currency: string) => {
 
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
+
+const resolveAccountPurpose = (accountType: AccountType, purpose?: AccountPurpose) => {
+  if (purpose) {
+    return purpose
+  }
+  return accountType === 'debt' ? 'debt' : 'spending'
+}
+
+const resolveAccountBalancesForWrite = (input: {
+  balance: number
+  ledgerBalance?: number
+  pendingBalance?: number
+}) => {
+  const hasLedger = input.ledgerBalance !== undefined
+  const hasPending = input.pendingBalance !== undefined
+
+  const availableBalance = roundCurrency(finiteOrZero(input.balance))
+  let ledgerBalance = availableBalance
+  let pendingBalance = 0
+
+  if (hasLedger) {
+    ledgerBalance = roundCurrency(finiteOrZero(input.ledgerBalance))
+    pendingBalance = hasPending
+      ? roundCurrency(finiteOrZero(input.pendingBalance))
+      : roundCurrency(availableBalance - ledgerBalance)
+  } else if (hasPending) {
+    pendingBalance = roundCurrency(finiteOrZero(input.pendingBalance))
+    ledgerBalance = roundCurrency(availableBalance - pendingBalance)
+  }
+
+  return {
+    balance: roundCurrency(ledgerBalance + pendingBalance),
+    ledgerBalance,
+    pendingBalance,
+  }
+}
+
+const resolveAccountBalancesForRead = (account: Doc<'accounts'>) => {
+  const availableBalance = roundCurrency(finiteOrZero(account.balance))
+  const hasLedger = account.ledgerBalance !== undefined
+  const hasPending = account.pendingBalance !== undefined
+
+  if (!hasLedger && !hasPending) {
+    return {
+      balance: availableBalance,
+      ledgerBalance: availableBalance,
+      pendingBalance: 0,
+    }
+  }
+
+  const pendingBalance = hasPending
+    ? roundCurrency(finiteOrZero(account.pendingBalance))
+    : roundCurrency(availableBalance - finiteOrZero(account.ledgerBalance))
+  const ledgerBalance = hasLedger
+    ? roundCurrency(finiteOrZero(account.ledgerBalance))
+    : roundCurrency(availableBalance - pendingBalance)
+
+  return {
+    balance: roundCurrency(ledgerBalance + pendingBalance),
+    ledgerBalance,
+    pendingBalance,
+  }
+}
+
+const applyAccountBalanceDelta = (account: Doc<'accounts'>, delta: number) => {
+  const current = resolveAccountBalancesForRead(account)
+  const signedDelta = roundCurrency(finiteOrZero(delta))
+  const nextLedgerBalance = roundCurrency(current.ledgerBalance + signedDelta)
+  const nextBalance = roundCurrency(nextLedgerBalance + current.pendingBalance)
+
+  return {
+    balance: nextBalance,
+    ledgerBalance: nextLedgerBalance,
+    pendingBalance: current.pendingBalance,
+  }
+}
 
 const monthsBetween = (from: Date, to: Date) =>
   (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
@@ -4283,9 +4368,11 @@ export const runBillsMonthlyBulkAction = mutation({
     totalReconciledAmount = roundCurrency(totalReconciledAmount)
 
     if (args.action === 'mark_all_paid_from_account' && fundingAccount && totalPaidApplied > 0) {
-      const nextBalance = roundCurrency(fundingAccount.balance - totalPaidApplied)
+      const nextBalances = applyAccountBalanceDelta(fundingAccount, -totalPaidApplied)
       await ctx.db.patch(fundingAccount._id, {
-        balance: nextBalance,
+        balance: nextBalances.balance,
+        ledgerBalance: nextBalances.ledgerBalance,
+        pendingBalance: nextBalances.pendingBalance,
       })
 
       await recordFinanceAuditEvent(ctx, {
@@ -4295,9 +4382,13 @@ export const runBillsMonthlyBulkAction = mutation({
         action: 'bill_bulk_payment_applied',
         before: {
           balance: fundingAccount.balance,
+          ledgerBalance: fundingAccount.ledgerBalance ?? fundingAccount.balance,
+          pendingBalance: fundingAccount.pendingBalance ?? 0,
         },
         after: {
-          balance: nextBalance,
+          balance: nextBalances.balance,
+          ledgerBalance: nextBalances.ledgerBalance,
+          pendingBalance: nextBalances.pendingBalance,
         },
         metadata: {
           cycleMonth,
@@ -6584,6 +6675,9 @@ export const addAccount = mutation({
     name: v.string(),
     type: accountTypeValidator,
     balance: v.number(),
+    ledgerBalance: v.optional(v.number()),
+    pendingBalance: v.optional(v.number()),
+    purpose: v.optional(accountPurposeValidator),
     liquid: v.boolean(),
   },
   handler: async (ctx, args) => {
@@ -6591,12 +6685,28 @@ export const addAccount = mutation({
 
     validateRequiredText(args.name, 'Account name')
     validateFinite(args.balance, 'Account balance')
+    if (args.ledgerBalance !== undefined) {
+      validateFinite(args.ledgerBalance, 'Account ledger balance')
+    }
+    if (args.pendingBalance !== undefined) {
+      validateFinite(args.pendingBalance, 'Account pending balance')
+    }
+
+    const balances = resolveAccountBalancesForWrite({
+      balance: args.balance,
+      ledgerBalance: args.ledgerBalance,
+      pendingBalance: args.pendingBalance,
+    })
+    const purpose = resolveAccountPurpose(args.type, args.purpose)
 
     const createdAccountId = await ctx.db.insert('accounts', {
       userId: identity.subject,
       name: args.name.trim(),
       type: args.type,
-      balance: args.balance,
+      balance: balances.balance,
+      ledgerBalance: balances.ledgerBalance,
+      pendingBalance: balances.pendingBalance,
+      purpose,
       liquid: args.liquid,
       createdAt: Date.now(),
     })
@@ -6609,7 +6719,10 @@ export const addAccount = mutation({
       after: {
         name: args.name.trim(),
         type: args.type,
-        balance: args.balance,
+        balance: balances.balance,
+        ledgerBalance: balances.ledgerBalance,
+        pendingBalance: balances.pendingBalance,
+        purpose,
         liquid: args.liquid,
       },
     })
@@ -6622,6 +6735,9 @@ export const updateAccount = mutation({
     name: v.string(),
     type: accountTypeValidator,
     balance: v.number(),
+    ledgerBalance: v.optional(v.number()),
+    pendingBalance: v.optional(v.number()),
+    purpose: v.optional(accountPurposeValidator),
     liquid: v.boolean(),
   },
   handler: async (ctx, args) => {
@@ -6629,14 +6745,30 @@ export const updateAccount = mutation({
 
     validateRequiredText(args.name, 'Account name')
     validateFinite(args.balance, 'Account balance')
+    if (args.ledgerBalance !== undefined) {
+      validateFinite(args.ledgerBalance, 'Account ledger balance')
+    }
+    if (args.pendingBalance !== undefined) {
+      validateFinite(args.pendingBalance, 'Account pending balance')
+    }
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Account record not found.')
 
+    const balances = resolveAccountBalancesForWrite({
+      balance: args.balance,
+      ledgerBalance: args.ledgerBalance,
+      pendingBalance: args.pendingBalance,
+    })
+    const purpose = resolveAccountPurpose(args.type, args.purpose ?? existing.purpose)
+
     await ctx.db.patch(args.id, {
       name: args.name.trim(),
       type: args.type,
-      balance: args.balance,
+      balance: balances.balance,
+      ledgerBalance: balances.ledgerBalance,
+      pendingBalance: balances.pendingBalance,
+      purpose,
       liquid: args.liquid,
     })
 
@@ -6649,12 +6781,18 @@ export const updateAccount = mutation({
         name: existing.name,
         type: existing.type,
         balance: existing.balance,
+        ledgerBalance: existing.ledgerBalance ?? existing.balance,
+        pendingBalance: existing.pendingBalance ?? 0,
+        purpose: resolveAccountPurpose(existing.type as AccountType, existing.purpose),
         liquid: existing.liquid,
       },
       after: {
         name: args.name.trim(),
         type: args.type,
-        balance: args.balance,
+        balance: balances.balance,
+        ledgerBalance: balances.ledgerBalance,
+        pendingBalance: balances.pendingBalance,
+        purpose,
         liquid: args.liquid,
       },
     })
@@ -6696,6 +6834,9 @@ export const removeAccount = mutation({
         name: existing.name,
         type: existing.type,
         balance: existing.balance,
+        ledgerBalance: existing.ledgerBalance ?? existing.balance,
+        pendingBalance: existing.pendingBalance ?? 0,
+        purpose: resolveAccountPurpose(existing.type as AccountType, existing.purpose),
         liquid: existing.liquid,
       },
       metadata: {
