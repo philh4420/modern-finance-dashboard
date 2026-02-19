@@ -431,6 +431,16 @@ export const _applyRetentionPolicyInternal = internalMutation({
 
     for (;;) {
       const batch = await ctx.db
+        .query('purchaseMonthCloseRuns')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId).lt('createdAt', cutoff))
+        .take(limit)
+      if (batch.length === 0) break
+      await Promise.all(batch.map((doc) => ctx.db.delete(doc._id)))
+      deleted += batch.length
+    }
+
+    for (;;) {
+      const batch = await ctx.db
         .query('loanEvents')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId).lt('createdAt', cutoff))
         .take(limit)

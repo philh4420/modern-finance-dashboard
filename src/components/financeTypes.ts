@@ -96,6 +96,7 @@ export type CycleAuditLogEntry = Doc<'cycleAuditLogs'>
 export type CycleStepAlertEntry = Doc<'cycleStepAlerts'>
 export type MonthlyCycleRunEntry = Doc<'monthlyCycleRuns'>
 export type MonthCloseSnapshotEntry = Doc<'monthCloseSnapshots'>
+export type PurchaseMonthCloseRunEntry = Doc<'purchaseMonthCloseRuns'>
 export type FinanceAuditEventEntry = Doc<'financeAuditEvents'>
 export type LedgerEntry = Doc<'ledgerEntries'>
 export type TransactionRuleEntry = Doc<'transactionRules'>

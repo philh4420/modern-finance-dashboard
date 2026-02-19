@@ -449,7 +449,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
-    .index('by_userId_createdAt', ['userId', 'createdAt']),
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_entityType_createdAt', ['userId', 'entityType', 'createdAt']),
   ledgerEntries: defineTable({
     userId: v.string(),
     entryType: ledgerEntryType,
@@ -508,6 +509,30 @@ export default defineSchema({
     .index('by_userId', ['userId'])
     .index('by_userId_cycleKey', ['userId', 'cycleKey'])
     .index('by_userId_ranAt', ['userId', 'ranAt']),
+  purchaseMonthCloseRuns: defineTable({
+    userId: v.string(),
+    monthKey: v.string(),
+    source: cycleRunSource,
+    status: cycleRunStatus,
+    idempotencyKey: v.optional(v.string()),
+    failureReason: v.optional(v.string()),
+    summaryJson: v.optional(v.string()),
+    totalPurchases: v.number(),
+    totalAmount: v.number(),
+    pendingCount: v.number(),
+    postedCount: v.number(),
+    reconciledCount: v.number(),
+    pendingAmount: v.number(),
+    duplicateCount: v.number(),
+    anomalyCount: v.number(),
+    missingCategoryCount: v.number(),
+    ranAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_monthKey', ['userId', 'monthKey'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_idempotencyKey', ['userId', 'idempotencyKey']),
   accounts: defineTable({
     userId: v.string(),
     name: v.string(),

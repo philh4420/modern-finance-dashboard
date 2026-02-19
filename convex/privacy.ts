@@ -27,6 +27,7 @@ type DeletionTable =
   | 'financeAuditEvents'
   | 'monthCloseSnapshots'
   | 'monthlyCycleRuns'
+  | 'purchaseMonthCloseRuns'
   | 'cycleAuditLogs'
   | 'cycleStepAlerts'
   | 'purchaseSplits'
@@ -60,6 +61,7 @@ const deletionTableValidator = v.union(
   v.literal('financeAuditEvents'),
   v.literal('monthCloseSnapshots'),
   v.literal('monthlyCycleRuns'),
+  v.literal('purchaseMonthCloseRuns'),
   v.literal('cycleAuditLogs'),
   v.literal('cycleStepAlerts'),
   v.literal('purchaseSplits'),
@@ -618,6 +620,7 @@ export const requestDeletion = action({
       'financeAuditEvents',
       'monthCloseSnapshots',
       'monthlyCycleRuns',
+      'purchaseMonthCloseRuns',
       'cycleAuditLogs',
       'cycleStepAlerts',
       'purchaseSplits',
@@ -782,6 +785,7 @@ export const _collectExportData = internalQuery({
       cycleAuditLogs,
       cycleStepAlerts,
       monthlyCycleRuns,
+      purchaseMonthCloseRuns,
       monthCloseSnapshots,
       financeAuditEvents,
       ledgerEntries,
@@ -813,6 +817,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('cycleAuditLogs').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cycleStepAlerts').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('monthlyCycleRuns').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('purchaseMonthCloseRuns').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('monthCloseSnapshots').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('financeAuditEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('ledgerEntries').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -846,6 +851,7 @@ export const _collectExportData = internalQuery({
       cycleAuditLogs: docsToPortableRows(cycleAuditLogs),
       cycleStepAlerts: docsToPortableRows(cycleStepAlerts),
       monthlyCycleRuns: docsToPortableRows(monthlyCycleRuns),
+      purchaseMonthCloseRuns: docsToPortableRows(purchaseMonthCloseRuns),
       monthCloseSnapshots: docsToPortableRows(monthCloseSnapshots),
       financeAuditEvents: docsToPortableRows(financeAuditEvents),
       ledgerEntries: docsToPortableRows(ledgerEntries),

@@ -542,6 +542,7 @@ export const usePurchasesSection = ({
             ? undefined
             : purchaseForm.fundingSourceId,
         notes: purchaseForm.notes || undefined,
+        source: 'manual',
       })
 
       setPurchaseForm(initialPurchaseForm)
@@ -557,7 +558,7 @@ export const usePurchasesSection = ({
         setPurchaseEditId(null)
       }
       setSelectedPurchaseIds((previous) => previous.filter((entry) => entry !== id))
-      await removePurchase({ id })
+      await removePurchase({ id, source: 'manual' })
     } catch (error) {
       handleMutationError(error)
     }
@@ -601,6 +602,7 @@ export const usePurchasesSection = ({
             ? undefined
             : purchaseEditDraft.fundingSourceId,
         notes: purchaseEditDraft.notes || undefined,
+        source: 'manual',
       })
       setPurchaseEditId(null)
     } catch (error) {
@@ -620,6 +622,7 @@ export const usePurchasesSection = ({
         id,
         reconciliationStatus,
         statementMonth: entry.statementMonth ?? entry.purchaseDate.slice(0, 7),
+        source: 'manual',
       })
     } catch (error) {
       handleMutationError(error)
@@ -643,6 +646,7 @@ export const usePurchasesSection = ({
         fundingSourceType: entry.fundingSourceType ?? 'unassigned',
         fundingSourceId: entry.fundingSourceId,
         notes: entry.notes,
+        source: 'duplicate_action',
       })
     } catch (error) {
       handleMutationError(error)
@@ -658,6 +662,7 @@ export const usePurchasesSection = ({
         ids: selectedPurchaseIdsNormalized,
         reconciliationStatus: status,
         statementMonth: purchaseFilter.month || undefined,
+        source: 'bulk_reconcile',
       })
       clearSelectedPurchases()
     } catch (error) {
@@ -675,6 +680,7 @@ export const usePurchasesSection = ({
       await bulkUpdatePurchaseCategory({
         ids: selectedPurchaseIdsNormalized,
         category: bulkCategory,
+        source: 'bulk_category',
       })
       setBulkCategory('')
       clearSelectedPurchases()
@@ -688,7 +694,7 @@ export const usePurchasesSection = ({
 
     clearError()
     try {
-      await bulkDeletePurchases({ ids: selectedPurchaseIdsNormalized })
+      await bulkDeletePurchases({ ids: selectedPurchaseIdsNormalized, source: 'bulk_delete' })
       clearSelectedPurchases()
     } catch (error) {
       handleMutationError(error)
@@ -756,12 +762,15 @@ export const usePurchasesSection = ({
           [primary.notes, secondary.notes].filter((value): value is string => Boolean(value && value.trim())).join(' | '),
           `[merged-purchase:${String(secondary._id)}]`,
         )
-        await updatePurchase(buildPurchaseUpdatePayload(primary, { notes: mergedNotes }))
+        await updatePurchase({
+          ...buildPurchaseUpdatePayload(primary, { notes: mergedNotes }),
+          source: 'duplicate_merge',
+        })
         setSelectedPurchaseIds((previous) => previous.filter((id) => id !== secondary._id))
         if (purchaseEditId === secondary._id) {
           setPurchaseEditId(null)
         }
-        await removePurchase({ id: secondary._id })
+        await removePurchase({ id: secondary._id, source: 'duplicate_merge' })
         return
       }
 
@@ -770,12 +779,13 @@ export const usePurchasesSection = ({
           normalizeMarkerNote(secondary.notes, purchaseArchivedMarker),
           `[purchase-duplicate-of:${String(primary._id)}]`,
         )
-        await updatePurchase(
-          buildPurchaseUpdatePayload(secondary, {
+        await updatePurchase({
+          ...buildPurchaseUpdatePayload(secondary, {
             reconciliationStatus: 'pending',
             notes: updatedNotes,
           }),
-        )
+          source: 'duplicate_archive',
+        })
         return
       }
 
@@ -788,8 +798,14 @@ export const usePurchasesSection = ({
         `${purchaseIntentionalMarkerPrefix}${String(primary._id)}]`,
       )
       await Promise.all([
-        updatePurchase(buildPurchaseUpdatePayload(primary, { notes: primaryTaggedNotes })),
-        updatePurchase(buildPurchaseUpdatePayload(secondary, { notes: secondaryTaggedNotes })),
+        updatePurchase({
+          ...buildPurchaseUpdatePayload(primary, { notes: primaryTaggedNotes }),
+          source: 'duplicate_mark_intentional',
+        }),
+        updatePurchase({
+          ...buildPurchaseUpdatePayload(secondary, { notes: secondaryTaggedNotes }),
+          source: 'duplicate_mark_intentional',
+        }),
       ])
     } catch (error) {
       handleMutationError(error)
@@ -877,6 +893,7 @@ export const usePurchasesSection = ({
       await upsertPurchaseSplitsMutation({
         purchaseId: input.purchaseId,
         splits: normalized,
+        source: 'split_manual',
       })
     } catch (error) {
       handleMutationError(error)
@@ -889,7 +906,7 @@ export const usePurchasesSection = ({
       if (!purchaseById.has(String(purchaseId))) {
         throw new Error('Purchase not found.')
       }
-      await clearPurchaseSplitsMutation({ purchaseId })
+      await clearPurchaseSplitsMutation({ purchaseId, source: 'split_manual' })
     } catch (error) {
       handleMutationError(error)
     }
@@ -937,6 +954,7 @@ export const usePurchasesSection = ({
       await addPurchaseSplitTemplateMutation({
         name,
         splits: normalized,
+        source: 'split_template_manual',
       })
     } catch (error) {
       handleMutationError(error)
@@ -995,6 +1013,7 @@ export const usePurchasesSection = ({
         id: input.id,
         name,
         splits: normalized,
+        source: 'split_template_manual',
       })
     } catch (error) {
       handleMutationError(error)
@@ -1004,7 +1023,7 @@ export const usePurchasesSection = ({
   const removePurchaseSplitTemplate = async (id: PurchaseSplitTemplateEntry['_id']) => {
     clearError()
     try {
-      await removePurchaseSplitTemplateMutation({ id })
+      await removePurchaseSplitTemplateMutation({ id, source: 'split_template_manual' })
     } catch (error) {
       handleMutationError(error)
     }
@@ -1025,6 +1044,7 @@ export const usePurchasesSection = ({
       await applyPurchaseSplitTemplateMutation({
         purchaseId: input.purchaseId,
         templateId: input.templateId,
+        source: 'split_template_apply',
       })
     } catch (error) {
       handleMutationError(error)
@@ -1091,6 +1111,7 @@ export const usePurchasesSection = ({
           fundingSourceType: row.fundingSourceType,
           fundingSourceId: toSafeSourceId(row),
           notes: row.notes?.trim() || undefined,
+          source: 'bulk_import',
         })
         created += 1
       } catch (error) {

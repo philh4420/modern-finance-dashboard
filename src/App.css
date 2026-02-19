@@ -4720,6 +4720,48 @@ tbody td {
   grid-column: span 12;
 }
 
+.purchases-phase3-panel {
+  grid-column: span 12;
+  background:
+    radial-gradient(130% 140% at 100% -20%, color-mix(in oklab, var(--tone-good) 10%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 95%, white 5%);
+}
+
+.purchase-phase3-toolbar {
+  display: grid;
+  grid-template-columns: minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) auto;
+  gap: 0.56rem;
+  align-items: end;
+}
+
+.purchase-phase3-toolbar-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.34rem;
+  flex-wrap: wrap;
+}
+
+.purchase-phase3-summary-grid {
+  display: grid;
+  gap: 0.56rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.purchase-phase3-grid {
+  display: grid;
+  gap: 0.62rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.data-table--purchase-phase3 {
+  min-width: 46rem;
+}
+
+.purchase-phase3-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .purchases-phase2-panel--detection {
   background:
     radial-gradient(130% 140% at 100% -20%, color-mix(in oklab, var(--tone-warning) 10%, transparent), transparent 66%),
@@ -5893,7 +5935,8 @@ tbody td {
     grid-template-columns: 1fr;
   }
 
-  .purchase-phase2-grid {
+  .purchase-phase2-grid,
+  .purchase-phase3-grid {
     grid-template-columns: 1fr;
   }
 
@@ -5906,16 +5949,19 @@ tbody td {
   }
 
   .purchase-split-toolbar,
-  .purchase-template-toolbar {
+  .purchase-template-toolbar,
+  .purchase-phase3-toolbar {
     grid-template-columns: 1fr;
   }
 
-  .purchase-split-toolbar-actions {
+  .purchase-split-toolbar-actions,
+  .purchase-phase3-toolbar-actions {
     justify-content: flex-start;
   }
 
   .data-table--purchase-splits,
-  .data-table--purchase-import {
+  .data-table--purchase-import,
+  .data-table--purchase-phase3 {
     min-width: 42rem;
   }
 
@@ -6269,7 +6315,8 @@ tbody td {
   }
 
   .data-table--purchase-splits,
-  .data-table--purchase-import {
+  .data-table--purchase-import,
+  .data-table--purchase-phase3 {
     min-width: 36rem;
   }
 

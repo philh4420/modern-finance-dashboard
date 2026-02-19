@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { mutation, query } from './_generated/server'
+import { mutation, query, type MutationCtx } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel'
 import { requireIdentity } from './lib/authz'
 
@@ -133,6 +133,42 @@ const finiteOrZero = (value: number | undefined | null) =>
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
 const roundPercent = (value: number) => Math.round(value * 100) / 100
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+const stringifyForAudit = (value: unknown) => {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return undefined
+  }
+}
+
+const sanitizeMutationSource = (value: string | undefined, fallback: string) => {
+  if (!value) return fallback
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return fallback
+  return trimmed.slice(0, 120)
+}
+
+const recordFinanceAuditEvent = async (ctx: MutationCtx, args: {
+  userId: string
+  entityType: string
+  entityId: string
+  action: string
+  before?: unknown
+  after?: unknown
+  metadata?: unknown
+}) => {
+  await ctx.db.insert('financeAuditEvents', {
+    userId: args.userId,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    action: args.action,
+    beforeJson: args.before === undefined ? undefined : stringifyForAudit(args.before),
+    afterJson: args.after === undefined ? undefined : stringifyForAudit(args.after),
+    metadataJson: args.metadata === undefined ? undefined : stringifyForAudit(args.metadata),
+    createdAt: Date.now(),
+  })
+}
 
 const normalizeSplitTemplateName = (value: string) => value.trim()
 
@@ -1782,6 +1818,7 @@ export const upsertPurchaseSplits = mutation({
         accountId: v.optional(v.id('accounts')),
       }),
     ),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -1818,29 +1855,69 @@ export const upsertPurchaseSplits = mutation({
       }
     }
 
+    const source = sanitizeMutationSource(args.source, 'manual')
+    const now = Date.now()
     const existingSplits = await ctx.db
       .query('purchaseSplits')
       .withIndex('by_purchaseId', (q) => q.eq('purchaseId', args.purchaseId))
       .collect()
+
+    const normalizedSplits = args.splits.map((split) => ({
+      category: split.category.trim(),
+      amount: roundCurrency(split.amount),
+      goalId: split.goalId,
+      accountId: split.accountId,
+    }))
+
     await Promise.all(existingSplits.map((split) => ctx.db.delete(split._id)))
 
-    for (const split of args.splits) {
+    for (const split of normalizedSplits) {
       await ctx.db.insert('purchaseSplits', {
         userId: identity.subject,
         purchaseId: args.purchaseId,
-        category: split.category.trim(),
+        category: split.category,
         amount: split.amount,
         goalId: split.goalId,
         accountId: split.accountId,
-        createdAt: Date.now(),
+        createdAt: now,
       })
     }
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase',
+      entityId: String(args.purchaseId),
+      action: 'split_upserted',
+      before: {
+        splitCount: existingSplits.length,
+        splits: existingSplits.map((split) => ({
+          category: split.category,
+          amount: split.amount,
+          goalId: split.goalId ? String(split.goalId) : null,
+          accountId: split.accountId ? String(split.accountId) : null,
+        })),
+      },
+      after: {
+        splitCount: normalizedSplits.length,
+        splits: normalizedSplits.map((split) => ({
+          category: split.category,
+          amount: split.amount,
+          goalId: split.goalId ? String(split.goalId) : null,
+          accountId: split.accountId ? String(split.accountId) : null,
+        })),
+      },
+      metadata: {
+        source,
+        mutationAt: now,
+      },
+    })
   },
 })
 
 export const clearPurchaseSplits = mutation({
   args: {
     purchaseId: v.id('purchases'),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -1852,7 +1929,26 @@ export const clearPurchaseSplits = mutation({
       .query('purchaseSplits')
       .withIndex('by_purchaseId', (q) => q.eq('purchaseId', args.purchaseId))
       .collect()
+    const source = sanitizeMutationSource(args.source, 'manual')
+    const now = Date.now()
     await Promise.all(existingSplits.map((split) => ctx.db.delete(split._id)))
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase',
+      entityId: String(args.purchaseId),
+      action: 'split_cleared',
+      before: {
+        splitCount: existingSplits.length,
+      },
+      after: {
+        splitCount: 0,
+      },
+      metadata: {
+        source,
+        mutationAt: now,
+      },
+    })
   },
 })
 
@@ -1867,6 +1963,7 @@ export const addPurchaseSplitTemplate = mutation({
         accountId: v.optional(v.id('accounts')),
       }),
     ),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -1902,6 +1999,22 @@ export const addPurchaseSplitTemplate = mutation({
       updatedAt: now,
     })
 
+    const source = sanitizeMutationSource(args.source, 'manual')
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase_split_template',
+      entityId: String(templateId),
+      action: 'created',
+      after: {
+        name: normalizeSplitTemplateName(args.name),
+        splitCount: args.splits.length,
+      },
+      metadata: {
+        source,
+        mutationAt: now,
+      },
+    })
+
     return { templateId }
   },
 })
@@ -1918,6 +2031,7 @@ export const updatePurchaseSplitTemplate = mutation({
         accountId: v.optional(v.id('accounts')),
       }),
     ),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -1944,6 +2058,8 @@ export const updatePurchaseSplitTemplate = mutation({
       }
     }
 
+    const source = sanitizeMutationSource(args.source, 'manual')
+    const now = Date.now()
     await ctx.db.patch(args.id, {
       name: normalizeSplitTemplateName(args.name),
       splits: args.splits.map((line) => ({
@@ -1952,7 +2068,26 @@ export const updatePurchaseSplitTemplate = mutation({
         goalId: line.goalId,
         accountId: line.accountId,
       })),
-      updatedAt: Date.now(),
+      updatedAt: now,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase_split_template',
+      entityId: String(args.id),
+      action: 'updated',
+      before: {
+        name: existing.name,
+        splitCount: existing.splits.length,
+      },
+      after: {
+        name: normalizeSplitTemplateName(args.name),
+        splitCount: args.splits.length,
+      },
+      metadata: {
+        source,
+        mutationAt: now,
+      },
     })
 
     return { updated: true }
@@ -1962,6 +2097,7 @@ export const updatePurchaseSplitTemplate = mutation({
 export const removePurchaseSplitTemplate = mutation({
   args: {
     id: v.id('purchaseSplitTemplates'),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -1969,7 +2105,25 @@ export const removePurchaseSplitTemplate = mutation({
     if (!existing || existing.userId !== identity.subject) {
       throw new Error('Split template not found.')
     }
+    const source = sanitizeMutationSource(args.source, 'manual')
+    const now = Date.now()
     await ctx.db.delete(args.id)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase_split_template',
+      entityId: String(args.id),
+      action: 'removed',
+      before: {
+        name: existing.name,
+        splitCount: existing.splits.length,
+      },
+      metadata: {
+        source,
+        mutationAt: now,
+      },
+    })
+
     return { removed: true }
   },
 })
@@ -1978,6 +2132,7 @@ export const applyPurchaseSplitTemplate = mutation({
   args: {
     purchaseId: v.id('purchases'),
     templateId: v.id('purchaseSplitTemplates'),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -2017,6 +2172,7 @@ export const applyPurchaseSplitTemplate = mutation({
     await Promise.all(existingSplits.map((split) => ctx.db.delete(split._id)))
 
     const now = Date.now()
+    const source = sanitizeMutationSource(args.source, 'manual')
     for (const split of splits) {
       await ctx.db.insert('purchaseSplits', {
         userId: identity.subject,
@@ -2029,6 +2185,25 @@ export const applyPurchaseSplitTemplate = mutation({
       })
     }
 
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'purchase',
+      entityId: String(args.purchaseId),
+      action: 'split_template_applied',
+      before: {
+        splitCount: existingSplits.length,
+      },
+      after: {
+        splitCount: splits.length,
+      },
+      metadata: {
+        source,
+        mutationAt: now,
+        templateId: String(args.templateId),
+        templateName: template.name,
+      },
+    })
+
     return { applied: true, splitCount: splits.length }
   },
 })
@@ -2038,6 +2213,7 @@ export const bulkUpdatePurchaseReconciliation = mutation({
     ids: v.array(v.id('purchases')),
     reconciliationStatus: reconciliationStatusValidator,
     statementMonth: v.optional(v.string()),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -2049,6 +2225,9 @@ export const bulkUpdatePurchaseReconciliation = mutation({
     }
 
     let updated = 0
+    const source = sanitizeMutationSource(args.source, 'bulk')
+    const now = Date.now()
+    const sampleIds: string[] = []
     for (const id of args.ids) {
       const purchase = await ctx.db.get(id)
       if (!purchase || purchase.userId !== identity.subject) {
@@ -2066,6 +2245,26 @@ export const bulkUpdatePurchaseReconciliation = mutation({
         reconciledAt,
       })
       updated += 1
+      if (sampleIds.length < 25) {
+        sampleIds.push(String(id))
+      }
+    }
+
+    if (updated > 0) {
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'purchase',
+        entityId: 'bulk',
+        action: 'bulk_reconciliation_updated',
+        metadata: {
+          source,
+          mutationAt: now,
+          updated,
+          reconciliationStatus: args.reconciliationStatus,
+          statementMonth: args.statementMonth ?? null,
+          samplePurchaseIds: sampleIds,
+        },
+      })
     }
 
     return { updated }
@@ -2076,12 +2275,16 @@ export const bulkUpdatePurchaseCategory = mutation({
   args: {
     ids: v.array(v.id('purchases')),
     category: v.string(),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     validateRequiredText(args.category, 'Category')
 
     let updated = 0
+    const source = sanitizeMutationSource(args.source, 'bulk')
+    const now = Date.now()
+    const sampleIds: string[] = []
     for (const id of args.ids) {
       const purchase = await ctx.db.get(id)
       if (!purchase || purchase.userId !== identity.subject) {
@@ -2091,6 +2294,25 @@ export const bulkUpdatePurchaseCategory = mutation({
         category: args.category.trim(),
       })
       updated += 1
+      if (sampleIds.length < 25) {
+        sampleIds.push(String(id))
+      }
+    }
+
+    if (updated > 0) {
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'purchase',
+        entityId: 'bulk',
+        action: 'bulk_category_updated',
+        metadata: {
+          source,
+          mutationAt: now,
+          updated,
+          category: args.category.trim(),
+          samplePurchaseIds: sampleIds,
+        },
+      })
     }
 
     return { updated }
@@ -2100,10 +2322,14 @@ export const bulkUpdatePurchaseCategory = mutation({
 export const bulkDeletePurchases = mutation({
   args: {
     ids: v.array(v.id('purchases')),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     let deleted = 0
+    const source = sanitizeMutationSource(args.source, 'bulk')
+    const now = Date.now()
+    const deletedSample: Array<{ id: string; item: string; amount: number; purchaseDate: string }> = []
 
     for (const id of args.ids) {
       const purchase = await ctx.db.get(id)
@@ -2119,6 +2345,29 @@ export const bulkDeletePurchases = mutation({
       await Promise.all(splits.map((split) => ctx.db.delete(split._id)))
       await ctx.db.delete(id)
       deleted += 1
+      if (deletedSample.length < 25) {
+        deletedSample.push({
+          id: String(id),
+          item: purchase.item,
+          amount: purchase.amount,
+          purchaseDate: purchase.purchaseDate,
+        })
+      }
+    }
+
+    if (deleted > 0) {
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'purchase',
+        entityId: 'bulk',
+        action: 'bulk_removed',
+        metadata: {
+          source,
+          mutationAt: now,
+          deleted,
+          samplePurchases: deletedSample,
+        },
+      })
     }
 
     return { deleted }

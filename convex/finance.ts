@@ -113,6 +113,23 @@ type LedgerEntryType =
   | 'cycle_loan_interest'
   | 'cycle_loan_payment'
 type LedgerLineType = 'debit' | 'credit'
+type PurchaseMonthCloseSummary = {
+  monthKey: string
+  purchaseCount: number
+  totalAmount: number
+  pendingAmount: number
+  pendingCount: number
+  postedCount: number
+  reconciledCount: number
+  duplicateCount: number
+  anomalyCount: number
+  missingCategoryCount: number
+  categoryBreakdown: Array<{
+    category: string
+    total: number
+    share: number
+  }>
+}
 
 type IncomeDoc = Doc<'incomes'>
 type BillDoc = Doc<'bills'>
@@ -664,6 +681,22 @@ const stringifyForAudit = (value: unknown) => {
   } catch {
     return undefined
   }
+}
+
+const parseAuditJson = <T = unknown>(value?: string) => {
+  if (!value) return undefined
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return undefined
+  }
+}
+
+const sanitizeMutationSource = (value: string | undefined, fallback: string) => {
+  if (!value) return fallback
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return fallback
+  return trimmed.slice(0, 120)
 }
 
 const isGenericCategory = (value: string) => {
@@ -1876,6 +1909,107 @@ function ensureOwned<T extends { userId: string }>(
   }
 }
 
+const monthKeyFromPurchase = (purchase: Doc<'purchases'>) => {
+  if (purchase.statementMonth && /^\d{4}-\d{2}$/.test(purchase.statementMonth)) {
+    return purchase.statementMonth
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(purchase.purchaseDate)) {
+    return purchase.purchaseDate.slice(0, 7)
+  }
+  return new Date(purchase.createdAt).toISOString().slice(0, 7)
+}
+
+const computePurchaseMonthCloseSummary = (monthKey: string, purchases: Doc<'purchases'>[]): PurchaseMonthCloseSummary => {
+  const monthPurchases = purchases.filter((entry) => monthKeyFromPurchase(entry) === monthKey)
+  const pending = monthPurchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'pending')
+  const posted = monthPurchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'posted')
+  const reconciled = monthPurchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'reconciled')
+  const cleared = [...posted, ...reconciled]
+
+  const totalAmount = roundCurrency(cleared.reduce((sum, entry) => sum + entry.amount, 0))
+  const pendingAmount = roundCurrency(pending.reduce((sum, entry) => sum + entry.amount, 0))
+  const missingCategoryCount = monthPurchases.filter((entry) => isGenericCategory(entry.category)).length
+
+  const duplicateMap = new Map<string, number>()
+  monthPurchases.forEach((entry) => {
+    const key = `${entry.item.trim().toLowerCase()}::${roundCurrency(entry.amount)}::${entry.purchaseDate}`
+    duplicateMap.set(key, (duplicateMap.get(key) ?? 0) + 1)
+  })
+  const duplicateCount = Array.from(duplicateMap.values()).filter((count) => count > 1).length
+
+  const amounts = monthPurchases.map((entry) => entry.amount)
+  const mean = amounts.length > 0 ? amounts.reduce((sum, value) => sum + value, 0) / amounts.length : 0
+  const variance =
+    amounts.length > 1
+      ? amounts.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (amounts.length - 1)
+      : 0
+  const std = Math.sqrt(variance)
+  const anomalyCount = monthPurchases.filter((entry) => std > 0 && entry.amount > mean + std * 2.5 && entry.amount > 50).length
+
+  const categoryTotals = new Map<string, number>()
+  cleared.forEach((entry) => {
+    const key = entry.category.trim() || 'Uncategorized'
+    categoryTotals.set(key, (categoryTotals.get(key) ?? 0) + entry.amount)
+  })
+
+  const categoryBreakdown = Array.from(categoryTotals.entries())
+    .map(([category, total]) => ({
+      category,
+      total: roundCurrency(total),
+      share: totalAmount > 0 ? total / totalAmount : 0,
+    }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 12)
+
+  return {
+    monthKey,
+    purchaseCount: monthPurchases.length,
+    totalAmount,
+    pendingAmount,
+    pendingCount: pending.length,
+    postedCount: posted.length,
+    reconciledCount: reconciled.length,
+    duplicateCount,
+    anomalyCount,
+    missingCategoryCount,
+    categoryBreakdown,
+  }
+}
+
+const resolvePurchaseMonthKey = (inputMonth: string | undefined, fallbackDate: Date) => {
+  if (inputMonth) {
+    validateStatementMonth(inputMonth, 'Month')
+    return inputMonth
+  }
+  return toCycleKey(fallbackDate)
+}
+
+const buildPurchaseAuditSnapshot = (entry: {
+  item: string
+  amount: number
+  category: string
+  purchaseDate: string
+  reconciliationStatus?: ReconciliationStatus
+  statementMonth?: string
+  ownership?: PurchaseOwnership
+  taxDeductible?: boolean
+  fundingSourceType?: PurchaseFundingSourceType
+  fundingSourceId?: string
+  notes?: string
+}) => ({
+  item: entry.item,
+  amount: entry.amount,
+  category: entry.category,
+  purchaseDate: entry.purchaseDate,
+  reconciliationStatus: entry.reconciliationStatus ?? 'posted',
+  statementMonth: entry.statementMonth ?? entry.purchaseDate.slice(0, 7),
+  ownership: entry.ownership ?? 'shared',
+  taxDeductible: entry.taxDeductible ?? false,
+  fundingSourceType: entry.fundingSourceType ?? 'unassigned',
+  fundingSourceId: entry.fundingSourceId ?? null,
+  notes: entry.notes?.trim() || undefined,
+})
+
 const isPurchasePosted = (status?: ReconciliationStatus) => {
   if (!status) {
     return true
@@ -2269,6 +2403,7 @@ export const getFinanceData = query({
           cycleAuditLogs: [],
           cycleStepAlerts: [],
           monthlyCycleRuns: [],
+          purchaseMonthCloseRuns: [],
           monthCloseSnapshots: [],
           financeAuditEvents: [],
           ledgerEntries: [],
@@ -2298,6 +2433,7 @@ export const getFinanceData = query({
       cycleAuditLogs,
       cycleStepAlerts,
       monthlyCycleRuns,
+      purchaseMonthCloseRuns,
       monthCloseSnapshots,
       financeAuditEvents,
       ledgerEntries,
@@ -2380,6 +2516,11 @@ export const getFinanceData = query({
         .take(25),
       ctx.db
         .query('monthlyCycleRuns')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(20),
+      ctx.db
+        .query('purchaseMonthCloseRuns')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .take(20),
@@ -2529,6 +2670,7 @@ export const getFinanceData = query({
       ...cycleAuditLogs.map((entry) => entry.createdAt),
       ...cycleStepAlerts.map((entry) => entry.createdAt),
       ...monthlyCycleRuns.map((entry) => entry.createdAt),
+      ...purchaseMonthCloseRuns.map((entry) => entry.createdAt),
       ...monthCloseSnapshots.map((entry) => entry.createdAt),
       ...financeAuditEvents.map((entry) => entry.createdAt),
       ...ledgerEntries.map((entry) => entry.createdAt),
@@ -2557,6 +2699,7 @@ export const getFinanceData = query({
         cycleAuditLogs,
         cycleStepAlerts,
         monthlyCycleRuns,
+        purchaseMonthCloseRuns,
         monthCloseSnapshots,
         financeAuditEvents,
         ledgerEntries,
@@ -5787,6 +5930,7 @@ export const addPurchase = mutation({
     fundingSourceType: v.optional(purchaseFundingSourceTypeValidator),
     fundingSourceId: v.optional(v.string()),
     notes: v.optional(v.string()),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -5814,6 +5958,7 @@ export const addPurchase = mutation({
     validateRequiredText(resolvedCategory, 'Purchase category')
 
     const now = Date.now()
+    const source = sanitizeMutationSource(args.source, 'manual')
     const reconciliation = resolvePurchaseReconciliation({
       purchaseDate: args.purchaseDate,
       requestedStatus,
@@ -5856,7 +6001,7 @@ export const addPurchase = mutation({
       entityType: 'purchase',
       entityId: String(purchaseId),
       action: 'created',
-      after: {
+      after: buildPurchaseAuditSnapshot({
         item: args.item.trim(),
         amount: args.amount,
         category: resolvedCategory,
@@ -5867,6 +6012,11 @@ export const addPurchase = mutation({
         taxDeductible,
         fundingSourceType,
         fundingSourceId,
+        notes: args.notes?.trim() || undefined,
+      }),
+      metadata: {
+        source,
+        mutationAt: now,
         ruleId: ruleOverride?.ruleId,
       },
     })
@@ -5887,6 +6037,7 @@ export const updatePurchase = mutation({
     fundingSourceType: v.optional(purchaseFundingSourceTypeValidator),
     fundingSourceId: v.optional(v.string()),
     notes: v.optional(v.string()),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -5918,6 +6069,7 @@ export const updatePurchase = mutation({
     validateRequiredText(resolvedCategory, 'Purchase category')
 
     const now = Date.now()
+    const source = sanitizeMutationSource(args.source, 'manual')
     const reconciliation = resolvePurchaseReconciliation({
       purchaseDate: args.purchaseDate,
       requestedStatus,
@@ -5971,19 +6123,8 @@ export const updatePurchase = mutation({
       entityType: 'purchase',
       entityId: String(args.id),
       action: 'updated',
-      before: {
-        item: existing.item,
-        amount: existing.amount,
-        category: existing.category,
-        purchaseDate: existing.purchaseDate,
-        reconciliationStatus: existing.reconciliationStatus ?? 'posted',
-        statementMonth: existing.statementMonth ?? existing.purchaseDate.slice(0, 7),
-        ownership: existing.ownership ?? 'shared',
-        taxDeductible: existing.taxDeductible ?? false,
-        fundingSourceType: existing.fundingSourceType ?? 'unassigned',
-        fundingSourceId: existing.fundingSourceId ?? null,
-      },
-      after: {
+      before: buildPurchaseAuditSnapshot(existing),
+      after: buildPurchaseAuditSnapshot({
         item: args.item.trim(),
         amount: args.amount,
         category: resolvedCategory,
@@ -5994,6 +6135,11 @@ export const updatePurchase = mutation({
         taxDeductible,
         fundingSourceType,
         fundingSourceId,
+        notes: args.notes?.trim() || undefined,
+      }),
+      metadata: {
+        source,
+        mutationAt: now,
         ruleId: ruleOverride?.ruleId,
       },
     })
@@ -6003,11 +6149,14 @@ export const updatePurchase = mutation({
 export const removePurchase = mutation({
   args: {
     id: v.id('purchases'),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Purchase record not found.')
+    const now = Date.now()
+    const source = sanitizeMutationSource(args.source, 'manual')
 
     if (isPurchasePosted(existing.reconciliationStatus)) {
       await recordPurchaseLedger(ctx, {
@@ -6028,17 +6177,10 @@ export const removePurchase = mutation({
       entityType: 'purchase',
       entityId: String(args.id),
       action: 'removed',
-      before: {
-        item: existing.item,
-        amount: existing.amount,
-        category: existing.category,
-        purchaseDate: existing.purchaseDate,
-        reconciliationStatus: existing.reconciliationStatus ?? 'posted',
-        statementMonth: existing.statementMonth ?? existing.purchaseDate.slice(0, 7),
-        ownership: existing.ownership ?? 'shared',
-        taxDeductible: existing.taxDeductible ?? false,
-        fundingSourceType: existing.fundingSourceType ?? 'unassigned',
-        fundingSourceId: existing.fundingSourceId ?? null,
+      before: buildPurchaseAuditSnapshot(existing),
+      metadata: {
+        source,
+        mutationAt: now,
       },
     })
   },
@@ -6049,6 +6191,7 @@ export const setPurchaseReconciliation = mutation({
     id: v.id('purchases'),
     reconciliationStatus: reconciliationStatusValidator,
     statementMonth: v.optional(v.string()),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -6060,6 +6203,7 @@ export const setPurchaseReconciliation = mutation({
     }
 
     const now = Date.now()
+    const source = sanitizeMutationSource(args.source, 'manual')
     const next = resolvePurchaseReconciliation({
       purchaseDate: existing.purchaseDate,
       requestedStatus: args.reconciliationStatus,
@@ -6113,7 +6257,325 @@ export const setPurchaseReconciliation = mutation({
         reconciliationStatus: next.reconciliationStatus,
         statementMonth: next.statementMonth,
       },
+      metadata: {
+        source,
+        mutationAt: now,
+      },
     })
+  },
+})
+
+export const getPurchaseMutationHistoryPage = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+    month: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    if (args.month) {
+      validateStatementMonth(args.month, 'Month')
+    }
+
+    const result = await ctx.db
+      .query('financeAuditEvents')
+      .withIndex('by_userId_entityType_createdAt', (q) =>
+        q.eq('userId', identity.subject).eq('entityType', 'purchase'),
+      )
+      .order('desc')
+      .paginate(args.paginationOpts)
+
+    if (!args.month) {
+      return result
+    }
+
+    return {
+      ...result,
+      page: result.page.filter((event) => new Date(event.createdAt).toISOString().slice(0, 7) === args.month),
+    }
+  },
+})
+
+export const getPurchaseHistorySummary = query({
+  args: {
+    windowDays: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity()
+    const windowDays = clamp(Math.floor(args.windowDays ?? 90), 7, 3650)
+    const now = Date.now()
+    const windowStart = now - windowDays * 86400000
+
+    if (!identity) {
+      return {
+        windowDays,
+        totalPurchases: 0,
+        totalAmount: 0,
+        pendingCount: 0,
+        postedCount: 0,
+        reconciledCount: 0,
+        missingCategoryCount: 0,
+        duplicateCount: 0,
+        anomalyCount: 0,
+        mutationCount: 0,
+        lastMutationAt: null as number | null,
+        completedMonthCloseRuns: 0,
+        failedMonthCloseRuns: 0,
+        lastMonthCloseAt: null as number | null,
+        lastCompletedMonthCloseKey: null as string | null,
+      }
+    }
+
+    const [purchases, mutationEvents, purchaseCloseRuns] = await Promise.all([
+      ctx.db
+        .query('purchases')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject).gte('createdAt', windowStart))
+        .collect(),
+      ctx.db
+        .query('financeAuditEvents')
+        .withIndex('by_userId_entityType_createdAt', (q) =>
+          q.eq('userId', identity.subject).eq('entityType', 'purchase').gte('createdAt', windowStart),
+        )
+        .collect(),
+      ctx.db
+        .query('purchaseMonthCloseRuns')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject).gte('createdAt', windowStart))
+        .collect(),
+    ])
+
+    const pending = purchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'pending')
+    const posted = purchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'posted')
+    const reconciled = purchases.filter((entry) => (entry.reconciliationStatus ?? 'posted') === 'reconciled')
+    const totalAmount = roundCurrency([...posted, ...reconciled].reduce((sum, entry) => sum + entry.amount, 0))
+    const missingCategoryCount = purchases.filter((entry) => isGenericCategory(entry.category)).length
+
+    const duplicateMap = new Map<string, number>()
+    purchases.forEach((entry) => {
+      const key = `${entry.item.trim().toLowerCase()}::${roundCurrency(entry.amount)}::${entry.purchaseDate}`
+      duplicateMap.set(key, (duplicateMap.get(key) ?? 0) + 1)
+    })
+    const duplicateCount = Array.from(duplicateMap.values()).filter((count) => count > 1).length
+
+    const amounts = purchases.map((entry) => entry.amount)
+    const mean = amounts.length > 0 ? amounts.reduce((sum, value) => sum + value, 0) / amounts.length : 0
+    const variance =
+      amounts.length > 1
+        ? amounts.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (amounts.length - 1)
+        : 0
+    const std = Math.sqrt(variance)
+    const anomalyCount = purchases.filter((entry) => std > 0 && entry.amount > mean + std * 2.5 && entry.amount > 50).length
+
+    const completedRuns = purchaseCloseRuns.filter((run) => run.status === 'completed')
+    const failedRuns = purchaseCloseRuns.filter((run) => run.status === 'failed')
+    const lastCompletedRun = completedRuns.sort((left, right) => right.ranAt - left.ranAt)[0]
+    const lastMutationAt = mutationEvents.reduce<number | null>((latest, event) => {
+      if (latest === null) return event.createdAt
+      return Math.max(latest, event.createdAt)
+    }, null)
+
+    return {
+      windowDays,
+      totalPurchases: purchases.length,
+      totalAmount,
+      pendingCount: pending.length,
+      postedCount: posted.length,
+      reconciledCount: reconciled.length,
+      missingCategoryCount,
+      duplicateCount,
+      anomalyCount,
+      mutationCount: mutationEvents.length,
+      lastMutationAt,
+      completedMonthCloseRuns: completedRuns.length,
+      failedMonthCloseRuns: failedRuns.length,
+      lastMonthCloseAt: lastCompletedRun?.ranAt ?? null,
+      lastCompletedMonthCloseKey: lastCompletedRun?.monthKey ?? null,
+    }
+  },
+})
+
+export const getRecentPurchaseMonthCloseRuns = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 12)))
+    return await ctx.db
+      .query('purchaseMonthCloseRuns')
+      .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+      .order('desc')
+      .take(limit)
+  },
+})
+
+export const runPurchaseMonthClose = mutation({
+  args: {
+    month: v.optional(v.string()),
+    now: v.optional(v.number()),
+    source: v.optional(cycleRunSourceValidator),
+    idempotencyKey: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const nowTimestamp = args.now ?? Date.now()
+    const nowDate = new Date(nowTimestamp)
+    const monthKey = resolvePurchaseMonthKey(args.month, nowDate)
+    const source = args.source ?? 'manual'
+    const providedIdempotencyKey = args.idempotencyKey?.trim() || undefined
+    const idempotencyKey = providedIdempotencyKey ?? `${source}:${monthKey}`
+
+    if (idempotencyKey) {
+      const existingRuns = await ctx.db
+        .query('purchaseMonthCloseRuns')
+        .withIndex('by_userId_idempotencyKey', (q) =>
+          q.eq('userId', identity.subject).eq('idempotencyKey', idempotencyKey),
+        )
+        .collect()
+      const existingCompleted = existingRuns
+        .filter((entry) => entry.status === 'completed')
+        .sort((left, right) => right.createdAt - left.createdAt)[0]
+
+      if (existingCompleted) {
+        const parsedSummary = parseAuditJson<PurchaseMonthCloseSummary>(existingCompleted.summaryJson)
+        return {
+          status: existingCompleted.status,
+          wasDeduplicated: true,
+          monthKey: existingCompleted.monthKey,
+          source: existingCompleted.source,
+          idempotencyKey: existingCompleted.idempotencyKey ?? null,
+          runId: String(existingCompleted._id),
+          ranAt: existingCompleted.ranAt,
+          summary: parsedSummary ?? {
+            monthKey: existingCompleted.monthKey,
+            purchaseCount: existingCompleted.totalPurchases,
+            totalAmount: existingCompleted.totalAmount,
+            pendingAmount: existingCompleted.pendingAmount,
+            pendingCount: existingCompleted.pendingCount,
+            postedCount: existingCompleted.postedCount,
+            reconciledCount: existingCompleted.reconciledCount,
+            duplicateCount: existingCompleted.duplicateCount,
+            anomalyCount: existingCompleted.anomalyCount,
+            missingCategoryCount: existingCompleted.missingCategoryCount,
+            categoryBreakdown: [],
+          },
+          failureReason: existingCompleted.failureReason ?? null,
+        }
+      }
+    }
+
+    try {
+      const purchases = await ctx.db
+        .query('purchases')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect()
+      const summary = computePurchaseMonthCloseSummary(monthKey, purchases)
+
+      const snapshotDate = new Date(`${monthKey}-01T00:00:00`)
+      const summarySnapshot = await computeMonthCloseSnapshotSummary(ctx, identity.subject, snapshotDate)
+      const existingSnapshot = await ctx.db
+        .query('monthCloseSnapshots')
+        .withIndex('by_userId_cycleKey', (q) => q.eq('userId', identity.subject).eq('cycleKey', monthKey))
+        .first()
+
+      if (existingSnapshot) {
+        await ctx.db.patch(existingSnapshot._id, {
+          ranAt: nowTimestamp,
+          summary: summarySnapshot,
+        })
+      } else {
+        await ctx.db.insert('monthCloseSnapshots', {
+          userId: identity.subject,
+          cycleKey: monthKey,
+          ranAt: nowTimestamp,
+          summary: summarySnapshot,
+          createdAt: Date.now(),
+        })
+      }
+
+      const runId = await ctx.db.insert('purchaseMonthCloseRuns', {
+        userId: identity.subject,
+        monthKey,
+        source,
+        status: 'completed',
+        idempotencyKey: idempotencyKey ?? undefined,
+        failureReason: undefined,
+        summaryJson: stringifyForAudit(summary),
+        totalPurchases: summary.purchaseCount,
+        totalAmount: summary.totalAmount,
+        pendingCount: summary.pendingCount,
+        postedCount: summary.postedCount,
+        reconciledCount: summary.reconciledCount,
+        pendingAmount: summary.pendingAmount,
+        duplicateCount: summary.duplicateCount,
+        anomalyCount: summary.anomalyCount,
+        missingCategoryCount: summary.missingCategoryCount,
+        ranAt: nowTimestamp,
+        createdAt: Date.now(),
+      })
+
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'purchase_month_close',
+        entityId: monthKey,
+        action: 'run_completed',
+        after: summary,
+        metadata: {
+          source,
+          idempotencyKey,
+          runId: String(runId),
+          ranAt: nowTimestamp,
+        },
+      })
+
+      return {
+        status: 'completed' as const,
+        wasDeduplicated: false,
+        monthKey,
+        source,
+        idempotencyKey: idempotencyKey ?? null,
+        runId: String(runId),
+        ranAt: nowTimestamp,
+        summary,
+        failureReason: null,
+      }
+    } catch (error) {
+      const failureReason = error instanceof Error ? error.message : String(error)
+      const failedRunId = await ctx.db.insert('purchaseMonthCloseRuns', {
+        userId: identity.subject,
+        monthKey,
+        source,
+        status: 'failed',
+        idempotencyKey: idempotencyKey ?? undefined,
+        failureReason: failureReason.slice(0, 280),
+        summaryJson: undefined,
+        totalPurchases: 0,
+        totalAmount: 0,
+        pendingCount: 0,
+        postedCount: 0,
+        reconciledCount: 0,
+        pendingAmount: 0,
+        duplicateCount: 0,
+        anomalyCount: 0,
+        missingCategoryCount: 0,
+        ranAt: nowTimestamp,
+        createdAt: Date.now(),
+      })
+
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'purchase_month_close',
+        entityId: monthKey,
+        action: 'run_failed',
+        metadata: {
+          source,
+          idempotencyKey,
+          runId: String(failedRunId),
+          ranAt: nowTimestamp,
+          failureReason,
+        },
+      })
+
+      throw error instanceof Error ? error : new Error(failureReason)
+    }
   },
 })
 

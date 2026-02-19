@@ -85,6 +85,15 @@ const formatMonthLabel = (locale: string, monthKey: string) =>
 
 const monthKeyFromTimestamp = (timestamp: number) => new Date(timestamp).toISOString().slice(0, 7)
 
+const parseAuditJson = <T,>(value?: string): T | undefined => {
+  if (!value) return undefined
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return undefined
+  }
+}
+
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`
 
 const sumBy = <T,>(values: T[], selector: (value: T) => number) =>
@@ -729,6 +738,49 @@ export function PrintReport({
           .sort((a, b) => b.createdAt - a.createdAt),
       }
     : null
+
+  const purchaseMutationHistoryRows = financeAuditEvents
+    .filter((event) => event.entityType === 'purchase')
+    .filter((event) => inMonthRange(monthKeyFromTimestamp(event.createdAt), config.startMonth, config.endMonth))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map((event) => {
+      const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+      const before = parseAuditJson<Record<string, unknown>>(event.beforeJson)
+      const after = parseAuditJson<Record<string, unknown>>(event.afterJson)
+
+      const source =
+        typeof metadata?.source === 'string' && metadata.source.trim().length > 0
+          ? metadata.source.trim()
+          : 'manual'
+
+      const detail = (() => {
+        const beforeItem = typeof before?.item === 'string' ? before.item : null
+        const afterItem = typeof after?.item === 'string' ? after.item : null
+        const beforeAmount = typeof before?.amount === 'number' ? before.amount : null
+        const afterAmount = typeof after?.amount === 'number' ? after.amount : null
+        if (beforeItem && afterItem && beforeItem !== afterItem) {
+          return `${beforeItem} -> ${afterItem}`
+        }
+        if (afterItem) return afterItem
+        if (beforeItem) return beforeItem
+        if (beforeAmount !== null && afterAmount !== null) {
+          return `${beforeAmount.toFixed(2)} -> ${afterAmount.toFixed(2)}`
+        }
+        if (afterAmount !== null) return afterAmount.toFixed(2)
+        if (beforeAmount !== null) return beforeAmount.toFixed(2)
+        return '-'
+      })()
+
+      return {
+        id: String(event._id),
+        action: event.action,
+        source,
+        entityId: event.entityId,
+        detail,
+        createdAt: event.createdAt,
+      }
+    })
+    .slice(0, 160)
 
   const baselineRangeNet =
     summary.monthlyIncome * rangeMonths - summary.monthlyCommitments * rangeMonths - purchasesTotal
@@ -1937,6 +1989,36 @@ export function PrintReport({
                 Cleared purchases total for range: <strong>{formatMoney(purchasesTotal)}</strong> · Pending value:{' '}
                 <strong>{formatMoney(pendingPurchasesTotal)}</strong>
               </p>
+
+              <h3 className="print-subhead">Purchase mutation history</h3>
+              {purchaseMutationHistoryRows.length === 0 ? (
+                <p className="print-subnote">No purchase mutation history in selected range.</p>
+              ) : (
+                <div className="print-table-wrap">
+                  <table className="print-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">When</th>
+                        <th scope="col">Action</th>
+                        <th scope="col">Source</th>
+                        <th scope="col">Entity</th>
+                        <th scope="col">Detail</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {purchaseMutationHistoryRows.map((row) => (
+                        <tr key={`purchase-audit-${row.id}`}>
+                          <td>{cycleDateLabel.format(new Date(row.createdAt))}</td>
+                          <td>{row.action}</td>
+                          <td>{row.source}</td>
+                          <td>{row.entityId}</td>
+                          <td>{row.detail}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
           )}
         </section>

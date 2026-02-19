@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
+import { api } from '../../convex/_generated/api'
 import type {
   AccountEntry,
   CardEntry,
@@ -96,6 +98,15 @@ const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth
 const parseIsoDate = (value: string) => {
   const parsed = new Date(`${value}T00:00:00`)
   return Number.isFinite(parsed.getTime()) ? parsed : null
+}
+
+const parseAuditJson = <T,>(value?: string): T | undefined => {
+  if (!value) return undefined
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return undefined
+  }
 }
 
 const statusOrder = (status: ReconciliationStatus) => {
@@ -469,9 +480,30 @@ export function PurchasesTab({
   const [bulkImportErrors, setBulkImportErrors] = useState<string[]>([])
   const [bulkImportMessage, setBulkImportMessage] = useState<string | null>(null)
   const [isBulkImporting, setIsBulkImporting] = useState(false)
+  const [historyWindowDays, setHistoryWindowDays] = useState<30 | 90 | 365>(90)
+  const [closeMonth, setCloseMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [monthCloseFeedback, setMonthCloseFeedback] = useState<string | null>(null)
+  const [isRunningMonthClose, setIsRunningMonthClose] = useState(false)
+  const runPurchaseMonthClose = useMutation(api.finance.runPurchaseMonthClose)
 
   const defaultMonth = new Date().toISOString().slice(0, 7)
   const today = useMemo(() => startOfDay(new Date()), [])
+
+  const purchaseHistorySummary = useQuery(api.finance.getPurchaseHistorySummary, {
+    windowDays: historyWindowDays,
+  })
+  const recentPurchaseMonthCloseRuns = useQuery(api.finance.getRecentPurchaseMonthCloseRuns, {
+    limit: 8,
+  }) ?? []
+  const purchaseMutationHistory = usePaginatedQuery(
+    api.finance.getPurchaseMutationHistoryPage,
+    {
+      month: purchaseFilter.month || undefined,
+    },
+    {
+      initialNumItems: 12,
+    },
+  )
 
   const accountNameById = useMemo(
     () => new Map<string, string>(accounts.map((entry) => [String(entry._id), entry.name])),
@@ -585,6 +617,76 @@ export function PurchasesTab({
       impactedCount: impacted.size,
     }
   }, [purchaseDuplicateOverlaps])
+
+  const purchaseSummaryWindow = purchaseHistorySummary ?? {
+    windowDays: historyWindowDays,
+    totalPurchases: 0,
+    totalAmount: 0,
+    pendingCount: 0,
+    postedCount: 0,
+    reconciledCount: 0,
+    missingCategoryCount: 0,
+    duplicateCount: 0,
+    anomalyCount: 0,
+    mutationCount: 0,
+    lastMutationAt: null as number | null,
+    completedMonthCloseRuns: 0,
+    failedMonthCloseRuns: 0,
+    lastMonthCloseAt: null as number | null,
+    lastCompletedMonthCloseKey: null as string | null,
+  }
+
+  const purchaseMutationRows = useMemo(() => {
+    return (purchaseMutationHistory.results ?? []).map((event) => {
+      const before = parseAuditJson<Record<string, unknown>>(event.beforeJson)
+      const after = parseAuditJson<Record<string, unknown>>(event.afterJson)
+      const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+
+      const source =
+        typeof metadata?.source === 'string' && metadata.source.trim().length > 0
+          ? metadata.source.trim()
+          : 'manual'
+      const beforeItem = typeof before?.item === 'string' ? before.item : null
+      const afterItem = typeof after?.item === 'string' ? after.item : null
+      const beforeAmount = typeof before?.amount === 'number' ? before.amount : null
+      const afterAmount = typeof after?.amount === 'number' ? after.amount : null
+
+      const detail = (() => {
+        if (beforeItem && afterItem && beforeItem !== afterItem) {
+          return `${beforeItem} -> ${afterItem}`
+        }
+        if (afterItem) {
+          return afterItem
+        }
+        if (beforeItem) {
+          return beforeItem
+        }
+        if (beforeAmount !== null && afterAmount !== null) {
+          return `${beforeAmount.toFixed(2)} -> ${afterAmount.toFixed(2)}`
+        }
+        if (afterAmount !== null) {
+          return afterAmount.toFixed(2)
+        }
+        if (beforeAmount !== null) {
+          return beforeAmount.toFixed(2)
+        }
+        return '-'
+      })()
+
+      return {
+        id: String(event._id),
+        action: event.action,
+        entityId: event.entityId,
+        source,
+        detail,
+        createdAt: event.createdAt,
+      }
+    })
+  }, [purchaseMutationHistory.results])
+
+  const canLoadMoreMutationHistory = purchaseMutationHistory.status === 'CanLoadMore'
+  const isLoadingMoreMutationHistory =
+    purchaseMutationHistory.status === 'LoadingMore' || purchaseMutationHistory.status === 'LoadingFirstPage'
 
   const purchasesWithAge = useMemo(() => {
     return filteredPurchases
@@ -1153,6 +1255,32 @@ export function PurchasesTab({
       }
     } finally {
       setIsBulkImporting(false)
+    }
+  }
+
+  const onRunPurchaseMonthCloseNow = async () => {
+    if (!closeMonth || !hasMonthPattern(closeMonth)) {
+      setMonthCloseFeedback('Select a valid month in YYYY-MM format.')
+      return
+    }
+
+    setIsRunningMonthClose(true)
+    setMonthCloseFeedback(null)
+    try {
+      const result = await runPurchaseMonthClose({
+        month: closeMonth,
+        source: 'manual',
+        idempotencyKey: `manual:${closeMonth}`,
+      })
+      const summary = result.summary
+      setMonthCloseFeedback(
+        `${result.wasDeduplicated ? 'Already completed for this month key.' : 'Month close completed.'} ${summary.purchaseCount} purchases, ${formatMoney(summary.totalAmount)} cleared, ${summary.pendingCount} pending.`,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Month close run failed.'
+      setMonthCloseFeedback(message)
+    } finally {
+      setIsRunningMonthClose(false)
     }
   }
 
@@ -2239,6 +2367,187 @@ export function PurchasesTab({
                   ))}
                 </ul>
               )}
+            </div>
+          </section>
+        </div>
+      </article>
+
+      <article className="panel purchases-phase3-panel">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Trust + Reporting</p>
+            <h2>Monthly close + mutation audit</h2>
+            <p className="panel-value">
+              {purchaseSummaryWindow.mutationCount} mutation events · {purchaseSummaryWindow.completedMonthCloseRuns} close runs (
+              {purchaseSummaryWindow.windowDays}d)
+            </p>
+            <p className="subnote">Idempotent monthly close with retry-safe snapshot recalculation and paginated purchase audit history.</p>
+          </div>
+        </header>
+
+        <div className="purchase-phase3-toolbar">
+          <label className="purchase-split-field">
+            <span>Summary window</span>
+            <select
+              value={historyWindowDays}
+              onChange={(event) => setHistoryWindowDays(Number(event.target.value) as 30 | 90 | 365)}
+            >
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+              <option value={365}>365 days</option>
+            </select>
+          </label>
+
+          <label className="purchase-split-field">
+            <span>Month close target</span>
+            <input
+              type="month"
+              value={closeMonth}
+              onChange={(event) => setCloseMonth(event.target.value)}
+            />
+          </label>
+
+          <div className="purchase-phase3-toolbar-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn--sm"
+              onClick={() => void onRunPurchaseMonthCloseNow()}
+              disabled={isRunningMonthClose}
+            >
+              {isRunningMonthClose ? 'Running month close…' : 'Run month close now'}
+            </button>
+          </div>
+        </div>
+
+        {monthCloseFeedback ? <p className="subnote">{monthCloseFeedback}</p> : null}
+
+        <div className="purchase-phase3-summary-grid">
+          <article className="purchase-phase2-summary-card">
+            <p>Purchases in window</p>
+            <strong>{purchaseSummaryWindow.totalPurchases}</strong>
+            <small>{formatMoney(purchaseSummaryWindow.totalAmount)} cleared amount</small>
+          </article>
+          <article className="purchase-phase2-summary-card">
+            <p>Reconciliation mix</p>
+            <strong>{purchaseSummaryWindow.pendingCount} pending</strong>
+            <small>
+              {purchaseSummaryWindow.postedCount} posted · {purchaseSummaryWindow.reconciledCount} reconciled
+            </small>
+          </article>
+          <article className="purchase-phase2-summary-card">
+            <p>Data quality</p>
+            <strong>{purchaseSummaryWindow.duplicateCount + purchaseSummaryWindow.anomalyCount} alerts</strong>
+            <small>
+              {purchaseSummaryWindow.duplicateCount} duplicates · {purchaseSummaryWindow.anomalyCount} anomalies ·{' '}
+              {purchaseSummaryWindow.missingCategoryCount} uncategorized
+            </small>
+          </article>
+          <article className="purchase-phase2-summary-card">
+            <p>Last mutation</p>
+            <strong>
+              {purchaseSummaryWindow.lastMutationAt ? dateLabel.format(new Date(purchaseSummaryWindow.lastMutationAt)) : '-'}
+            </strong>
+            <small>
+              Last close:{' '}
+              {purchaseSummaryWindow.lastMonthCloseAt
+                ? `${purchaseSummaryWindow.lastCompletedMonthCloseKey ?? ''} · ${dateLabel.format(new Date(purchaseSummaryWindow.lastMonthCloseAt))}`
+                : 'none'}
+            </small>
+          </article>
+        </div>
+
+        <div className="purchase-phase3-grid">
+          <section className="purchase-phase2-card">
+            <header className="purchase-phase2-card-head">
+              <h3>Recent month close runs</h3>
+              <p>Manual + automatic runs with status and quality counts.</p>
+            </header>
+            {recentPurchaseMonthCloseRuns.length === 0 ? (
+              <p className="empty-state">No month close runs yet.</p>
+            ) : (
+              <div className="table-wrap table-wrap--card">
+                <table className="data-table data-table--purchase-phase3">
+                  <thead>
+                    <tr>
+                      <th>Month</th>
+                      <th>Status</th>
+                      <th>Totals</th>
+                      <th>Quality</th>
+                      <th>Source</th>
+                      <th>Ran</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentPurchaseMonthCloseRuns.map((run) => (
+                      <tr key={run._id}>
+                        <td>{run.monthKey}</td>
+                        <td>
+                          <span className={run.status === 'completed' ? 'pill pill--good' : 'pill pill--critical'}>
+                            {run.status}
+                          </span>
+                        </td>
+                        <td>
+                          <small>
+                            {run.totalPurchases} purchases · {formatMoney(run.totalAmount)} cleared · {formatMoney(run.pendingAmount)} pending
+                          </small>
+                        </td>
+                        <td>
+                          <small>
+                            {run.duplicateCount} dup · {run.anomalyCount} anomaly · {run.missingCategoryCount} missing
+                          </small>
+                        </td>
+                        <td>{run.source}</td>
+                        <td>{dateLabel.format(new Date(run.ranAt))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="purchase-phase2-card">
+            <header className="purchase-phase2-card-head">
+              <h3>Purchase mutation history</h3>
+              <p>Before/after snapshots with source and timestamp, paginated for large histories.</p>
+            </header>
+            {purchaseMutationRows.length === 0 ? (
+              <p className="empty-state">No purchase mutation events in this filter window yet.</p>
+            ) : (
+              <div className="table-wrap table-wrap--card">
+                <table className="data-table data-table--purchase-phase3">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Action</th>
+                      <th>Source</th>
+                      <th>Entity</th>
+                      <th>Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {purchaseMutationRows.map((row) => (
+                      <tr key={row.id}>
+                        <td>{dateLabel.format(new Date(row.createdAt))}</td>
+                        <td>{row.action}</td>
+                        <td>{row.source}</td>
+                        <td>{row.entityId}</td>
+                        <td>{row.detail}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="purchase-phase3-footer">
+              <button
+                type="button"
+                className="btn btn-secondary btn--sm"
+                onClick={() => purchaseMutationHistory.loadMore(12)}
+                disabled={!canLoadMoreMutationHistory || isLoadingMoreMutationHistory}
+              >
+                {isLoadingMoreMutationHistory ? 'Loading…' : canLoadMoreMutationHistory ? 'Load more events' : 'No more events'}
+              </button>
             </div>
           </section>
         </div>
