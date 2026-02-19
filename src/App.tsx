@@ -207,6 +207,12 @@ function App() {
 
   const purchasesSection = usePurchasesSection({
     purchases,
+    accounts,
+    cards,
+    goals,
+    recurringCandidates: phase2State?.recurringCandidates ?? [],
+    purchaseSplits: phase2State?.purchaseSplits ?? [],
+    purchaseSplitTemplates: phase2State?.purchaseSplitTemplates ?? [],
     clearError,
     handleMutationError,
   })
@@ -253,6 +259,8 @@ function App() {
       recurringCandidates: [],
       billRiskAlerts: [],
       forecastWindows: [],
+      purchaseSplits: [],
+      purchaseSplitTemplates: [],
       monthCloseChecklist: [],
       dataQuality: {
         duplicateCount: 0,
@@ -783,12 +791,18 @@ function App() {
 	            filteredPurchaseTotal={purchasesSection.filteredPurchaseTotal}
 	            filteredPurchaseAverage={purchasesSection.filteredPurchaseAverage}
             monthPurchaseSummary={purchasesSection.monthPurchaseSummary}
-            filteredStatusCounts={purchasesSection.filteredStatusCounts}
+	            filteredStatusCounts={purchasesSection.filteredStatusCounts}
 	            purchasesThisMonth={summary.purchasesThisMonth}
             pendingPurchaseAmountThisMonth={summary.pendingPurchaseAmountThisMonth}
 	            pendingPurchases={summary.pendingPurchases}
 	            postedPurchases={summary.postedPurchases}
 	            reconciledPurchases={summary.reconciledPurchases}
+            recurringCandidates={phase2Data.recurringCandidates ?? []}
+            forecastWindows={phase2Data.forecastWindows ?? []}
+            purchaseSplits={phase2Data.purchaseSplits ?? []}
+            purchaseSplitTemplates={phase2Data.purchaseSplitTemplates ?? []}
+            upcomingCashEvents={upcomingCashEvents}
+            goals={goals}
 	            purchaseEditId={purchasesSection.purchaseEditId}
 	            setPurchaseEditId={purchasesSection.setPurchaseEditId}
 	            purchaseEditDraft={purchasesSection.purchaseEditDraft}
@@ -809,6 +823,16 @@ function App() {
             startPurchaseEdit={purchasesSection.startPurchaseEdit}
             onSetPurchaseReconciliation={purchasesSection.onSetPurchaseReconciliation}
             duplicatePurchase={purchasesSection.duplicatePurchase}
+            purchaseDuplicateOverlaps={purchasesSection.purchaseDuplicateOverlaps}
+            resolvePurchaseDuplicateOverlap={purchasesSection.resolvePurchaseDuplicateOverlap}
+            onConvertRecurringCandidateToBill={purchasesSection.onConvertRecurringCandidateToBill}
+            upsertPurchaseSplits={purchasesSection.upsertPurchaseSplits}
+            clearPurchaseSplitsForPurchase={purchasesSection.clearPurchaseSplitsForPurchase}
+            applyPurchaseSplitTemplateToPurchase={purchasesSection.applyPurchaseSplitTemplateToPurchase}
+            addPurchaseSplitTemplate={purchasesSection.addPurchaseSplitTemplate}
+            updatePurchaseSplitTemplate={purchasesSection.updatePurchaseSplitTemplate}
+            removePurchaseSplitTemplate={purchasesSection.removePurchaseSplitTemplate}
+            importPurchasesFromRows={purchasesSection.importPurchasesFromRows}
             runBulkStatus={purchasesSection.runBulkStatus}
             runBulkCategory={purchasesSection.runBulkCategory}
             runBulkDelete={purchasesSection.runBulkDelete}

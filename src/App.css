@@ -4716,6 +4716,518 @@ tbody td {
   font-size: 0.84rem;
 }
 
+.purchases-phase2-panel {
+  grid-column: span 12;
+}
+
+.purchases-phase2-panel--detection {
+  background:
+    radial-gradient(130% 140% at 100% -20%, color-mix(in oklab, var(--tone-warning) 10%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 95%, white 5%);
+}
+
+.purchase-phase2-summary-grid {
+  display: grid;
+  gap: 0.56rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.purchase-phase2-summary-card {
+  border-radius: 0.92rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.68rem 0.74rem;
+  display: grid;
+  gap: 0.18rem;
+  min-height: 6.4rem;
+}
+
+.purchase-phase2-summary-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.purchase-phase2-summary-card strong {
+  font-size: 1.05rem;
+  letter-spacing: -0.012em;
+}
+
+.purchase-phase2-summary-card small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+.purchase-phase2-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.purchase-phase2-card {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background:
+    radial-gradient(120% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 36%, transparent),
+    0 14px 30px -30px color-mix(in oklab, black 40%, transparent);
+  padding: 0.74rem 0.8rem;
+  display: grid;
+  gap: 0.6rem;
+  align-content: start;
+}
+
+.purchase-phase2-card-head {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.purchase-phase2-card-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.012em;
+}
+
+.purchase-phase2-card-head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.purchase-duplicate-list,
+.purchase-anomaly-list,
+.purchase-recurring-list,
+.purchase-timeline-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.purchase-duplicate-item,
+.purchase-anomaly-item,
+.purchase-recurring-item,
+.purchase-timeline-item {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.56rem 0.62rem;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 34%, transparent);
+}
+
+.purchase-duplicate-item {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1.2fr) minmax(10rem, 1fr);
+  gap: 0.6rem;
+}
+
+.purchase-duplicate-main,
+.purchase-duplicate-metrics {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.purchase-duplicate-main strong,
+.purchase-duplicate-metrics strong {
+  letter-spacing: -0.01em;
+}
+
+.purchase-duplicate-main small,
+.purchase-duplicate-metrics small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.purchase-duplicate-actions {
+  margin-top: 0.24rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.purchase-anomaly-item {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.purchase-anomaly-item strong {
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+
+.purchase-anomaly-item small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.purchase-merchant-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.56rem;
+}
+
+.purchase-merchant-card {
+  border-radius: 0.92rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background:
+    radial-gradient(130% 140% at 100% -20%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.64rem 0.68rem;
+  display: grid;
+  gap: 0.45rem;
+  min-height: 9.2rem;
+}
+
+.purchase-merchant-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.48rem;
+  align-items: flex-start;
+}
+
+.purchase-merchant-card h3 {
+  margin: 0.08rem 0 0;
+  font-size: 0.98rem;
+  letter-spacing: -0.012em;
+}
+
+.purchase-merchant-windows {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.32rem;
+}
+
+.purchase-merchant-windows > div {
+  border-radius: 0.72rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 96%, white 4%);
+  padding: 0.38rem 0.44rem;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.purchase-merchant-windows p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.64rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.purchase-merchant-windows strong {
+  font-size: 0.92rem;
+  letter-spacing: -0.01em;
+}
+
+.purchase-merchant-card footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.44rem;
+  flex-wrap: wrap;
+}
+
+.purchase-merchant-card footer small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.purchase-recurring-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.56rem;
+  align-items: flex-start;
+}
+
+.purchase-recurring-item strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.purchase-recurring-item small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.24;
+}
+
+.purchase-cashflow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.48rem;
+}
+
+.purchase-cashflow-item {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.52rem 0.58rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.purchase-cashflow-item p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.purchase-cashflow-item strong {
+  font-size: 0.98rem;
+  letter-spacing: -0.012em;
+}
+
+.purchase-cashflow-item small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.purchase-cashflow-item .pill {
+  width: fit-content;
+}
+
+.purchase-timeline {
+  margin-top: 0.3rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.purchase-timeline-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.56rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.purchase-timeline-head h4 {
+  margin: 0;
+  font-size: 0.96rem;
+  letter-spacing: -0.01em;
+}
+
+.purchase-timeline-window-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.purchase-timeline-window-btn--active {
+  border-color: color-mix(in oklab, var(--tone-finance) 42%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-finance) 16%, white 84%);
+}
+
+.purchase-timeline-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.52rem;
+}
+
+.purchase-timeline-item strong {
+  font-size: 0.88rem;
+}
+
+.purchase-timeline-item small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.24;
+}
+
+.purchase-split-toolbar {
+  display: grid;
+  grid-template-columns: minmax(13rem, 1fr) minmax(13rem, 1fr) auto;
+  gap: 0.54rem;
+  align-items: end;
+}
+
+.purchase-split-field {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.purchase-split-field span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.purchase-split-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+  justify-content: flex-end;
+}
+
+.purchase-split-table-wrap {
+  margin-top: 0.18rem;
+  border-radius: 0.88rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 75%, transparent);
+  overflow: hidden;
+}
+
+.data-table--purchase-splits {
+  min-width: 44rem;
+}
+
+.purchase-split-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.52rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.purchase-split-footer small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.purchase-template-section {
+  margin-top: 0.3rem;
+  border-top: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  padding-top: 0.66rem;
+  display: grid;
+  gap: 0.52rem;
+}
+
+.purchase-template-section header {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.purchase-template-section header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  letter-spacing: -0.01em;
+}
+
+.purchase-template-section header p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.purchase-template-toolbar {
+  display: grid;
+  grid-template-columns: minmax(13rem, 1fr) auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.purchase-template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.purchase-template-preview {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  padding: 0.58rem 0.62rem;
+}
+
+.purchase-template-preview p {
+  margin: 0;
+  font-weight: 680;
+  font-size: 0.88rem;
+}
+
+.purchase-template-preview ul {
+  margin: 0.48rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.purchase-template-preview li {
+  border-radius: 0.66rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.36rem 0.42rem;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.purchase-template-preview strong {
+  font-size: 0.86rem;
+}
+
+.purchase-template-preview small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.purchase-import-mode {
+  display: grid;
+  gap: 0.56rem;
+}
+
+.purchase-import-field {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.purchase-import-field span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.purchase-import-field textarea {
+  min-height: 8rem;
+}
+
+.purchase-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.purchase-import-errors {
+  margin: 0;
+  padding-left: 1rem;
+  color: color-mix(in oklab, var(--tone-negative) 84%, black 16%);
+  font-size: 0.78rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.purchase-import-preview {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.purchase-import-preview h3 {
+  margin: 0;
+  font-size: 0.94rem;
+  letter-spacing: -0.01em;
+}
+
+.data-table--purchase-import {
+  min-width: 52rem;
+}
+
+.data-table--purchase-import td small {
+  color: var(--text-muted);
+}
+
 .loans-tab-shell {
   align-items: stretch;
   gap: clamp(1rem, 1vw, 1.34rem);
@@ -5381,6 +5893,32 @@ tbody td {
     grid-template-columns: 1fr;
   }
 
+  .purchase-phase2-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-duplicate-item {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-merchant-windows {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-split-toolbar,
+  .purchase-template-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-split-toolbar-actions {
+    justify-content: flex-start;
+  }
+
+  .data-table--purchase-splits,
+  .data-table--purchase-import {
+    min-width: 42rem;
+  }
+
   .loan-strategy-head,
   .loan-whatif-head,
   .loan-refinance-head,
@@ -5718,6 +6256,21 @@ tbody td {
 
   .data-table--income-bulk {
     min-width: 44rem;
+  }
+
+  .purchase-recurring-item,
+  .purchase-timeline-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .purchase-import-actions {
+    width: 100%;
+  }
+
+  .data-table--purchase-splits,
+  .data-table--purchase-import {
+    min-width: 36rem;
   }
 
   .forecast-axis-labels {

@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
-import type { Doc } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import { requireIdentity } from './lib/authz'
 
 const ruleMatchTypeValidator = v.union(v.literal('contains'), v.literal('exact'), v.literal('starts_with'))
@@ -21,6 +21,18 @@ type BillDoc = Doc<'bills'>
 type TransactionRuleDoc = Doc<'transactionRules'>
 type IncomeDoc = Doc<'incomes'>
 type IncomePaymentCheckDoc = Doc<'incomePaymentChecks'>
+type PurchaseSplitTemplateLine = {
+  category: string
+  percentage: number
+  goalId?: Id<'goals'>
+  accountId?: Id<'accounts'>
+}
+type PurchaseSplitAmountLine = {
+  category: string
+  amount: number
+  goalId?: Id<'goals'>
+  accountId?: Id<'accounts'>
+}
 
 type BillRiskLevel = 'good' | 'warning' | 'critical'
 type ForecastRiskLevel = 'healthy' | 'warning' | 'critical'
@@ -121,6 +133,68 @@ const finiteOrZero = (value: number | undefined | null) =>
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
 const roundPercent = (value: number) => Math.round(value * 100) / 100
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+const normalizeSplitTemplateName = (value: string) => value.trim()
+
+const validateSplitTemplateName = (value: string) => {
+  const name = normalizeSplitTemplateName(value)
+  if (name.length === 0) {
+    throw new Error('Template name is required.')
+  }
+  if (name.length > 80) {
+    throw new Error('Template name must be 80 characters or less.')
+  }
+}
+
+const ensureValidSplitTemplateLines = (lines: PurchaseSplitTemplateLine[]) => {
+  if (lines.length === 0) {
+    throw new Error('At least one split line is required.')
+  }
+
+  let total = 0
+  lines.forEach((line) => {
+    validateRequiredText(line.category, 'Split category')
+    validatePositive(line.percentage, 'Split percentage')
+    total += line.percentage
+  })
+
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new Error('Split percentage total must be greater than 0.')
+  }
+}
+
+const buildAmountsFromTemplatePercentages = (
+  purchaseAmount: number,
+  lines: PurchaseSplitTemplateLine[],
+) => {
+  const totalPercent = lines.reduce((sum, line) => sum + line.percentage, 0)
+  const normalizedTotal = totalPercent > 0 ? totalPercent : 1
+  const splits: PurchaseSplitAmountLine[] = []
+  let allocated = 0
+
+  lines.forEach((line, index) => {
+    const isLast = index === lines.length - 1
+    const rawAmount = purchaseAmount * (line.percentage / normalizedTotal)
+    const amount = isLast ? roundCurrency(purchaseAmount - allocated) : roundCurrency(rawAmount)
+    splits.push({
+      category: line.category,
+      amount: Math.max(amount, 0),
+      goalId: line.goalId,
+      accountId: line.accountId,
+    })
+    allocated = roundCurrency(allocated + Math.max(amount, 0))
+  })
+
+  const total = roundCurrency(splits.reduce((sum, split) => sum + split.amount, 0))
+  if (Math.abs(total - roundCurrency(purchaseAmount)) > 0.01) {
+    const delta = roundCurrency(purchaseAmount - total)
+    if (splits.length > 0) {
+      splits[splits.length - 1].amount = roundCurrency(Math.max(splits[splits.length - 1].amount + delta, 0))
+    }
+  }
+
+  return splits
+}
 
 const incomeAllocationTargetLabel: Record<IncomeAllocationTarget, string> = {
   bills: 'Bills',
@@ -804,6 +878,8 @@ export const getPhase2Data = query({
         recurringCandidates: [],
         billRiskAlerts: [],
         forecastWindows: [],
+        purchaseSplits: [],
+        purchaseSplitTemplates: [],
         monthCloseChecklist: [],
         dataQuality: {
           duplicateCount: 0,
@@ -822,6 +898,7 @@ export const getPhase2Data = query({
       incomeAllocationSuggestions,
       purchases,
       purchaseSplits,
+      purchaseSplitTemplates,
       bills,
       incomes,
       incomePaymentChecks,
@@ -856,6 +933,11 @@ export const getPhase2Data = query({
       ctx.db
         .query('purchaseSplits')
         .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('purchaseSplitTemplates')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
         .collect(),
       ctx.db
         .query('bills')
@@ -1288,6 +1370,8 @@ export const getPhase2Data = query({
       recurringCandidates,
       billRiskAlerts,
       forecastWindows,
+      purchaseSplits,
+      purchaseSplitTemplates,
       monthCloseChecklist,
       dataQuality: {
         duplicateCount,
@@ -1694,6 +1778,8 @@ export const upsertPurchaseSplits = mutation({
       v.object({
         category: v.string(),
         amount: v.number(),
+        goalId: v.optional(v.id('goals')),
+        accountId: v.optional(v.id('accounts')),
       }),
     ),
   },
@@ -1717,6 +1803,21 @@ export const upsertPurchaseSplits = mutation({
       throw new Error('Split amounts must equal purchase total.')
     }
 
+    for (const split of args.splits) {
+      if (split.goalId) {
+        const goal = await ctx.db.get(split.goalId)
+        if (!goal || goal.userId !== identity.subject) {
+          throw new Error('Selected goal for split was not found.')
+        }
+      }
+      if (split.accountId) {
+        const account = await ctx.db.get(split.accountId)
+        if (!account || account.userId !== identity.subject) {
+          throw new Error('Selected account for split was not found.')
+        }
+      }
+    }
+
     const existingSplits = await ctx.db
       .query('purchaseSplits')
       .withIndex('by_purchaseId', (q) => q.eq('purchaseId', args.purchaseId))
@@ -1729,6 +1830,8 @@ export const upsertPurchaseSplits = mutation({
         purchaseId: args.purchaseId,
         category: split.category.trim(),
         amount: split.amount,
+        goalId: split.goalId,
+        accountId: split.accountId,
         createdAt: Date.now(),
       })
     }
@@ -1750,6 +1853,183 @@ export const clearPurchaseSplits = mutation({
       .withIndex('by_purchaseId', (q) => q.eq('purchaseId', args.purchaseId))
       .collect()
     await Promise.all(existingSplits.map((split) => ctx.db.delete(split._id)))
+  },
+})
+
+export const addPurchaseSplitTemplate = mutation({
+  args: {
+    name: v.string(),
+    splits: v.array(
+      v.object({
+        category: v.string(),
+        percentage: v.number(),
+        goalId: v.optional(v.id('goals')),
+        accountId: v.optional(v.id('accounts')),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validateSplitTemplateName(args.name)
+    ensureValidSplitTemplateLines(args.splits)
+
+    for (const line of args.splits) {
+      if (line.goalId) {
+        const goal = await ctx.db.get(line.goalId)
+        if (!goal || goal.userId !== identity.subject) {
+          throw new Error('Selected goal for template was not found.')
+        }
+      }
+      if (line.accountId) {
+        const account = await ctx.db.get(line.accountId)
+        if (!account || account.userId !== identity.subject) {
+          throw new Error('Selected account for template was not found.')
+        }
+      }
+    }
+
+    const now = Date.now()
+    const templateId = await ctx.db.insert('purchaseSplitTemplates', {
+      userId: identity.subject,
+      name: normalizeSplitTemplateName(args.name),
+      splits: args.splits.map((line) => ({
+        category: line.category.trim(),
+        percentage: line.percentage,
+        goalId: line.goalId,
+        accountId: line.accountId,
+      })),
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    return { templateId }
+  },
+})
+
+export const updatePurchaseSplitTemplate = mutation({
+  args: {
+    id: v.id('purchaseSplitTemplates'),
+    name: v.string(),
+    splits: v.array(
+      v.object({
+        category: v.string(),
+        percentage: v.number(),
+        goalId: v.optional(v.id('goals')),
+        accountId: v.optional(v.id('accounts')),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    if (!existing || existing.userId !== identity.subject) {
+      throw new Error('Split template not found.')
+    }
+
+    validateSplitTemplateName(args.name)
+    ensureValidSplitTemplateLines(args.splits)
+
+    for (const line of args.splits) {
+      if (line.goalId) {
+        const goal = await ctx.db.get(line.goalId)
+        if (!goal || goal.userId !== identity.subject) {
+          throw new Error('Selected goal for template was not found.')
+        }
+      }
+      if (line.accountId) {
+        const account = await ctx.db.get(line.accountId)
+        if (!account || account.userId !== identity.subject) {
+          throw new Error('Selected account for template was not found.')
+        }
+      }
+    }
+
+    await ctx.db.patch(args.id, {
+      name: normalizeSplitTemplateName(args.name),
+      splits: args.splits.map((line) => ({
+        category: line.category.trim(),
+        percentage: line.percentage,
+        goalId: line.goalId,
+        accountId: line.accountId,
+      })),
+      updatedAt: Date.now(),
+    })
+
+    return { updated: true }
+  },
+})
+
+export const removePurchaseSplitTemplate = mutation({
+  args: {
+    id: v.id('purchaseSplitTemplates'),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    if (!existing || existing.userId !== identity.subject) {
+      throw new Error('Split template not found.')
+    }
+    await ctx.db.delete(args.id)
+    return { removed: true }
+  },
+})
+
+export const applyPurchaseSplitTemplate = mutation({
+  args: {
+    purchaseId: v.id('purchases'),
+    templateId: v.id('purchaseSplitTemplates'),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const purchase = await ctx.db.get(args.purchaseId)
+    if (!purchase || purchase.userId !== identity.subject) {
+      throw new Error('Purchase not found.')
+    }
+
+    const template = await ctx.db.get(args.templateId)
+    if (!template || template.userId !== identity.subject) {
+      throw new Error('Split template not found.')
+    }
+
+    ensureValidSplitTemplateLines(template.splits)
+    const splits = buildAmountsFromTemplatePercentages(purchase.amount, template.splits)
+
+    for (const line of splits) {
+      if (line.goalId) {
+        const goal = await ctx.db.get(line.goalId)
+        if (!goal || goal.userId !== identity.subject) {
+          throw new Error('Selected goal for template split was not found.')
+        }
+      }
+      if (line.accountId) {
+        const account = await ctx.db.get(line.accountId)
+        if (!account || account.userId !== identity.subject) {
+          throw new Error('Selected account for template split was not found.')
+        }
+      }
+    }
+
+    const existingSplits = await ctx.db
+      .query('purchaseSplits')
+      .withIndex('by_purchaseId', (q) => q.eq('purchaseId', args.purchaseId))
+      .collect()
+
+    await Promise.all(existingSplits.map((split) => ctx.db.delete(split._id)))
+
+    const now = Date.now()
+    for (const split of splits) {
+      await ctx.db.insert('purchaseSplits', {
+        userId: identity.subject,
+        purchaseId: args.purchaseId,
+        category: split.category.trim(),
+        amount: split.amount,
+        goalId: split.goalId,
+        accountId: split.accountId,
+        createdAt: now,
+      })
+    }
+
+    return { applied: true, splitCount: splits.length }
   },
 })
 

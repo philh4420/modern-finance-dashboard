@@ -547,10 +547,28 @@ export default defineSchema({
     purchaseId: v.id('purchases'),
     category: v.string(),
     amount: v.number(),
+    goalId: v.optional(v.id('goals')),
+    accountId: v.optional(v.id('accounts')),
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
     .index('by_purchaseId', ['purchaseId']),
+  purchaseSplitTemplates: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    splits: v.array(
+      v.object({
+        category: v.string(),
+        percentage: v.number(),
+        goalId: v.optional(v.id('goals')),
+        accountId: v.optional(v.id('accounts')),
+      }),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
   envelopeBudgets: defineTable({
     userId: v.string(),
     month: v.string(),

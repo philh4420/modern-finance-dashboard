@@ -102,6 +102,7 @@ export type TransactionRuleEntry = Doc<'transactionRules'>
 export type EnvelopeBudgetEntry = Doc<'envelopeBudgets'>
 export type IncomeAllocationRuleEntry = Doc<'incomeAllocationRules'>
 export type PurchaseSplitEntry = Doc<'purchaseSplits'>
+export type PurchaseSplitTemplateEntry = Doc<'purchaseSplitTemplates'>
 export type ConsentLogEntry = Doc<'consentLogs'>
 export type UserExportEntry = Doc<'userExports'>
 export type DeletionJobEntry = Doc<'deletionJobs'>
@@ -256,6 +257,55 @@ export type PurchaseSavedView =
   | 'month_reconciled'
   | 'all_unreconciled'
   | 'all_purchases'
+
+export type PurchaseDuplicateOverlapKind = 'duplicate' | 'overlap'
+export type PurchaseDuplicateOverlapResolution = 'merge' | 'archive_duplicate' | 'mark_intentional'
+
+export type PurchaseDuplicateOverlapMatch = {
+  id: string
+  kind: PurchaseDuplicateOverlapKind
+  primaryPurchaseId: PurchaseId
+  secondaryPurchaseId: PurchaseId
+  primaryItem: string
+  secondaryItem: string
+  primaryAmount: number
+  secondaryAmount: number
+  primaryDate: string
+  secondaryDate: string
+  amountDelta: number
+  amountDeltaPercent: number
+  dayDelta: number
+  nameSimilarity: number
+  reason: string
+}
+
+export type PurchaseSplitTemplateLineInput = {
+  category: string
+  percentage: number
+  goalId?: GoalId
+  accountId?: AccountId
+}
+
+export type PurchaseSplitInput = {
+  category: string
+  amount: number
+  goalId?: GoalId
+  accountId?: AccountId
+}
+
+export type PurchaseImportInput = {
+  item: string
+  amount: number
+  category: string
+  purchaseDate: string
+  statementMonth: string
+  reconciliationStatus: ReconciliationStatus
+  ownership: PurchaseOwnership
+  taxDeductible: boolean
+  fundingSourceType: PurchaseFundingSourceType
+  fundingSourceId?: string
+  notes?: string
+}
 
 export type AccountForm = {
   name: string
@@ -416,6 +466,8 @@ export type Phase2Data = {
   recurringCandidates: RecurringCandidate[]
   billRiskAlerts: BillRiskAlert[]
   forecastWindows: ForecastWindow[]
+  purchaseSplits: PurchaseSplitEntry[]
+  purchaseSplitTemplates: PurchaseSplitTemplateEntry[]
   monthCloseChecklist: MonthCloseChecklistItem[]
   dataQuality: {
     duplicateCount: number

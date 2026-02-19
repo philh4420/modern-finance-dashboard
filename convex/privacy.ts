@@ -35,6 +35,7 @@ type DeletionTable =
   | 'envelopeBudgets'
   | 'incomeAllocationRules'
   | 'incomeAllocationSuggestions'
+  | 'purchaseSplitTemplates'
   | 'incomes'
   | 'bills'
   | 'cards'
@@ -67,6 +68,7 @@ const deletionTableValidator = v.union(
   v.literal('envelopeBudgets'),
   v.literal('incomeAllocationRules'),
   v.literal('incomeAllocationSuggestions'),
+  v.literal('purchaseSplitTemplates'),
   v.literal('incomes'),
   v.literal('bills'),
   v.literal('cards'),
@@ -619,6 +621,7 @@ export const requestDeletion = action({
       'cycleAuditLogs',
       'cycleStepAlerts',
       'purchaseSplits',
+      'purchaseSplitTemplates',
       'purchases',
       'transactionRules',
       'envelopeBudgets',
@@ -775,6 +778,7 @@ export const _collectExportData = internalQuery({
       incomeAllocationRules,
       incomeAllocationSuggestions,
       purchaseSplits,
+      purchaseSplitTemplates,
       cycleAuditLogs,
       cycleStepAlerts,
       monthlyCycleRuns,
@@ -805,6 +809,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('incomeAllocationRules').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomeAllocationSuggestions').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('purchaseSplits').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('purchaseSplitTemplates').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cycleAuditLogs').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('cycleStepAlerts').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('monthlyCycleRuns').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -837,6 +842,7 @@ export const _collectExportData = internalQuery({
       incomeAllocationRules: docsToPortableRows(incomeAllocationRules),
       incomeAllocationSuggestions: docsToPortableRows(incomeAllocationSuggestions),
       purchaseSplits: docsToPortableRows(purchaseSplits),
+      purchaseSplitTemplates: docsToPortableRows(purchaseSplitTemplates),
       cycleAuditLogs: docsToPortableRows(cycleAuditLogs),
       cycleStepAlerts: docsToPortableRows(cycleStepAlerts),
       monthlyCycleRuns: docsToPortableRows(monthlyCycleRuns),
