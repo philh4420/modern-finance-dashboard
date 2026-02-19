@@ -1,5 +1,7 @@
 import type {
+  AccountReconciliationCheckEntry,
   AccountEntry,
+  AccountTransferEntry,
   BillCategory,
   BillEntry,
   BillScope,
@@ -46,6 +48,8 @@ type PrintReportProps = {
   loans: LoanEntry[]
   loanEvents: LoanEventEntry[]
   accounts: AccountEntry[]
+  accountTransfers: AccountTransferEntry[]
+  accountReconciliationChecks: AccountReconciliationCheckEntry[]
   goals: GoalEntry[]
   purchases: PurchaseEntry[]
   cycleAuditLogs: CycleAuditLogEntry[]
@@ -546,6 +550,8 @@ export function PrintReport({
   loans,
   loanEvents,
   accounts,
+  accountTransfers,
+  accountReconciliationChecks,
   goals,
   purchases,
   cycleAuditLogs,
@@ -669,6 +675,122 @@ export function PrintReport({
     map.set(String(account._id), account.name)
     return map
   }, new Map<string, string>())
+  const transferRowsInRange = accountTransfers
+    .filter((entry) => {
+      const transferMonth = /^\d{4}-\d{2}/.test(entry.transferDate)
+        ? entry.transferDate.slice(0, 7)
+        : monthKeyFromTimestamp(entry.createdAt)
+      return inMonthRange(transferMonth, config.startMonth, config.endMonth)
+    })
+    .sort((left, right) => {
+      if (left.transferDate !== right.transferDate) {
+        return left.transferDate.localeCompare(right.transferDate)
+      }
+      return left.createdAt - right.createdAt
+    })
+  const reconciliationRowsInRange = accountReconciliationChecks
+    .filter((entry) =>
+      inMonthRange(
+        /^\d{4}-\d{2}$/.test(entry.cycleMonth) ? entry.cycleMonth : monthKeyFromTimestamp(entry.updatedAt ?? entry.createdAt),
+        config.startMonth,
+        config.endMonth,
+      ),
+    )
+    .sort((left, right) => {
+      if (left.cycleMonth !== right.cycleMonth) {
+        return left.cycleMonth.localeCompare(right.cycleMonth)
+      }
+      return (left.updatedAt ?? left.createdAt) - (right.updatedAt ?? right.createdAt)
+    })
+
+  const accountReportRows = accounts
+    .map((account) => {
+      const accountId = String(account._id)
+      const available = roundCurrency(account.balance)
+      const hasLedger = typeof account.ledgerBalance === 'number' && Number.isFinite(account.ledgerBalance)
+      const hasPending = typeof account.pendingBalance === 'number' && Number.isFinite(account.pendingBalance)
+      const pending = hasPending
+        ? roundCurrency(account.pendingBalance ?? 0)
+        : roundCurrency(available - (hasLedger ? (account.ledgerBalance ?? available) : available))
+      const ledger = hasLedger ? roundCurrency(account.ledgerBalance ?? available) : roundCurrency(available - pending)
+
+      const accountTransfersAsSource = transferRowsInRange.filter((entry) => String(entry.sourceAccountId) === accountId)
+      const accountTransfersAsDestination = transferRowsInRange.filter((entry) => String(entry.destinationAccountId) === accountId)
+      const transferOut = roundCurrency(sumBy(accountTransfersAsSource, (entry) => entry.amount))
+      const transferIn = roundCurrency(sumBy(accountTransfersAsDestination, (entry) => entry.amount))
+      const transferNet = roundCurrency(transferIn - transferOut)
+      const accountReconciliations = reconciliationRowsInRange.filter((entry) => String(entry.accountId) === accountId)
+      const firstReconciliation = accountReconciliations[0]
+      const lastReconciliation = accountReconciliations[accountReconciliations.length - 1]
+      const openingBalance = roundCurrency(
+        firstReconciliation ? firstReconciliation.statementStartBalance : ledger - transferNet,
+      )
+      const closingBalance = roundCurrency(lastReconciliation ? lastReconciliation.statementEndBalance : ledger)
+      const reconciledCount = accountReconciliations.filter((entry) => entry.reconciled).length
+      const pendingCount = accountReconciliations.length - reconciledCount
+      const unmatchedDeltaAbs = roundCurrency(sumBy(accountReconciliations, (entry) => Math.abs(entry.unmatchedDelta)))
+
+      return {
+        id: accountId,
+        name: account.name,
+        type: account.type,
+        liquid: account.liquid,
+        available,
+        ledger,
+        pending,
+        openingBalance,
+        closingBalance,
+        transferIn,
+        transferOut,
+        transferNet,
+        transferCountIn: accountTransfersAsDestination.length,
+        transferCountOut: accountTransfersAsSource.length,
+        reconciliationChecks: accountReconciliations.length,
+        reconciledCount,
+        pendingCount,
+        unmatchedDeltaAbs,
+        latestCycle: lastReconciliation?.cycleMonth ?? null,
+      }
+    })
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
+
+  const accountRangeTotals = accountReportRows.reduce(
+    (totals, row) => {
+      totals.opening += row.openingBalance
+      totals.closing += row.closingBalance
+      totals.available += row.available
+      totals.ledger += row.ledger
+      totals.pending += row.pending
+      totals.transferIn += row.transferIn
+      totals.transferOut += row.transferOut
+      totals.transferNet += row.transferNet
+      totals.transferCount += row.transferCountIn + row.transferCountOut
+      totals.reconciliationChecks += row.reconciliationChecks
+      totals.reconciled += row.reconciledCount
+      totals.pendingReconciled += row.pendingCount
+      totals.unmatchedDeltaAbs += row.unmatchedDeltaAbs
+      return totals
+    },
+    {
+      opening: 0,
+      closing: 0,
+      available: 0,
+      ledger: 0,
+      pending: 0,
+      transferIn: 0,
+      transferOut: 0,
+      transferNet: 0,
+      transferCount: 0,
+      reconciliationChecks: 0,
+      reconciled: 0,
+      pendingReconciled: 0,
+      unmatchedDeltaAbs: 0,
+    },
+  )
+  const accountReconciliationCompletionRate =
+    accountRangeTotals.reconciliationChecks > 0
+      ? accountRangeTotals.reconciled / accountRangeTotals.reconciliationChecks
+      : 1
   const overallIncomePaymentReliability = calculateIncomePaymentReliability(incomePaymentChecks)
   const incomeExpectations = incomes.reduce(
     (totals, income) => {
@@ -1779,31 +1901,148 @@ export function PrintReport({
       {config.includeAccounts ? (
         <section className="print-section print-section--component">
           <h2>Accounts</h2>
-          {accounts.length === 0 ? (
+          {accountReportRows.length === 0 ? (
             <p className="print-subnote">No account entries.</p>
           ) : (
-            <div className="print-table-wrap">
-              <table className="print-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Name</th>
-                    <th scope="col">Type</th>
-                    <th scope="col">Balance</th>
-                    <th scope="col">Liquid</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {accounts.map((account) => (
-                    <tr key={account._id}>
-                      <td>{account.name}</td>
-                      <td>{account.type}</td>
-                      <td className="table-amount">{formatMoney(account.balance)}</td>
-                      <td>{account.liquid ? 'yes' : 'no'}</td>
+            <>
+              <div className="print-kpi-grid">
+                <div className="print-kpi">
+                  <p>Opening balance (range estimate)</p>
+                  <strong>{formatMoney(roundCurrency(accountRangeTotals.opening))}</strong>
+                  <small>Opening snapshots inferred from reconciliation + transfer movement.</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Closing balance</p>
+                  <strong>{formatMoney(roundCurrency(accountRangeTotals.closing))}</strong>
+                  <small>
+                    Available {formatMoney(roundCurrency(accountRangeTotals.available))} · Ledger{' '}
+                    {formatMoney(roundCurrency(accountRangeTotals.ledger))}
+                  </small>
+                </div>
+                <div className="print-kpi">
+                  <p>Transfer summary</p>
+                  <strong>{formatMoney(roundCurrency(accountRangeTotals.transferNet))}</strong>
+                  <small>
+                    In {formatMoney(roundCurrency(accountRangeTotals.transferIn))} · Out{' '}
+                    {formatMoney(roundCurrency(accountRangeTotals.transferOut))} · {accountRangeTotals.transferCount} legs
+                  </small>
+                </div>
+                <div className="print-kpi">
+                  <p>Reconciliation summary</p>
+                  <strong>{formatPercent(accountReconciliationCompletionRate)}</strong>
+                  <small>
+                    {accountRangeTotals.reconciled}/{accountRangeTotals.reconciliationChecks} reconciled ·{' '}
+                    {formatMoney(roundCurrency(accountRangeTotals.unmatchedDeltaAbs))} abs delta
+                  </small>
+                </div>
+              </div>
+
+              <div className="print-table-wrap">
+                <table className="print-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Account</th>
+                      <th scope="col">Type</th>
+                      <th scope="col">Opening</th>
+                      <th scope="col">Closing</th>
+                      <th scope="col">Available</th>
+                      <th scope="col">Transfers</th>
+                      <th scope="col">Reconciliation</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {accountReportRows.map((row) => (
+                      <tr key={row.id}>
+                        <td>
+                          {row.name}
+                          <br />
+                          <small>{row.liquid ? 'liquid' : 'non-liquid'}</small>
+                        </td>
+                        <td>{row.type}</td>
+                        <td className="table-amount">{formatMoney(row.openingBalance)}</td>
+                        <td className="table-amount">{formatMoney(row.closingBalance)}</td>
+                        <td className="table-amount">{formatMoney(row.available)}</td>
+                        <td className="table-amount">
+                          In {formatMoney(row.transferIn)} / Out {formatMoney(row.transferOut)} / Net {formatMoney(row.transferNet)}
+                        </td>
+                        <td>
+                          {row.reconciledCount}/{row.reconciliationChecks} reconciled
+                          <br />
+                          <small>
+                            pending {row.pendingCount} · delta abs {formatMoney(row.unmatchedDeltaAbs)}
+                            {row.latestCycle ? ` · latest ${row.latestCycle}` : ''}
+                          </small>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 className="print-subhead">Transfer Summary (Range)</h3>
+              {transferRowsInRange.length === 0 ? (
+                <p className="print-subnote">No transfers in selected range.</p>
+              ) : (
+                <div className="print-table-wrap">
+                  <table className="print-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Date</th>
+                        <th scope="col">From</th>
+                        <th scope="col">To</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Reference</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transferRowsInRange.map((entry) => (
+                        <tr key={entry._id}>
+                          <td>{entry.transferDate}</td>
+                          <td>{accountNameById.get(String(entry.sourceAccountId)) ?? 'Deleted account'}</td>
+                          <td>{accountNameById.get(String(entry.destinationAccountId)) ?? 'Deleted account'}</td>
+                          <td className="table-amount">{formatMoney(entry.amount)}</td>
+                          <td>{entry.reference?.trim() || entry.note?.trim() || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <h3 className="print-subhead">Reconciliation Summary (Range)</h3>
+              {reconciliationRowsInRange.length === 0 ? (
+                <p className="print-subnote">No reconciliation checks in selected range.</p>
+              ) : (
+                <div className="print-table-wrap">
+                  <table className="print-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Account</th>
+                        <th scope="col">Cycle</th>
+                        <th scope="col">Statement</th>
+                        <th scope="col">Ledger end</th>
+                        <th scope="col">Delta</th>
+                        <th scope="col">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reconciliationRowsInRange.map((entry) => (
+                        <tr key={entry._id}>
+                          <td>{accountNameById.get(String(entry.accountId)) ?? 'Deleted account'}</td>
+                          <td>{entry.cycleMonth}</td>
+                          <td>
+                            {formatMoney(entry.statementStartBalance)} {'->'} {formatMoney(entry.statementEndBalance)}
+                          </td>
+                          <td className="table-amount">{formatMoney(entry.ledgerEndBalance)}</td>
+                          <td className="table-amount">{formatMoney(entry.unmatchedDelta)}</td>
+                          <td>{entry.reconciled ? 'reconciled' : 'pending'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
       ) : null}

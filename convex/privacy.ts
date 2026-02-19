@@ -192,6 +192,13 @@ type LoanReportingBundle = {
   strategyRows: Array<Record<string, unknown>>
 }
 
+type AccountReportingBundle = {
+  summaryRows: Array<Record<string, unknown>>
+  transferRows: Array<Record<string, unknown>>
+  reconciliationRows: Array<Record<string, unknown>>
+  monthlyRows: Array<Record<string, unknown>>
+}
+
 const buildLoanReportingArtifacts = (payload: Record<string, Array<Record<string, unknown>>>): LoanReportingBundle => {
   const loans = payload.loans ?? []
   const loanEvents = payload.loanEvents ?? []
@@ -375,6 +382,164 @@ const buildLoanReportingArtifacts = (payload: Record<string, Array<Record<string
   }
 }
 
+const monthKeyFromDateOrTimestamp = (value: unknown, fallbackTimestamp: unknown) => {
+  if (typeof value === 'string' && /^\d{4}-\d{2}/.test(value)) {
+    return value.slice(0, 7)
+  }
+  const fallback = finiteOrZero(fallbackTimestamp)
+  return fallback > 0 ? new Date(fallback).toISOString().slice(0, 7) : null
+}
+
+const buildAccountReportingArtifacts = (payload: Record<string, Array<Record<string, unknown>>>): AccountReportingBundle => {
+  const accounts = payload.accounts ?? []
+  const accountTransfers = payload.accountTransfers ?? []
+  const accountReconciliationChecks = payload.accountReconciliationChecks ?? []
+
+  const accountNameById = new Map<string, string>()
+  for (const account of accounts) {
+    const accountId = String(account._id ?? '')
+    if (!accountId) continue
+    const name = typeof account.name === 'string' ? account.name : 'Account'
+    accountNameById.set(accountId, name)
+  }
+
+  const transferRows = accountTransfers.map((entry) => {
+    const sourceAccountId = String(entry.sourceAccountId ?? '')
+    const destinationAccountId = String(entry.destinationAccountId ?? '')
+    const amount = roundCurrency(Math.max(finiteOrZero(entry.amount), 0))
+    const monthKey = monthKeyFromDateOrTimestamp(entry.transferDate, entry.createdAt)
+
+    return {
+      transferId: String(entry._id ?? ''),
+      monthKey,
+      transferDate: typeof entry.transferDate === 'string' ? entry.transferDate : null,
+      sourceAccountId,
+      sourceAccountName: (accountNameById.get(sourceAccountId) ?? sourceAccountId) || 'Deleted account',
+      destinationAccountId,
+      destinationAccountName: (accountNameById.get(destinationAccountId) ?? destinationAccountId) || 'Deleted account',
+      amount,
+      reference: typeof entry.reference === 'string' ? entry.reference : null,
+      note: typeof entry.note === 'string' ? entry.note : null,
+      createdAt: finiteOrZero(entry.createdAt),
+    }
+  })
+
+  const reconciliationRows = accountReconciliationChecks.map((entry) => {
+    const accountId = String(entry.accountId ?? '')
+    const cycleMonth = typeof entry.cycleMonth === 'string' ? entry.cycleMonth : null
+    const monthKey = monthKeyFromDateOrTimestamp(entry.cycleMonth, entry.updatedAt ?? entry.createdAt)
+
+    return {
+      reconciliationId: String(entry._id ?? ''),
+      monthKey: cycleMonth && /^\d{4}-\d{2}$/.test(cycleMonth) ? cycleMonth : monthKey,
+      cycleMonth,
+      accountId,
+      accountName: (accountNameById.get(accountId) ?? accountId) || 'Deleted account',
+      statementStartBalance: roundCurrency(finiteOrZero(entry.statementStartBalance)),
+      statementEndBalance: roundCurrency(finiteOrZero(entry.statementEndBalance)),
+      ledgerEndBalance: roundCurrency(finiteOrZero(entry.ledgerEndBalance)),
+      unmatchedDelta: roundCurrency(finiteOrZero(entry.unmatchedDelta)),
+      reconciled: Boolean(entry.reconciled),
+      updatedAt: finiteOrZero(entry.updatedAt) || finiteOrZero(entry.createdAt),
+      createdAt: finiteOrZero(entry.createdAt),
+    }
+  })
+
+  const summaryRows = accounts.map((account) => {
+    const accountId = String(account._id ?? '')
+    const name = typeof account.name === 'string' ? account.name : 'Account'
+    const available = roundCurrency(finiteOrZero(account.balance))
+    const hasLedger = account.ledgerBalance !== undefined && Number.isFinite(finiteOrZero(account.ledgerBalance))
+    const hasPending = account.pendingBalance !== undefined && Number.isFinite(finiteOrZero(account.pendingBalance))
+    const ledger = hasLedger
+      ? roundCurrency(finiteOrZero(account.ledgerBalance))
+      : roundCurrency(available - (hasPending ? finiteOrZero(account.pendingBalance) : 0))
+    const pending = hasPending ? roundCurrency(finiteOrZero(account.pendingBalance)) : roundCurrency(available - ledger)
+
+    const transferOutRows = transferRows.filter((row) => row.sourceAccountId === accountId)
+    const transferInRows = transferRows.filter((row) => row.destinationAccountId === accountId)
+    const transferOut = roundCurrency(transferOutRows.reduce((sum, row) => sum + finiteOrZero(row.amount), 0))
+    const transferIn = roundCurrency(transferInRows.reduce((sum, row) => sum + finiteOrZero(row.amount), 0))
+    const transferNet = roundCurrency(transferIn - transferOut)
+
+    const accountReconciliationRows = reconciliationRows
+      .filter((row) => row.accountId === accountId)
+      .sort((left, right) => finiteOrZero(left.updatedAt) - finiteOrZero(right.updatedAt))
+    const firstReconciliation = accountReconciliationRows[0]
+    const lastReconciliation = accountReconciliationRows[accountReconciliationRows.length - 1]
+    const openingBalance = roundCurrency(
+      firstReconciliation ? finiteOrZero(firstReconciliation.statementStartBalance) : ledger - transferNet,
+    )
+    const closingBalance = roundCurrency(
+      lastReconciliation ? finiteOrZero(lastReconciliation.statementEndBalance) : ledger,
+    )
+    const reconciliationChecks = accountReconciliationRows.length
+    const reconciledCount = accountReconciliationRows.filter((row) => row.reconciled).length
+    const pendingCount = reconciliationChecks - reconciledCount
+    const unmatchedDeltaAbs = roundCurrency(
+      accountReconciliationRows.reduce((sum, row) => sum + Math.abs(finiteOrZero(row.unmatchedDelta)), 0),
+    )
+
+    return {
+      accountId,
+      accountName: name,
+      accountType: typeof account.type === 'string' ? account.type : null,
+      liquid: Boolean(account.liquid),
+      openingBalance,
+      closingBalance,
+      availableBalance: available,
+      ledgerBalance: ledger,
+      pendingBalance: pending,
+      transferIn,
+      transferOut,
+      transferNet,
+      transferInCount: transferInRows.length,
+      transferOutCount: transferOutRows.length,
+      reconciliationChecks,
+      reconciledChecks: reconciledCount,
+      pendingChecks: pendingCount,
+      unmatchedDeltaAbs,
+      latestCycleMonth: lastReconciliation?.cycleMonth ?? null,
+    }
+  })
+
+  const monthKeySet = new Set<string>()
+  transferRows.forEach((row) => {
+    if (typeof row.monthKey === 'string') monthKeySet.add(row.monthKey)
+  })
+  reconciliationRows.forEach((row) => {
+    if (typeof row.monthKey === 'string') monthKeySet.add(row.monthKey)
+  })
+
+  const monthlyRows = Array.from(monthKeySet)
+    .sort((left, right) => left.localeCompare(right))
+    .map((monthKey) => {
+      const monthTransfers = transferRows.filter((row) => row.monthKey === monthKey)
+      const monthReconciliations = reconciliationRows.filter((row) => row.monthKey === monthKey)
+      const transferTotal = roundCurrency(monthTransfers.reduce((sum, row) => sum + finiteOrZero(row.amount), 0))
+      const reconciledCount = monthReconciliations.filter((row) => row.reconciled).length
+
+      return {
+        monthKey,
+        transferCount: monthTransfers.length,
+        transferVolume: transferTotal,
+        reconciliationChecks: monthReconciliations.length,
+        reconciledChecks: reconciledCount,
+        pendingChecks: monthReconciliations.length - reconciledCount,
+        unmatchedDeltaAbs: roundCurrency(
+          monthReconciliations.reduce((sum, row) => sum + Math.abs(finiteOrZero(row.unmatchedDelta)), 0),
+        ),
+      }
+    })
+
+  return {
+    summaryRows,
+    transferRows,
+    reconciliationRows,
+    monthlyRows,
+  }
+}
+
 export const getConsentSettings = query({
   args: {},
   handler: async (ctx) => {
@@ -553,6 +718,7 @@ export const generateUserExport = action({
         userId: identity.subject,
       })) as Record<string, Array<Record<string, unknown>>>
       const loanReporting = buildLoanReportingArtifacts(payload)
+      const accountReporting = buildAccountReportingArtifacts(payload)
       const exportPayload = {
         ...payload,
         loanReportingSummary: loanReporting.summaryRows,
@@ -560,6 +726,10 @@ export const generateUserExport = action({
         loanInterestTrend12Month: loanReporting.interestTrendRows,
         loanEventHistory: loanReporting.eventHistoryRows,
         loanStrategyRecommendation: loanReporting.strategyRows,
+        accountReportingSummary: accountReporting.summaryRows,
+        accountTransferSummary: accountReporting.transferRows,
+        accountReconciliationSummary: accountReporting.reconciliationRows,
+        accountMonthlySummary: accountReporting.monthlyRows,
       }
 
       const meta = {

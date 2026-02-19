@@ -623,6 +623,7 @@ export function AccountsTab({
   const [healthFilter, setHealthFilter] = useState<AccountHealthFilter>('all')
   const [sortKey, setSortKey] = useState<AccountSortKey>('name_asc')
   const [forecastWindowDays, setForecastWindowDays] = useState<14 | 30>(14)
+  const [expandedAccountIds, setExpandedAccountIds] = useState<string[]>([])
 
   const accountNameById = useMemo(
     () => new Map<string, string>(accounts.map((entry) => [String(entry._id), entry.name])),
@@ -1463,6 +1464,16 @@ export function AccountsTab({
     ? roundCurrency(statementEndInput - selectedReconciliationBalances.ledgerBalance)
     : 0
 
+  const toggleAccountExpanded = (accountId: string) => {
+    setExpandedAccountIds((prev) =>
+      prev.includes(accountId) ? prev.filter((id) => id !== accountId) : [...prev, accountId],
+    )
+  }
+
+  const ensureAccountExpanded = (accountId: string) => {
+    setExpandedAccountIds((prev) => (prev.includes(accountId) ? prev : [...prev, accountId]))
+  }
+
   return (
     <section className="editor-grid accounts-tab-shell" aria-label="Account management">
       <article className="panel panel-form">
@@ -1709,6 +1720,513 @@ export function AccountsTab({
             <small>Projected income minus commitments</small>
           </article>
         </div>
+
+        {accounts.length === 0 ? (
+          <p className="empty-state">No accounts added yet.</p>
+        ) : visibleAccounts.length === 0 ? (
+          <p className="empty-state">No accounts match this filter.</p>
+        ) : (
+          <>
+            <p className="subnote">
+              Showing {visibleAccounts.length} of {accounts.length} account{accounts.length === 1 ? '' : 's'}.
+            </p>
+            <div className="accounts-desktop-table">
+              <div className="table-wrap table-wrap--card">
+                <table className="data-table data-table--accounts" data-testid="accounts-table">
+                <caption className="sr-only">Account entries</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Account</th>
+                    <th scope="col">Purpose & type</th>
+                    <th scope="col">Balances</th>
+                    <th scope="col">Health</th>
+                    <th scope="col">Class</th>
+                    <th scope="col">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleAccounts.map((row) => {
+                    const { entry } = row
+                    const isEditing = accountEditId === entry._id
+                    const draftLedger = parseFloatOrZero(accountEditDraft.ledgerBalance)
+                    const draftPending = parseFloatOrZero(accountEditDraft.pendingBalance)
+                    const draftBalances = {
+                      availableBalance: roundCurrency(draftLedger + draftPending),
+                      ledgerBalance: roundCurrency(draftLedger),
+                      pendingBalance: roundCurrency(draftPending),
+                    }
+                    const forecastBalanceShift = roundCurrency(draftBalances.availableBalance - row.availableBalance)
+                    const previewForecast: AccountForecastSummary = {
+                      ...row.forecast,
+                      minProjectedBalance: roundCurrency(row.forecast.minProjectedBalance + forecastBalanceShift),
+                      projectedEnd14: roundCurrency(row.forecast.projectedEnd14 + forecastBalanceShift),
+                      projectedEnd30: roundCurrency(row.forecast.projectedEnd30 + forecastBalanceShift),
+                    }
+                    const previewHealth = evaluateHealth(
+                      { ...entry, type: accountEditDraft.type, liquid: accountEditDraft.liquid },
+                      draftBalances,
+                      row.latestReconciliation,
+                      row.trend.windows[30],
+                      previewForecast,
+                    )
+                    const previewPurpose = accountEditDraft.purpose
+                    const activeHealth = isEditing ? previewHealth : row
+                    const activePurpose = isEditing ? previewPurpose : row.purpose
+                    const activeAvailable = isEditing ? draftBalances.availableBalance : row.availableBalance
+                    const activeLedger = isEditing ? draftBalances.ledgerBalance : row.ledgerBalance
+                    const activePending = isEditing ? draftBalances.pendingBalance : row.pendingBalance
+                    const activeIsLiability =
+                      isEditing ? accountEditDraft.type === 'debt' || activeAvailable < 0 : row.isLiability
+
+                    return (
+                      <tr key={entry._id} className={isEditing ? 'table-row--editing' : undefined}>
+                        <td>
+                          {isEditing ? (
+                            <input
+                              className="inline-input"
+                              value={accountEditDraft.name}
+                              onChange={(event) =>
+                                setAccountEditDraft((prev) => ({
+                                  ...prev,
+                                  name: event.target.value,
+                                }))
+                              }
+                            />
+                          ) : (
+                            <div className="accounts-row-title">
+                              <strong>{entry.name}</strong>
+                              <small>{entry.liquid ? 'liquid enabled' : 'non-liquid'}</small>
+                            </div>
+                          )}
+                        </td>
+
+                        <td>
+                          {isEditing ? (
+                            <div className="accounts-inline-grid">
+                              <select
+                                className="inline-select"
+                                value={accountEditDraft.type}
+                                onChange={(event) => {
+                                  const nextType = event.target.value as AccountType
+                                  setAccountEditDraft((prev) => ({
+                                    ...prev,
+                                    type: nextType,
+                                    purpose: nextType === 'debt' ? 'debt' : prev.purpose === 'debt' ? 'spending' : prev.purpose,
+                                  }))
+                                }}
+                              >
+                                {accountTypeOptions.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                className="inline-select"
+                                value={accountEditDraft.purpose}
+                                onChange={(event) =>
+                                  setAccountEditDraft((prev) => ({
+                                    ...prev,
+                                    purpose: event.target.value as AccountPurpose,
+                                  }))
+                                }
+                              >
+                                {accountPurposeOptions.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : (
+                            <div className="accounts-row-pills">
+                              <span className={purposeColorClass(activePurpose)}>{accountPurposeLabel(activePurpose)}</span>
+                              <span className="pill pill--neutral">{accountTypeLabel(entry.type)}</span>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className={`table-amount ${activeAvailable >= 0 ? 'amount-positive' : 'amount-negative'}`}>
+                          {isEditing ? (
+                            <div className="accounts-inline-grid accounts-inline-grid--balances">
+                              <label>
+                                <span>Ledger</span>
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  value={accountEditDraft.ledgerBalance}
+                                  onChange={(event) =>
+                                    setAccountEditDraft((prev) => ({
+                                      ...prev,
+                                      ledgerBalance: event.target.value,
+                                    }))
+                                  }
+                                />
+                              </label>
+                              <label>
+                                <span>Pending</span>
+                                <input
+                                  className="inline-input"
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  value={accountEditDraft.pendingBalance}
+                                  onChange={(event) =>
+                                    setAccountEditDraft((prev) => ({
+                                      ...prev,
+                                      pendingBalance: event.target.value,
+                                    }))
+                                  }
+                                />
+                              </label>
+                              <p className="subnote">Available {formatMoney(activeAvailable)}</p>
+                            </div>
+                          ) : (
+                            <div className="accounts-balance-stack">
+                              <strong>{formatMoney(activeAvailable)}</strong>
+                              <small>
+                                Ledger {formatMoney(activeLedger)} · Pending {formatMoney(activePending)}
+                              </small>
+                            </div>
+                          )}
+                        </td>
+
+                        <td>
+                          <div className="accounts-health">
+                            <span className={healthClass(activeHealth.healthStatus)}>
+                              {activeHealth.healthStatus} {activeHealth.healthScore}/100
+                            </span>
+                            <small>{activeHealth.healthNote}</small>
+                            {!isEditing && row.latestReconciliation ? (
+                              <small>
+                                {row.latestReconciliation.cycleMonth} ·{' '}
+                                {row.latestReconciliation.reconciled ? 'reconciled' : 'pending'} · delta{' '}
+                                {formatMoney(row.latestReconciliation.unmatchedDelta)}
+                              </small>
+                            ) : null}
+                          </div>
+                        </td>
+
+                        <td>
+                          {isEditing ? (
+                            <label className="checkbox-row" htmlFor={`account-edit-liquid-${entry._id}`}>
+                              <input
+                                id={`account-edit-liquid-${entry._id}`}
+                                type="checkbox"
+                                checked={accountEditDraft.liquid}
+                                onChange={(event) =>
+                                  setAccountEditDraft((prev) => ({
+                                    ...prev,
+                                    liquid: event.target.checked,
+                                  }))
+                                }
+                              />
+                              <span className={activeIsLiability ? 'pill pill--critical' : 'pill pill--good'}>
+                                {activeIsLiability ? 'liability' : 'asset'}
+                              </span>
+                            </label>
+                          ) : (
+                            <span className={activeIsLiability ? 'pill pill--critical' : 'pill pill--good'}>
+                              {activeIsLiability ? 'liability' : 'asset'}
+                            </span>
+                          )}
+                        </td>
+
+                        <td>
+                          <div className="row-actions">
+                            {isEditing ? (
+                              <>
+                                <button type="button" className="btn btn-secondary btn--sm" onClick={() => void saveAccountEdit()}>
+                                  Save
+                                </button>
+                                <button type="button" className="btn btn-ghost btn--sm" onClick={() => setAccountEditId(null)}>
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <button type="button" className="btn btn-secondary btn--sm" onClick={() => startAccountEdit(entry)}>
+                                Edit
+                              </button>
+                            )}
+                            <button type="button" className="btn btn-ghost btn--sm" onClick={() => void onDeleteAccount(entry._id)}>
+                              Remove
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="accounts-mobile-list" aria-label="Accounts mobile view">
+              {visibleAccounts.map((row) => {
+                const { entry } = row
+                const accountId = String(entry._id)
+                const isEditing = accountEditId === entry._id
+                const isExpanded = isEditing || expandedAccountIds.includes(accountId)
+                const draftLedger = parseFloatOrZero(accountEditDraft.ledgerBalance)
+                const draftPending = parseFloatOrZero(accountEditDraft.pendingBalance)
+                const draftBalances = {
+                  availableBalance: roundCurrency(draftLedger + draftPending),
+                  ledgerBalance: roundCurrency(draftLedger),
+                  pendingBalance: roundCurrency(draftPending),
+                }
+                const forecastBalanceShift = roundCurrency(draftBalances.availableBalance - row.availableBalance)
+                const previewForecast: AccountForecastSummary = {
+                  ...row.forecast,
+                  minProjectedBalance: roundCurrency(row.forecast.minProjectedBalance + forecastBalanceShift),
+                  projectedEnd14: roundCurrency(row.forecast.projectedEnd14 + forecastBalanceShift),
+                  projectedEnd30: roundCurrency(row.forecast.projectedEnd30 + forecastBalanceShift),
+                }
+                const previewHealth = evaluateHealth(
+                  { ...entry, type: accountEditDraft.type, liquid: accountEditDraft.liquid },
+                  draftBalances,
+                  row.latestReconciliation,
+                  row.trend.windows[30],
+                  previewForecast,
+                )
+                const activeHealth = isEditing ? previewHealth : row
+                const activePurpose = isEditing ? accountEditDraft.purpose : row.purpose
+                const activeAvailable = isEditing ? draftBalances.availableBalance : row.availableBalance
+                const activeLedger = isEditing ? draftBalances.ledgerBalance : row.ledgerBalance
+                const activePending = isEditing ? draftBalances.pendingBalance : row.pendingBalance
+                const activeIsLiability = isEditing ? accountEditDraft.type === 'debt' || activeAvailable < 0 : row.isLiability
+
+                return (
+                  <article
+                    key={`mobile-${entry._id}`}
+                    className={`accounts-mobile-item ${isEditing ? 'accounts-mobile-item--editing' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="accounts-mobile-toggle"
+                      aria-expanded={isExpanded}
+                      aria-controls={`account-mobile-panel-${accountId}`}
+                      onClick={() => toggleAccountExpanded(accountId)}
+                    >
+                      <div className="accounts-mobile-summary-main">
+                        <strong>{entry.name}</strong>
+                        <small>
+                          {entry.liquid ? 'liquid enabled' : 'non-liquid'} · {accountTypeLabel(entry.type)}
+                        </small>
+                      </div>
+                      <div className="accounts-mobile-summary-metrics">
+                        <span className={activeAvailable >= 0 ? 'amount-positive' : 'amount-negative'}>
+                          {formatMoney(activeAvailable)}
+                        </span>
+                        <span className={healthClass(activeHealth.healthStatus)}>
+                          {activeHealth.healthStatus} {activeHealth.healthScore}/100
+                        </span>
+                      </div>
+                    </button>
+
+                    <div id={`account-mobile-panel-${accountId}`} className="accounts-mobile-content" hidden={!isExpanded}>
+                      {isEditing ? (
+                        <div className="accounts-mobile-edit-grid">
+                          <label className="accounts-mobile-edit-field">
+                            <span>Name</span>
+                            <input
+                              className="inline-input"
+                              value={accountEditDraft.name}
+                              onChange={(event) =>
+                                setAccountEditDraft((prev) => ({
+                                  ...prev,
+                                  name: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label className="accounts-mobile-edit-field">
+                            <span>Type</span>
+                            <select
+                              className="inline-select"
+                              value={accountEditDraft.type}
+                              onChange={(event) => {
+                                const nextType = event.target.value as AccountType
+                                setAccountEditDraft((prev) => ({
+                                  ...prev,
+                                  type: nextType,
+                                  purpose: nextType === 'debt' ? 'debt' : prev.purpose === 'debt' ? 'spending' : prev.purpose,
+                                }))
+                              }}
+                            >
+                              {accountTypeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="accounts-mobile-edit-field">
+                            <span>Purpose</span>
+                            <select
+                              className="inline-select"
+                              value={accountEditDraft.purpose}
+                              onChange={(event) =>
+                                setAccountEditDraft((prev) => ({
+                                  ...prev,
+                                  purpose: event.target.value as AccountPurpose,
+                                }))
+                              }
+                            >
+                              {accountPurposeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="accounts-mobile-edit-field">
+                            <span>Ledger</span>
+                            <input
+                              className="inline-input"
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              value={accountEditDraft.ledgerBalance}
+                              onChange={(event) =>
+                                setAccountEditDraft((prev) => ({
+                                  ...prev,
+                                  ledgerBalance: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label className="accounts-mobile-edit-field">
+                            <span>Pending</span>
+                            <input
+                              className="inline-input"
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              value={accountEditDraft.pendingBalance}
+                              onChange={(event) =>
+                                setAccountEditDraft((prev) => ({
+                                  ...prev,
+                                  pendingBalance: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                          <div className="accounts-mobile-edit-field accounts-mobile-edit-field--span2">
+                            <span>Liquid cash inclusion</span>
+                            <label className="checkbox-row" htmlFor={`account-mobile-edit-liquid-${entry._id}`}>
+                              <input
+                                id={`account-mobile-edit-liquid-${entry._id}`}
+                                type="checkbox"
+                                checked={accountEditDraft.liquid}
+                                onChange={(event) =>
+                                  setAccountEditDraft((prev) => ({
+                                    ...prev,
+                                    liquid: event.target.checked,
+                                  }))
+                                }
+                              />
+                              Include in liquid-cash and forecasting models
+                            </label>
+                          </div>
+                          <p className="subnote accounts-mobile-edit-field--span2">
+                            Available preview {formatMoney(activeAvailable)} · {activeIsLiability ? 'liability class' : 'asset class'}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="accounts-mobile-grid">
+                          <div>
+                            <span>Purpose</span>
+                            <strong>{accountPurposeLabel(activePurpose)}</strong>
+                          </div>
+                          <div>
+                            <span>Type</span>
+                            <strong>{accountTypeLabel(entry.type)}</strong>
+                          </div>
+                          <div>
+                            <span>Available</span>
+                            <strong className={activeAvailable >= 0 ? 'amount-positive' : 'amount-negative'}>
+                              {formatMoney(activeAvailable)}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Ledger</span>
+                            <strong>{formatMoney(activeLedger)}</strong>
+                          </div>
+                          <div>
+                            <span>Pending</span>
+                            <strong>{formatMoney(activePending)}</strong>
+                          </div>
+                          <div>
+                            <span>Class</span>
+                            <strong>{activeIsLiability ? 'Liability' : 'Asset'}</strong>
+                          </div>
+                          <div className="accounts-mobile-grid--span2">
+                            <span>Health note</span>
+                            <strong>{activeHealth.healthNote}</strong>
+                          </div>
+                          {row.latestReconciliation ? (
+                            <div className="accounts-mobile-grid--span2">
+                              <span>Latest reconciliation</span>
+                              <strong>
+                                {row.latestReconciliation.cycleMonth} ·{' '}
+                                {row.latestReconciliation.reconciled ? 'reconciled' : 'pending'} · delta{' '}
+                                {formatMoney(row.latestReconciliation.unmatchedDelta)}
+                              </strong>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+
+                      <div className="row-actions row-actions--accounts-mobile">
+                        {isEditing ? (
+                          <>
+                            <button type="button" className="btn btn-secondary btn--sm" onClick={() => void saveAccountEdit()}>
+                              Save
+                            </button>
+                            <button type="button" className="btn btn-ghost btn--sm" onClick={() => setAccountEditId(null)}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn--sm"
+                            onClick={() => {
+                              startAccountEdit(entry)
+                              ensureAccountExpanded(accountId)
+                            }}
+                          >
+                            Edit
+                          </button>
+                        )}
+                        <button type="button" className="btn btn-ghost btn--sm" onClick={() => void onDeleteAccount(entry._id)}>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          </>
+        )}
+      </article>
+
+      <article className="panel panel-insights">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Insights</p>
+            <h2>Intelligence & controls</h2>
+            <p className="panel-value">
+              {accountRiskSummary.critical} critical · {accountRiskSummary.warning} warning · {accountRiskSummary.watch} watch
+            </p>
+            <p className="subnote">
+              Forecast, allocation mix, transfer/reconciliation workflows, and audit-ready account activity in one panel.
+            </p>
+          </div>
+        </header>
 
         <section className="accounts-purpose-panel" aria-label="Account purpose allocation">
           <div className="accounts-purpose-head">
@@ -2230,248 +2748,6 @@ export function AccountsTab({
             </ul>
           )}
         </section>
-
-        {accounts.length === 0 ? (
-          <p className="empty-state">No accounts added yet.</p>
-        ) : visibleAccounts.length === 0 ? (
-          <p className="empty-state">No accounts match this filter.</p>
-        ) : (
-          <>
-            <p className="subnote">
-              Showing {visibleAccounts.length} of {accounts.length} account{accounts.length === 1 ? '' : 's'}.
-            </p>
-            <div className="table-wrap table-wrap--card">
-              <table className="data-table data-table--accounts" data-testid="accounts-table">
-                <caption className="sr-only">Account entries</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Account</th>
-                    <th scope="col">Purpose & type</th>
-                    <th scope="col">Balances</th>
-                    <th scope="col">Health</th>
-                    <th scope="col">Class</th>
-                    <th scope="col">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleAccounts.map((row) => {
-                    const { entry } = row
-                    const isEditing = accountEditId === entry._id
-                    const draftLedger = parseFloatOrZero(accountEditDraft.ledgerBalance)
-                    const draftPending = parseFloatOrZero(accountEditDraft.pendingBalance)
-                    const draftBalances = {
-                      availableBalance: roundCurrency(draftLedger + draftPending),
-                      ledgerBalance: roundCurrency(draftLedger),
-                      pendingBalance: roundCurrency(draftPending),
-                    }
-                    const forecastBalanceShift = roundCurrency(draftBalances.availableBalance - row.availableBalance)
-                    const previewForecast: AccountForecastSummary = {
-                      ...row.forecast,
-                      minProjectedBalance: roundCurrency(row.forecast.minProjectedBalance + forecastBalanceShift),
-                      projectedEnd14: roundCurrency(row.forecast.projectedEnd14 + forecastBalanceShift),
-                      projectedEnd30: roundCurrency(row.forecast.projectedEnd30 + forecastBalanceShift),
-                    }
-                    const previewHealth = evaluateHealth(
-                      { ...entry, type: accountEditDraft.type, liquid: accountEditDraft.liquid },
-                      draftBalances,
-                      row.latestReconciliation,
-                      row.trend.windows[30],
-                      previewForecast,
-                    )
-                    const previewPurpose = accountEditDraft.purpose
-                    const activeHealth = isEditing ? previewHealth : row
-                    const activePurpose = isEditing ? previewPurpose : row.purpose
-                    const activeAvailable = isEditing ? draftBalances.availableBalance : row.availableBalance
-                    const activeLedger = isEditing ? draftBalances.ledgerBalance : row.ledgerBalance
-                    const activePending = isEditing ? draftBalances.pendingBalance : row.pendingBalance
-                    const activeIsLiability =
-                      isEditing ? accountEditDraft.type === 'debt' || activeAvailable < 0 : row.isLiability
-
-                    return (
-                      <tr key={entry._id} className={isEditing ? 'table-row--editing' : undefined}>
-                        <td>
-                          {isEditing ? (
-                            <input
-                              className="inline-input"
-                              value={accountEditDraft.name}
-                              onChange={(event) =>
-                                setAccountEditDraft((prev) => ({
-                                  ...prev,
-                                  name: event.target.value,
-                                }))
-                              }
-                            />
-                          ) : (
-                            <div className="accounts-row-title">
-                              <strong>{entry.name}</strong>
-                              <small>{entry.liquid ? 'liquid enabled' : 'non-liquid'}</small>
-                            </div>
-                          )}
-                        </td>
-
-                        <td>
-                          {isEditing ? (
-                            <div className="accounts-inline-grid">
-                              <select
-                                className="inline-select"
-                                value={accountEditDraft.type}
-                                onChange={(event) => {
-                                  const nextType = event.target.value as AccountType
-                                  setAccountEditDraft((prev) => ({
-                                    ...prev,
-                                    type: nextType,
-                                    purpose: nextType === 'debt' ? 'debt' : prev.purpose === 'debt' ? 'spending' : prev.purpose,
-                                  }))
-                                }}
-                              >
-                                {accountTypeOptions.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <select
-                                className="inline-select"
-                                value={accountEditDraft.purpose}
-                                onChange={(event) =>
-                                  setAccountEditDraft((prev) => ({
-                                    ...prev,
-                                    purpose: event.target.value as AccountPurpose,
-                                  }))
-                                }
-                              >
-                                {accountPurposeOptions.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ) : (
-                            <div className="accounts-row-pills">
-                              <span className={purposeColorClass(activePurpose)}>{accountPurposeLabel(activePurpose)}</span>
-                              <span className="pill pill--neutral">{accountTypeLabel(entry.type)}</span>
-                            </div>
-                          )}
-                        </td>
-
-                        <td className={`table-amount ${activeAvailable >= 0 ? 'amount-positive' : 'amount-negative'}`}>
-                          {isEditing ? (
-                            <div className="accounts-inline-grid accounts-inline-grid--balances">
-                              <label>
-                                <span>Ledger</span>
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  inputMode="decimal"
-                                  step="0.01"
-                                  value={accountEditDraft.ledgerBalance}
-                                  onChange={(event) =>
-                                    setAccountEditDraft((prev) => ({
-                                      ...prev,
-                                      ledgerBalance: event.target.value,
-                                    }))
-                                  }
-                                />
-                              </label>
-                              <label>
-                                <span>Pending</span>
-                                <input
-                                  className="inline-input"
-                                  type="number"
-                                  inputMode="decimal"
-                                  step="0.01"
-                                  value={accountEditDraft.pendingBalance}
-                                  onChange={(event) =>
-                                    setAccountEditDraft((prev) => ({
-                                      ...prev,
-                                      pendingBalance: event.target.value,
-                                    }))
-                                  }
-                                />
-                              </label>
-                              <p className="subnote">Available {formatMoney(activeAvailable)}</p>
-                            </div>
-                          ) : (
-                            <div className="accounts-balance-stack">
-                              <strong>{formatMoney(activeAvailable)}</strong>
-                              <small>
-                                Ledger {formatMoney(activeLedger)} · Pending {formatMoney(activePending)}
-                              </small>
-                            </div>
-                          )}
-                        </td>
-
-                        <td>
-                          <div className="accounts-health">
-                            <span className={healthClass(activeHealth.healthStatus)}>
-                              {activeHealth.healthStatus} {activeHealth.healthScore}/100
-                            </span>
-                            <small>{activeHealth.healthNote}</small>
-                            {!isEditing && row.latestReconciliation ? (
-                              <small>
-                                {row.latestReconciliation.cycleMonth} ·{' '}
-                                {row.latestReconciliation.reconciled ? 'reconciled' : 'pending'} · delta{' '}
-                                {formatMoney(row.latestReconciliation.unmatchedDelta)}
-                              </small>
-                            ) : null}
-                          </div>
-                        </td>
-
-                        <td>
-                          {isEditing ? (
-                            <label className="checkbox-row" htmlFor={`account-edit-liquid-${entry._id}`}>
-                              <input
-                                id={`account-edit-liquid-${entry._id}`}
-                                type="checkbox"
-                                checked={accountEditDraft.liquid}
-                                onChange={(event) =>
-                                  setAccountEditDraft((prev) => ({
-                                    ...prev,
-                                    liquid: event.target.checked,
-                                  }))
-                                }
-                              />
-                              <span className={activeIsLiability ? 'pill pill--critical' : 'pill pill--good'}>
-                                {activeIsLiability ? 'liability' : 'asset'}
-                              </span>
-                            </label>
-                          ) : (
-                            <span className={activeIsLiability ? 'pill pill--critical' : 'pill pill--good'}>
-                              {activeIsLiability ? 'liability' : 'asset'}
-                            </span>
-                          )}
-                        </td>
-
-                        <td>
-                          <div className="row-actions">
-                            {isEditing ? (
-                              <>
-                                <button type="button" className="btn btn-secondary btn--sm" onClick={() => void saveAccountEdit()}>
-                                  Save
-                                </button>
-                                <button type="button" className="btn btn-ghost btn--sm" onClick={() => setAccountEditId(null)}>
-                                  Cancel
-                                </button>
-                              </>
-                            ) : (
-                              <button type="button" className="btn btn-secondary btn--sm" onClick={() => startAccountEdit(entry)}>
-                                Edit
-                              </button>
-                            )}
-                            <button type="button" className="btn btn-ghost btn--sm" onClick={() => void onDeleteAccount(entry._id)}>
-                              Remove
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
       </article>
     </section>
   )

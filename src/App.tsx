@@ -1025,6 +1025,8 @@ function App() {
               loans={loans}
               loanEvents={loanEvents}
               accounts={accounts}
+              accountTransfers={accountTransfers}
+              accountReconciliationChecks={accountReconciliationChecks}
               goals={goals}
               purchases={purchases}
               cycleAuditLogs={cycleAuditLogs}

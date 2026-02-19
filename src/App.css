@@ -2254,6 +2254,10 @@ h2 {
   grid-column: span 8;
 }
 
+.accounts-tab-shell .panel-insights {
+  grid-column: span 12;
+}
+
 .accounts-tab-shell .panel-header {
   gap: 1rem;
 }
@@ -2292,6 +2296,18 @@ h2 {
   font-size: 0.86rem;
   line-height: 1.52;
   max-width: none;
+}
+
+.accounts-tab-shell .panel-insights > .subnote {
+  margin-top: 0.25rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  max-width: none;
+}
+
+.accounts-tab-shell .panel-insights .accounts-phase2-grid,
+.accounts-tab-shell .panel-insights .accounts-phase3-grid {
+  grid-template-columns: 1fr;
 }
 
 .accounts-summary-strip {
@@ -2820,6 +2836,138 @@ h2 {
 .data-table--accounts th:nth-child(6),
 .data-table--accounts td:nth-child(6) {
   width: 15%;
+}
+
+.accounts-desktop-table {
+  display: block;
+}
+
+.accounts-mobile-list {
+  display: none;
+  gap: 0.62rem;
+}
+
+.accounts-mobile-item {
+  border-radius: 0.92rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  overflow: clip;
+}
+
+.accounts-mobile-item--editing {
+  border-color: color-mix(in oklab, var(--tone-finance) 45%, var(--stroke));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--tone-finance) 26%, transparent);
+}
+
+.accounts-mobile-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0.76rem 0.8rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.62rem;
+  cursor: pointer;
+}
+
+.accounts-mobile-toggle:hover {
+  background: color-mix(in oklab, var(--surface-card) 90%, var(--tone-finance) 10%);
+}
+
+.accounts-mobile-summary-main {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.accounts-mobile-summary-main strong {
+  font-size: 0.96rem;
+}
+
+.accounts-mobile-summary-main small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.accounts-mobile-summary-metrics {
+  display: grid;
+  gap: 0.24rem;
+  justify-items: end;
+  text-align: right;
+}
+
+.accounts-mobile-summary-metrics > .amount-positive,
+.accounts-mobile-summary-metrics > .amount-negative {
+  font-size: 0.94rem;
+  font-weight: 730;
+}
+
+.accounts-mobile-content {
+  border-top: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  padding: 0.74rem 0.8rem 0.84rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.accounts-mobile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.accounts-mobile-grid > div {
+  border-radius: 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 96%, white 4%);
+  padding: 0.45rem 0.52rem;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.accounts-mobile-grid span {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.accounts-mobile-grid strong {
+  font-size: 0.84rem;
+}
+
+.accounts-mobile-grid--span2 {
+  grid-column: 1 / -1;
+}
+
+.accounts-mobile-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.accounts-mobile-edit-field {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.accounts-mobile-edit-field span {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.accounts-mobile-edit-field--span2 {
+  grid-column: 1 / -1;
+}
+
+.row-actions--accounts-mobile {
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .accounts-row-title {
@@ -6651,7 +6799,11 @@ tbody td {
   }
 
   .accounts-tab-shell .panel-list {
-    grid-column: span 9;
+    grid-column: span 5;
+  }
+
+  .accounts-tab-shell .panel-insights {
+    grid-column: span 4;
   }
 
   .bills-tab-shell .panel-form {
@@ -7008,12 +7160,29 @@ tbody td {
   }
 
   .accounts-tab-shell .table-wrap--card {
-    overflow-x: auto;
+    overflow-x: hidden;
   }
 
-  .data-table--accounts {
-    min-width: 62rem;
-    table-layout: auto;
+  .accounts-desktop-table {
+    display: none;
+  }
+
+  .accounts-mobile-list {
+    display: grid;
+  }
+
+  .accounts-mobile-toggle {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .accounts-mobile-summary-metrics {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .accounts-mobile-edit-grid {
+    grid-template-columns: 1fr;
   }
 
   .accounts-summary-strip,
@@ -7227,6 +7396,10 @@ tbody td {
 
   .data-table--accounts {
     min-width: 38rem;
+  }
+
+  .accounts-mobile-grid {
+    grid-template-columns: 1fr;
   }
 
   .accounts-inline-grid,
