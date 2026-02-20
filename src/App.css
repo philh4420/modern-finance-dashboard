@@ -6229,6 +6229,291 @@ tbody td {
   color: var(--text-muted);
 }
 
+.reconcile-tab-shell {
+  align-items: stretch;
+  gap: clamp(1rem, 1vw, 1.34rem);
+}
+
+.reconcile-tab-shell .panel {
+  padding: clamp(1.06rem, 0.95vw + 0.54rem, 1.36rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1.02rem;
+  min-height: 100%;
+}
+
+.reconcile-tab-shell .panel-header {
+  gap: 1rem;
+}
+
+.reconcile-tab-shell .panel-header > div {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.reconcile-tab-shell .panel-header h2 {
+  margin: 0.06rem 0 0;
+  font-size: clamp(1.16rem, 0.92rem + 0.56vw, 1.5rem);
+  line-height: 1.18;
+  letter-spacing: -0.018em;
+}
+
+.reconcile-tab-shell .panel-kicker {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+.reconcile-tab-shell .panel-value {
+  margin: 0.1rem 0 0;
+  font-size: 1.03rem;
+  line-height: 1.4;
+  font-weight: 730;
+}
+
+.reconcile-tab-shell .subnote {
+  margin-top: 0.42rem;
+  font-size: 0.86rem;
+  line-height: 1.52;
+  max-width: none;
+}
+
+.panel-reconcile-strip {
+  grid-column: span 12;
+}
+
+.panel-reconcile-queue {
+  grid-column: span 3;
+}
+
+.panel-reconcile-workspace {
+  grid-column: span 6;
+}
+
+.panel-reconcile-summary {
+  grid-column: span 3;
+}
+
+.reconcile-summary-strip {
+  display: grid;
+  gap: 0.62rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.reconcile-summary-card {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 11%, transparent), transparent 64%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 38%, transparent),
+    0 16px 34px -34px color-mix(in oklab, black 44%, transparent);
+  padding: 0.74rem 0.8rem;
+  display: grid;
+  gap: 0.24rem;
+  min-height: 7.2rem;
+}
+
+.reconcile-summary-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.reconcile-summary-card strong {
+  font-size: clamp(1.08rem, 0.95rem + 0.34vw, 1.28rem);
+  letter-spacing: -0.01em;
+}
+
+.reconcile-summary-card small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.34;
+}
+
+.reconcile-filter-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.reconcile-filter-toggle {
+  align-self: end;
+}
+
+.reconcile-table-wrap {
+  overflow-x: hidden;
+}
+
+.data-table--reconcile {
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.data-table--reconcile th,
+.data-table--reconcile td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.data-table--reconcile th:nth-child(1),
+.data-table--reconcile td:nth-child(1) {
+  width: 5%;
+}
+
+.data-table--reconcile th:nth-child(2),
+.data-table--reconcile td:nth-child(2) {
+  width: 18%;
+}
+
+.data-table--reconcile th:nth-child(3),
+.data-table--reconcile td:nth-child(3) {
+  width: 11%;
+}
+
+.data-table--reconcile th:nth-child(4),
+.data-table--reconcile td:nth-child(4) {
+  width: 14%;
+}
+
+.data-table--reconcile th:nth-child(5),
+.data-table--reconcile td:nth-child(5) {
+  width: 12%;
+}
+
+.data-table--reconcile th:nth-child(6),
+.data-table--reconcile td:nth-child(6) {
+  width: 10%;
+}
+
+.data-table--reconcile th:nth-child(7),
+.data-table--reconcile td:nth-child(7) {
+  width: 10%;
+}
+
+.data-table--reconcile th:nth-child(8),
+.data-table--reconcile td:nth-child(8) {
+  width: 20%;
+}
+
+.data-table--reconcile tbody td {
+  padding-top: 0.9rem;
+  padding-bottom: 0.9rem;
+  font-size: 0.92rem;
+  line-height: 1.38;
+}
+
+.row-actions--reconcile {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.28rem;
+}
+
+.row-actions--reconcile .btn {
+  width: 100%;
+}
+
+.reconcile-mobile-list {
+  display: none;
+}
+
+.reconcile-mobile-item {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  overflow: hidden;
+}
+
+.reconcile-mobile-item summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.64rem;
+  align-items: flex-start;
+  cursor: pointer;
+  padding: 0.8rem 0.86rem;
+}
+
+.reconcile-mobile-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.reconcile-mobile-item[open] summary {
+  border-bottom: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+}
+
+.reconcile-mobile-summary-main {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.reconcile-mobile-summary-main strong {
+  font-size: 0.95rem;
+}
+
+.reconcile-mobile-summary-main small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.reconcile-mobile-summary-metrics {
+  display: grid;
+  justify-items: end;
+  gap: 0.28rem;
+}
+
+.reconcile-mobile-amount {
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.reconcile-mobile-content {
+  padding: 0.76rem 0.84rem 0.86rem;
+  display: grid;
+  gap: 0.74rem;
+}
+
+.reconcile-mobile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.reconcile-mobile-grid > div {
+  border-radius: 0.72rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.46rem 0.52rem;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.reconcile-mobile-grid span {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.reconcile-mobile-grid strong {
+  font-size: 0.84rem;
+}
+
+.row-actions--reconcile-mobile {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.34rem;
+}
+
+.row-actions--reconcile-mobile .btn {
+  width: 100%;
+}
+
 .loans-tab-shell {
   align-items: stretch;
   gap: clamp(1rem, 1vw, 1.34rem);
@@ -6779,6 +7064,9 @@ tbody td {
   .panel-audit-events,
   .panel-snapshot,
   .purchases-panel-insights,
+  .panel-reconcile-queue,
+  .panel-reconcile-workspace,
+  .panel-reconcile-summary,
   .panel-form,
   .panel-list {
     grid-column: span 12;
@@ -6837,6 +7125,18 @@ tbody td {
   .purchases-panel-insights {
     grid-column: span 3;
   }
+
+  .panel-reconcile-queue {
+    grid-column: span 3;
+  }
+
+  .panel-reconcile-workspace {
+    grid-column: span 7;
+  }
+
+  .panel-reconcile-summary {
+    grid-column: span 2;
+  }
 }
 
 @media (max-width: 860px) {
@@ -6893,6 +7193,25 @@ tbody td {
     text-align: left;
     max-width: none;
     margin: 0;
+  }
+
+  .reconcile-tab-shell .panel-header {
+    flex-direction: column;
+    gap: 0.58rem;
+  }
+
+  .reconcile-tab-shell .panel-value {
+    text-align: left;
+    max-width: none;
+    margin: 0;
+  }
+
+  .reconcile-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reconcile-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .loan-intelligence-grid,
@@ -7159,6 +7478,15 @@ tbody td {
     table-layout: auto;
   }
 
+  .reconcile-table-wrap {
+    display: none;
+  }
+
+  .reconcile-mobile-list {
+    display: grid;
+    gap: 0.54rem;
+  }
+
   .accounts-tab-shell .table-wrap--card {
     overflow-x: hidden;
   }
@@ -7409,6 +7737,13 @@ tbody td {
 
   .data-table--accounts-reconciliation {
     min-width: 34rem;
+  }
+
+  .reconcile-summary-strip,
+  .reconcile-filter-grid,
+  .reconcile-mobile-grid,
+  .row-actions--reconcile-mobile {
+    grid-template-columns: 1fr;
   }
 
   .forecast-axis-labels {

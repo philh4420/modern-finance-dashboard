@@ -294,6 +294,8 @@ function App() {
 
   const reconciliationSection = useReconciliationSection({
     purchases,
+    accounts,
+    cards,
     userId,
     onQueueMetric: queueMetricHandler,
     clearError,
@@ -850,6 +852,8 @@ function App() {
             filter={reconciliationSection.filter}
             setFilter={reconciliationSection.setFilter}
             categories={reconciliationSection.categories}
+            sourceOptions={reconciliationSection.sourceOptions}
+            summary={reconciliationSection.summary}
             filteredPurchases={reconciliationSection.filteredPurchases}
             selectedSet={reconciliationSection.selectedSet}
             selectedCount={reconciliationSection.selectedCount}
@@ -862,6 +866,12 @@ function App() {
             runBulkStatus={reconciliationSection.runBulkStatus}
             runBulkCategory={reconciliationSection.runBulkCategory}
             runBulkDelete={reconciliationSection.runBulkDelete}
+            runQuickMatch={reconciliationSection.runQuickMatch}
+            runQuickSplit={reconciliationSection.runQuickSplit}
+            runQuickMarkReviewed={reconciliationSection.runQuickMarkReviewed}
+            runQuickExclude={reconciliationSection.runQuickExclude}
+            runQuickUndo={reconciliationSection.runQuickUndo}
+            undoByPurchaseId={reconciliationSection.undoByPurchaseId}
             queue={reconciliationSection.queue}
             formatMoney={formatSection.formatMoney}
             dateLabel={dateLabel}
