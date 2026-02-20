@@ -22,6 +22,7 @@ import type {
   MonthCloseSnapshotEntry,
   MonthlyCycleRunEntry,
   PurchaseEntry,
+  PurchaseMonthCloseRunEntry,
   Summary,
 } from './financeTypes'
 import type { PrintReportConfig } from './PrintReportModal'
@@ -54,6 +55,7 @@ type PrintReportProps = {
   purchases: PurchaseEntry[]
   cycleAuditLogs: CycleAuditLogEntry[]
   monthlyCycleRuns: MonthlyCycleRunEntry[]
+  purchaseMonthCloseRuns: PurchaseMonthCloseRunEntry[]
   financeAuditEvents: FinanceAuditEventEntry[]
   formatMoney: (value: number) => string
   cycleDateLabel: Intl.DateTimeFormat
@@ -96,6 +98,63 @@ const parseAuditJson = <T,>(value?: string): T | undefined => {
   } catch {
     return undefined
   }
+}
+
+const resolveAuditSourceLabel = (event: FinanceAuditEventEntry) => {
+  const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+  return typeof metadata?.source === 'string' && metadata.source.trim().length > 0 ? metadata.source.trim() : 'manual'
+}
+
+const resolveAuditActorLabel = (event: FinanceAuditEventEntry) => {
+  const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+  const actorUserId =
+    typeof metadata?.actorUserId === 'string' && metadata.actorUserId.trim().length > 0
+      ? metadata.actorUserId.trim()
+      : event.userId
+  return actorUserId ? `self:${actorUserId.slice(0, 8)}` : 'self'
+}
+
+const summarizeReconciliationAuditTransition = (event: FinanceAuditEventEntry) => {
+  const before = parseAuditJson<Record<string, unknown>>(event.beforeJson)
+  const after = parseAuditJson<Record<string, unknown>>(event.afterJson)
+  const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+
+  const segments: string[] = []
+  const beforeStatus = typeof before?.reconciliationStatus === 'string' ? before.reconciliationStatus : null
+  const afterStatus = typeof after?.reconciliationStatus === 'string' ? after.reconciliationStatus : null
+  if (beforeStatus && afterStatus && beforeStatus !== afterStatus) {
+    segments.push(`status ${beforeStatus} -> ${afterStatus}`)
+  }
+
+  const beforeCategory = typeof before?.category === 'string' ? before.category : null
+  const afterCategory = typeof after?.category === 'string' ? after.category : null
+  if (beforeCategory && afterCategory && beforeCategory !== afterCategory) {
+    segments.push(`category ${beforeCategory} -> ${afterCategory}`)
+  }
+
+  const beforeAmount = typeof before?.amount === 'number' ? before.amount : null
+  const afterAmount = typeof after?.amount === 'number' ? after.amount : null
+  if (beforeAmount !== null && afterAmount !== null && Math.abs(beforeAmount - afterAmount) > 0.009) {
+    segments.push(`amount ${beforeAmount.toFixed(2)} -> ${afterAmount.toFixed(2)}`)
+  }
+
+  if (segments.length > 0) {
+    return segments.join(' · ')
+  }
+
+  if (event.entityType === 'purchase_month_close') {
+    const summary = parseAuditJson<Record<string, unknown>>(
+      typeof metadata?.summaryJson === 'string' ? metadata.summaryJson : undefined,
+    )
+    const pendingCount = typeof summary?.pendingCount === 'number' ? summary.pendingCount : null
+    const duplicateCount = typeof summary?.duplicateCount === 'number' ? summary.duplicateCount : null
+    const anomalyCount = typeof summary?.anomalyCount === 'number' ? summary.anomalyCount : null
+    if (pendingCount !== null || duplicateCount !== null || anomalyCount !== null) {
+      return `pending ${pendingCount ?? 0} · duplicates ${duplicateCount ?? 0} · anomalies ${anomalyCount ?? 0}`
+    }
+  }
+
+  return 'state updated'
 }
 
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`
@@ -556,6 +615,7 @@ export function PrintReport({
   purchases,
   cycleAuditLogs,
   monthlyCycleRuns,
+  purchaseMonthCloseRuns,
   financeAuditEvents,
   formatMoney,
   cycleDateLabel,
@@ -852,6 +912,9 @@ export function PrintReport({
         monthlyCycleRuns: monthlyCycleRuns
           .filter((run) => inMonthRange(run.cycleKey, config.startMonth, config.endMonth))
           .sort((a, b) => b.ranAt - a.ranAt),
+        purchaseMonthCloseRuns: purchaseMonthCloseRuns
+          .filter((run) => inMonthRange(run.monthKey, config.startMonth, config.endMonth))
+          .sort((a, b) => b.ranAt - a.ranAt),
         financeAuditEvents: financeAuditEvents
           .filter((event) => {
             const key = new Date(event.createdAt).toISOString().slice(0, 7)
@@ -903,6 +966,192 @@ export function PrintReport({
       }
     })
     .slice(0, 160)
+
+  const purchaseMonthCloseRunsInRange = purchaseMonthCloseRuns
+    .filter((run) => inMonthRange(run.monthKey, config.startMonth, config.endMonth))
+    .sort((left, right) => {
+      const byMonth = left.monthKey.localeCompare(right.monthKey)
+      if (byMonth !== 0) return byMonth
+      return left.ranAt - right.ranAt
+    })
+
+  const latestCloseRunByMonth = purchaseMonthCloseRunsInRange.reduce((map, run) => {
+    const current = map.get(run.monthKey)
+    if (!current || run.ranAt > current.ranAt) {
+      map.set(run.monthKey, run)
+    }
+    return map
+  }, new Map<string, PurchaseMonthCloseRunEntry>())
+
+  const accountReconciliationByMonth = reconciliationRowsInRange.reduce((map, entry) => {
+    const cycleMonth = /^\d{4}-\d{2}$/.test(entry.cycleMonth)
+      ? entry.cycleMonth
+      : monthKeyFromTimestamp(entry.updatedAt ?? entry.createdAt)
+    const current = map.get(cycleMonth) ?? {
+      opening: 0,
+      closing: 0,
+      checks: 0,
+      reconciled: 0,
+      unmatchedDeltaAbs: 0,
+    }
+    current.opening += entry.statementStartBalance
+    current.closing += entry.statementEndBalance
+    current.checks += 1
+    if (entry.reconciled) current.reconciled += 1
+    current.unmatchedDeltaAbs += Math.abs(entry.unmatchedDelta)
+    map.set(cycleMonth, current)
+    return map
+  }, new Map<string, { opening: number; closing: number; checks: number; reconciled: number; unmatchedDeltaAbs: number }>())
+
+  const reconciliationMonthKeys = Array.from(
+    new Set([
+      ...sortedMonthKeys,
+      ...Array.from(latestCloseRunByMonth.keys()),
+      ...Array.from(accountReconciliationByMonth.keys()),
+    ]),
+  ).sort()
+
+  const reconciliationMonthRows = reconciliationMonthKeys.map((monthKey) => {
+    const monthPurchases = monthGroups.get(monthKey) ?? []
+    const pendingCount = monthPurchases.filter((purchase) => (purchase.reconciliationStatus ?? 'posted') === 'pending').length
+    const postedCount = monthPurchases.filter((purchase) => (purchase.reconciliationStatus ?? 'posted') === 'posted').length
+    const reconciledCount = monthPurchases.filter((purchase) => (purchase.reconciliationStatus ?? 'posted') === 'reconciled').length
+    const pendingAmount = roundCurrency(
+      monthPurchases
+        .filter((purchase) => (purchase.reconciliationStatus ?? 'posted') === 'pending')
+        .reduce((sum, purchase) => sum + purchase.amount, 0),
+    )
+    const closeRun = latestCloseRunByMonth.get(monthKey)
+    const accountMonth = accountReconciliationByMonth.get(monthKey)
+
+    return {
+      monthKey,
+      openingBalance: accountMonth ? roundCurrency(accountMonth.opening) : null,
+      closingBalance: accountMonth ? roundCurrency(accountMonth.closing) : null,
+      matchedCount: postedCount + reconciledCount,
+      unmatchedCount: pendingCount,
+      pendingAmount,
+      unresolvedDeltaAbs: roundCurrency(accountMonth?.unmatchedDeltaAbs ?? 0),
+      accountChecks: accountMonth?.checks ?? 0,
+      accountReconciled: accountMonth?.reconciled ?? 0,
+      closeStatus: closeRun?.status ?? null,
+      closeRanAt: closeRun?.ranAt ?? null,
+      closeFailureReason: closeRun?.failureReason ?? null,
+      closePendingCount: closeRun?.pendingCount ?? pendingCount,
+      closeDuplicateCount: closeRun?.duplicateCount ?? 0,
+      closeAnomalyCount: closeRun?.anomalyCount ?? 0,
+      closeMissingCategoryCount: closeRun?.missingCategoryCount ?? 0,
+    }
+  })
+
+  const reconcileMatchedCount = purchasesByStatus.posted + purchasesByStatus.reconciled
+  const reconcileUnmatchedCount = purchasesByStatus.pending
+  const reconcileUnresolvedCount =
+    purchasesByStatus.pending + rangeKpis.duplicateCount + rangeKpis.anomalyCount + rangeKpis.missingCategoryCount
+  const reconcileUnresolvedValue = roundCurrency(pendingPurchasesTotal + accountRangeTotals.unmatchedDeltaAbs)
+  const reconcileMatchAccuracyRate =
+    rangeKpis.purchaseCount > 0
+      ? clamp(
+          1 -
+            (rangeKpis.pendingCount +
+              rangeKpis.duplicateCount +
+              rangeKpis.anomalyCount +
+              Math.ceil(rangeKpis.missingCategoryCount * 0.5)) /
+              rangeKpis.purchaseCount,
+          0,
+          1,
+        )
+      : 1
+  const reconcileCloseCompletedCount = purchaseMonthCloseRunsInRange.filter((run) => run.status === 'completed').length
+  const reconcileCloseFailedCount = purchaseMonthCloseRunsInRange.filter((run) => run.status === 'failed').length
+  const reconcileCloseSuccessRate =
+    reconcileCloseCompletedCount + reconcileCloseFailedCount > 0
+      ? reconcileCloseCompletedCount / (reconcileCloseCompletedCount + reconcileCloseFailedCount)
+      : 1
+
+  const reconciliationAuditRows = financeAuditEvents
+    .filter((event) => event.entityType === 'purchase' || event.entityType === 'purchase_month_close')
+    .filter((event) => {
+      const monthKey =
+        event.entityType === 'purchase_month_close' && /^\d{4}-\d{2}$/.test(event.entityId)
+          ? event.entityId
+          : monthKeyFromTimestamp(event.createdAt)
+      return inMonthRange(monthKey, config.startMonth, config.endMonth)
+    })
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .map((event) => {
+      const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+      const summary = parseAuditJson<Record<string, unknown>>(
+        typeof metadata?.summaryJson === 'string' ? metadata.summaryJson : undefined,
+      )
+      const summaryPending = typeof summary?.pendingCount === 'number' ? summary.pendingCount : 0
+      const summaryDuplicates = typeof summary?.duplicateCount === 'number' ? summary.duplicateCount : 0
+      const summaryAnomalies = typeof summary?.anomalyCount === 'number' ? summary.anomalyCount : 0
+      const summaryWarnings = summaryPending + summaryDuplicates + summaryAnomalies
+
+      const severity = (() => {
+        if (event.action.includes('failed')) return 'critical'
+        if (summaryWarnings > 0) return 'warning'
+        if (event.action.includes('duplicate') || event.action.includes('exclude') || event.action.includes('anomaly')) return 'warning'
+        return 'info'
+      })()
+
+      return {
+        id: String(event._id),
+        createdAt: event.createdAt,
+        monthKey:
+          event.entityType === 'purchase_month_close' && /^\d{4}-\d{2}$/.test(event.entityId)
+            ? event.entityId
+            : monthKeyFromTimestamp(event.createdAt),
+        action: event.action,
+        source: resolveAuditSourceLabel(event),
+        actor: resolveAuditActorLabel(event),
+        detail: summarizeReconciliationAuditTransition(event),
+        severity,
+      }
+    })
+
+  const reconciliationExceptionHistoryRows = [
+    ...reconciliationMonthRows
+      .filter(
+        (row) =>
+          row.closeStatus === 'failed' ||
+          row.unmatchedCount > 0 ||
+          row.closePendingCount > 0 ||
+          row.closeDuplicateCount > 0 ||
+          row.closeAnomalyCount > 0 ||
+          row.closeMissingCategoryCount > 0 ||
+          row.unresolvedDeltaAbs > 0.009,
+      )
+      .map((row) => ({
+        id: `close-${row.monthKey}`,
+        createdAt: row.closeRanAt ?? new Date(`${row.monthKey}-28T12:00:00`).getTime(),
+        monthKey: row.monthKey,
+        source: 'month_close',
+        event:
+          row.closeStatus === 'failed'
+            ? 'close_failed'
+            : row.closeStatus === 'completed'
+              ? 'close_with_exceptions'
+              : 'open_exceptions',
+        detail:
+          row.closeStatus === 'failed'
+            ? row.closeFailureReason ?? 'Close failed'
+            : `pending ${row.closePendingCount} · duplicates ${row.closeDuplicateCount} · anomalies ${row.closeAnomalyCount} · missing category ${row.closeMissingCategoryCount}`,
+      })),
+    ...reconciliationAuditRows
+      .filter((row) => row.severity !== 'info')
+      .map((row) => ({
+        id: `audit-${row.id}`,
+        createdAt: row.createdAt,
+        monthKey: row.monthKey,
+        source: `${row.source}:${row.actor}`,
+        event: row.action,
+        detail: row.detail,
+      })),
+  ]
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, 140)
 
   const baselineRangeNet =
     summary.monthlyIncome * rangeMonths - summary.monthlyCommitments * rangeMonths - purchasesTotal
@@ -2090,26 +2339,132 @@ export function PrintReport({
               <strong>{formatPercent(rangeKpis.reconciliationCompletionRate)}</strong>
               <small>{rangeKpis.purchaseCount} purchases in selected range</small>
             </div>
-              <div className="print-kpi">
-                <p>Pending to reconcile</p>
-                <strong>{purchasesByStatus.pending}</strong>
-                <small>
-                Posted {purchasesByStatus.posted} · Reconciled {purchasesByStatus.reconciled} · {formatMoney(pendingPurchasesTotal)} pending value
-                </small>
-              </div>
             <div className="print-kpi">
-              <p>Missing categories</p>
-              <strong>{rangeKpis.missingCategoryCount}</strong>
-              <small>Potential categorization cleanup needed</small>
+              <p>Match accuracy</p>
+              <strong>{formatPercent(reconcileMatchAccuracyRate)}</strong>
+              <small>Quality-weighted from pending, duplicate, anomaly, and category gaps</small>
             </div>
             <div className="print-kpi">
-              <p>Quality flags</p>
-              <strong>{rangeKpis.duplicateCount + rangeKpis.anomalyCount}</strong>
+              <p>Duplicate rate</p>
+              <strong>{formatPercent(rangeKpis.purchaseCount > 0 ? rangeKpis.duplicateCount / rangeKpis.purchaseCount : 0)}</strong>
+              <small>{rangeKpis.duplicateCount} duplicate groups in range</small>
+            </div>
+            <div className="print-kpi">
+              <p>Anomaly rate</p>
+              <strong>{formatPercent(rangeKpis.purchaseCount > 0 ? rangeKpis.anomalyCount / rangeKpis.purchaseCount : 0)}</strong>
+              <small>{rangeKpis.anomalyCount} outlier rows detected</small>
+            </div>
+            <div className="print-kpi">
+              <p>Close success rate</p>
+              <strong>{formatPercent(reconcileCloseSuccessRate)}</strong>
+              <small>{reconcileCloseCompletedCount} completed · {reconcileCloseFailedCount} failed close runs</small>
+            </div>
+          </div>
+
+          <div className="print-kpi-grid">
+            <div className="print-kpi">
+              <p>Opening statement total</p>
+              <strong>{formatMoney(roundCurrency(accountRangeTotals.opening))}</strong>
+              <small>Summed from reconciliation statement starts in range</small>
+            </div>
+            <div className="print-kpi">
+              <p>Closing statement total</p>
+              <strong>{formatMoney(roundCurrency(accountRangeTotals.closing))}</strong>
+              <small>Summed from reconciliation statement ends in range</small>
+            </div>
+            <div className="print-kpi">
+              <p>Matched vs unmatched</p>
+              <strong>
+                {reconcileMatchedCount} / {reconcileUnmatchedCount}
+              </strong>
+              <small>matched (posted + reconciled) / unmatched (pending)</small>
+            </div>
+            <div className="print-kpi">
+              <p>Unresolved items</p>
+              <strong>{reconcileUnresolvedCount}</strong>
+              <small>{formatMoney(reconcileUnresolvedValue)} pending + unmatched delta exposure</small>
+            </div>
+            <div className="print-kpi">
+              <p>Exception rows</p>
+              <strong>{reconciliationExceptionHistoryRows.length}</strong>
               <small>
-                {rangeKpis.duplicateCount} duplicates · {rangeKpis.anomalyCount} anomalies
+                {purchasesByStatus.pending} pending · {rangeKpis.duplicateCount} duplicates · {rangeKpis.anomalyCount}{' '}
+                anomalies
               </small>
             </div>
           </div>
+
+          <h3 className="print-subhead">Month Close Outcomes (Range)</h3>
+          {reconciliationMonthRows.length === 0 ? (
+            <p className="print-subnote">No reconciliation close rows for selected range.</p>
+          ) : (
+            <div className="print-table-wrap">
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Month</th>
+                    <th scope="col">Opening</th>
+                    <th scope="col">Closing</th>
+                    <th scope="col">Matched</th>
+                    <th scope="col">Unmatched</th>
+                    <th scope="col">Unresolved value</th>
+                    <th scope="col">Close status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reconciliationMonthRows.map((row) => (
+                    <tr key={`reconcile-month-${row.monthKey}`}>
+                      <td>{row.monthKey}</td>
+                      <td className="table-amount">{row.openingBalance === null ? 'n/a' : formatMoney(row.openingBalance)}</td>
+                      <td className="table-amount">{row.closingBalance === null ? 'n/a' : formatMoney(row.closingBalance)}</td>
+                      <td>{row.matchedCount}</td>
+                      <td>
+                        {row.unmatchedCount}
+                        {row.accountChecks > 0
+                          ? ` · ${row.accountReconciled}/${row.accountChecks} account checks reconciled`
+                          : ''}
+                      </td>
+                      <td className="table-amount">{formatMoney(row.pendingAmount + row.unresolvedDeltaAbs)}</td>
+                      <td>
+                        {row.closeStatus ?? 'open'}
+                        {row.closeFailureReason ? ` (${row.closeFailureReason})` : ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h3 className="print-subhead">Exception History</h3>
+          {reconciliationExceptionHistoryRows.length === 0 ? (
+            <p className="print-subnote">No reconciliation exceptions in selected range.</p>
+          ) : (
+            <div className="print-table-wrap">
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th scope="col">When</th>
+                    <th scope="col">Month</th>
+                    <th scope="col">Source</th>
+                    <th scope="col">Event</th>
+                    <th scope="col">Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reconciliationExceptionHistoryRows.map((row) => (
+                    <tr key={`reconcile-exception-${row.id}`}>
+                      <td>{cycleDateLabel.format(new Date(row.createdAt))}</td>
+                      <td>{row.monthKey}</td>
+                      <td>{row.source}</td>
+                      <td>{row.event}</td>
+                      <td>{row.detail}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -2290,6 +2645,42 @@ export function PrintReport({
                       <td>{run.status}</td>
                       <td>
                         {run.updatedCards} cards / {run.updatedLoans} loans
+                      </td>
+                      <td>{cycleDateLabel.format(new Date(run.ranAt))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h3 className="print-subhead">Purchase Month Close Runs</h3>
+          {filteredAuditLogs.purchaseMonthCloseRuns.length === 0 ? (
+            <p className="print-subnote">No purchase month close runs in range.</p>
+          ) : (
+            <div className="print-table-wrap">
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Month</th>
+                    <th scope="col">Source</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Pending</th>
+                    <th scope="col">Quality flags</th>
+                    <th scope="col">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAuditLogs.purchaseMonthCloseRuns.map((run) => (
+                    <tr key={run._id}>
+                      <td>{run.monthKey}</td>
+                      <td>{run.source}</td>
+                      <td>{run.status}</td>
+                      <td>
+                        {run.pendingCount} ({formatMoney(run.pendingAmount)})
+                      </td>
+                      <td>
+                        {run.duplicateCount} dup · {run.anomalyCount} anomalies · {run.missingCategoryCount} missing
                       </td>
                       <td>{cycleDateLabel.format(new Date(run.ranAt))}</td>
                     </tr>

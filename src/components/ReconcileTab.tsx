@@ -1,5 +1,13 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import type { PurchaseEntry, PurchaseId, ReconciliationStatus } from './financeTypes'
+import { useMutation, useQuery } from 'convex/react'
+import { api } from '../../convex/_generated/api'
+import type {
+  FinanceAuditEventEntry,
+  PurchaseEntry,
+  PurchaseId,
+  PurchaseMonthCloseRunEntry,
+  ReconciliationStatus,
+} from './financeTypes'
 import type { OfflineQueueEntry } from '../hooks/useOfflineQueue'
 import {
   reconcileDefaultFilter,
@@ -16,6 +24,8 @@ type DuplicateConfirmationState = {
   match: ReconcileDuplicateMatch
   resolution: ReconcileDuplicateResolution
 }
+
+type MonthCloseConfirmMode = 'close' | 'retry'
 
 type ReconcileTabProps = {
   filter: ReconcileFilter
@@ -104,7 +114,76 @@ const queuePillClass = (status: OfflineQueueEntry['status']) =>
 const anomalyPillClass = (severity: ReconcileAnomalySignal['severity']) =>
   severity === 'critical' ? 'pill pill--critical' : 'pill pill--warning'
 
+const closeCheckPillClass = (status: 'pass' | 'warning' | 'blocker') => {
+  if (status === 'blocker') return 'pill pill--critical'
+  if (status === 'warning') return 'pill pill--warning'
+  return 'pill pill--good'
+}
+
 const confidenceLabel = (value: number) => `${Math.round(value * 100)}%`
+
+const parseAuditJson = <T,>(value?: string): T | undefined => {
+  if (!value) return undefined
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return undefined
+  }
+}
+
+const formatRate = (value: number) => `${Math.round(value * 100)}%`
+
+const monthPattern = /^\d{4}-\d{2}$/
+
+const summarizeAuditTransition = (event: FinanceAuditEventEntry) => {
+  const before = parseAuditJson<Record<string, unknown>>(event.beforeJson)
+  const after = parseAuditJson<Record<string, unknown>>(event.afterJson)
+  const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+
+  const pieces: string[] = []
+  const beforeStatus = typeof before?.reconciliationStatus === 'string' ? before.reconciliationStatus : null
+  const afterStatus = typeof after?.reconciliationStatus === 'string' ? after.reconciliationStatus : null
+  if (beforeStatus && afterStatus && beforeStatus !== afterStatus) {
+    pieces.push(`status ${beforeStatus} -> ${afterStatus}`)
+  }
+
+  const beforeCategory = typeof before?.category === 'string' ? before.category : null
+  const afterCategory = typeof after?.category === 'string' ? after.category : null
+  if (beforeCategory && afterCategory && beforeCategory !== afterCategory) {
+    pieces.push(`category ${beforeCategory} -> ${afterCategory}`)
+  }
+
+  const beforeAmount = typeof before?.amount === 'number' ? before.amount : null
+  const afterAmount = typeof after?.amount === 'number' ? after.amount : null
+  if (beforeAmount !== null && afterAmount !== null && Math.abs(beforeAmount - afterAmount) > 0.009) {
+    pieces.push(`amount ${beforeAmount.toFixed(2)} -> ${afterAmount.toFixed(2)}`)
+  }
+
+  if (pieces.length === 0) {
+    if (event.entityType === 'purchase_month_close') {
+      const source = typeof metadata?.source === 'string' ? metadata.source : 'manual'
+      const status = event.action.replaceAll('_', ' ')
+      return `${status} (${source})`
+    }
+    return 'state updated'
+  }
+
+  return pieces.join(' · ')
+}
+
+const resolveAuditSource = (event: FinanceAuditEventEntry) => {
+  const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+  return typeof metadata?.source === 'string' && metadata.source.trim().length > 0 ? metadata.source.trim() : 'manual'
+}
+
+const resolveAuditActor = (event: FinanceAuditEventEntry) => {
+  const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+  const actorUserId =
+    typeof metadata?.actorUserId === 'string' && metadata.actorUserId.trim().length > 0
+      ? metadata.actorUserId.trim()
+      : event.userId
+  return actorUserId ? `You (${actorUserId.slice(0, 8)}...)` : 'You'
+}
 
 export function ReconcileTab({
   filter,
@@ -152,6 +231,31 @@ export function ReconcileTab({
   const [activePurchaseRuleId, setActivePurchaseRuleId] = useState<string | null>(null)
   const [duplicateConfirmation, setDuplicateConfirmation] = useState<DuplicateConfirmationState | null>(null)
   const [isApplyingDuplicateAction, setIsApplyingDuplicateAction] = useState(false)
+  const [closeMonth, setCloseMonth] = useState(() => filter.month || new Date().toISOString().slice(0, 7))
+  const [monthCloseFeedback, setMonthCloseFeedback] = useState<string | null>(null)
+  const [monthCloseConfirmMode, setMonthCloseConfirmMode] = useState<MonthCloseConfirmMode | null>(null)
+  const [isRunningMonthClose, setIsRunningMonthClose] = useState(false)
+  const [auditLimit, setAuditLimit] = useState<25 | 50 | 100>(50)
+
+  const runPurchaseMonthClose = useMutation(api.finance.runPurchaseMonthClose)
+  const closePrecheck = useQuery(
+    api.finance.getPurchaseMonthClosePrecheck,
+    monthPattern.test(closeMonth) ? { month: closeMonth } : 'skip',
+  )
+  const recentCloseRunsQuery = useQuery(api.finance.getRecentPurchaseMonthCloseRuns, { limit: 12 })
+  const purchaseHistorySummary = useQuery(api.finance.getPurchaseHistorySummary, {
+    windowDays: 90,
+  })
+  const reconciliationAuditEventsQuery = useQuery(api.finance.getRecentReconciliationAuditEvents, {
+    month: monthPattern.test(closeMonth) ? closeMonth : undefined,
+    limit: auditLimit,
+  })
+
+  const recentCloseRuns = useMemo(() => recentCloseRunsQuery ?? [], [recentCloseRunsQuery])
+  const reconciliationAuditEvents = useMemo(
+    () => reconciliationAuditEventsQuery ?? [],
+    [reconciliationAuditEventsQuery],
+  )
 
   const viewTotal = useMemo(() => filteredPurchases.reduce((sum, purchase) => sum + purchase.amount, 0), [filteredPurchases])
   const sourceLabelByKey = useMemo(
@@ -191,6 +295,121 @@ export function ReconcileTab({
 
     return counters
   }, [anomalySignals])
+
+  const closeRunSummary = useMemo(() => {
+    const completed = recentCloseRuns.filter((run) => run.status === 'completed').length
+    const failed = recentCloseRuns.filter((run) => run.status === 'failed').length
+    const successRate = completed + failed > 0 ? completed / (completed + failed) : 1
+    const latest = [...recentCloseRuns].sort((left, right) => right.ranAt - left.ranAt)[0] ?? null
+    return {
+      completed,
+      failed,
+      successRate,
+      latest,
+    }
+  }, [recentCloseRuns])
+
+  const reconciliationKpis = useMemo(() => {
+    const closeSummary = closePrecheck?.summary
+    const purchaseCount = closeSummary?.purchaseCount ?? 0
+    const postedCount = closeSummary?.postedCount ?? 0
+    const reconciledCount = closeSummary?.reconciledCount ?? 0
+    const pendingCount = closeSummary?.pendingCount ?? 0
+    const duplicateCount = closeSummary?.duplicateCount ?? 0
+    const anomalyCount = closeSummary?.anomalyCount ?? 0
+    const missingCategoryCount = closeSummary?.missingCategoryCount ?? 0
+    const completionRate = postedCount + reconciledCount > 0 ? reconciledCount / (postedCount + reconciledCount) : 1
+    const duplicateRate = purchaseCount > 0 ? duplicateCount / purchaseCount : 0
+    const anomalyRate = purchaseCount > 0 ? anomalyCount / purchaseCount : 0
+    const issueWeight = pendingCount + duplicateCount + anomalyCount + Math.ceil(missingCategoryCount * 0.5)
+    const matchAccuracyRate = purchaseCount > 0 ? Math.max(0, Math.min(1, 1 - issueWeight / purchaseCount)) : 1
+    const summaryCompletedRuns = purchaseHistorySummary?.completedMonthCloseRuns ?? 0
+    const summaryFailedRuns = purchaseHistorySummary?.failedMonthCloseRuns ?? 0
+    const summaryCloseSuccessRate =
+      summaryCompletedRuns + summaryFailedRuns > 0 ? summaryCompletedRuns / (summaryCompletedRuns + summaryFailedRuns) : null
+    const closeSuccessRate = closePrecheck?.closeSuccessRate ?? summaryCloseSuccessRate ?? closeRunSummary.successRate
+
+    return {
+      purchaseCount,
+      pendingCount,
+      completionRate,
+      duplicateRate,
+      anomalyRate,
+      matchAccuracyRate,
+      closeSuccessRate: Number.isFinite(closeSuccessRate) ? closeSuccessRate : 1,
+    }
+  }, [closePrecheck?.closeSuccessRate, closePrecheck?.summary, closeRunSummary.successRate, purchaseHistorySummary])
+
+  const monthCloseChecks = useMemo(() => {
+    const summaryForMonth = closePrecheck?.summary
+    if (!summaryForMonth) return []
+
+    const checks: Array<{ id: string; status: 'pass' | 'warning' | 'blocker'; label: string; detail: string }> = []
+    checks.push({
+      id: 'queue',
+      status: queue.pendingCount > 0 ? 'blocker' : 'pass',
+      label: 'Offline queue',
+      detail:
+        queue.pendingCount > 0
+          ? `${queue.pendingCount} queued mutation(s) must flush before close.`
+          : 'No queued offline mutations pending.',
+    })
+    checks.push({
+      id: 'pending',
+      status: summaryForMonth.pendingCount > 0 ? 'blocker' : 'pass',
+      label: 'Pending transactions',
+      detail:
+        summaryForMonth.pendingCount > 0
+          ? `${summaryForMonth.pendingCount} pending (${formatMoney(summaryForMonth.pendingAmount)}) require resolution.`
+          : 'All transactions posted or reconciled.',
+    })
+    checks.push({
+      id: 'duplicates',
+      status: summaryForMonth.duplicateCount > 0 ? 'blocker' : 'pass',
+      label: 'Duplicate/overlap groups',
+      detail:
+        summaryForMonth.duplicateCount > 0
+          ? `${summaryForMonth.duplicateCount} duplicate candidate group(s) still open.`
+          : 'No duplicate groups detected in close month.',
+    })
+    checks.push({
+      id: 'anomalies',
+      status: summaryForMonth.anomalyCount > 0 ? 'blocker' : 'pass',
+      label: 'Anomaly outliers',
+      detail:
+        summaryForMonth.anomalyCount > 0
+          ? `${summaryForMonth.anomalyCount} unusual amount outlier(s) need review.`
+          : 'No amount anomalies detected.',
+    })
+    checks.push({
+      id: 'categories',
+      status: summaryForMonth.missingCategoryCount > 0 ? 'warning' : 'pass',
+      label: 'Category quality',
+      detail:
+        summaryForMonth.missingCategoryCount > 0
+          ? `${summaryForMonth.missingCategoryCount} uncategorized row(s); warning only.`
+          : 'All entries have non-generic categories.',
+    })
+    return checks
+  }, [closePrecheck?.summary, formatMoney, queue.pendingCount])
+
+  const hasCloseBlockers = monthCloseChecks.some((check) => check.status === 'blocker')
+  const canRequestMonthClose = monthPattern.test(closeMonth) && !isRunningMonthClose
+
+  const auditTrailRows = useMemo(
+    () =>
+      reconciliationAuditEvents.map((event) => ({
+        id: String(event._id),
+        createdAt: event.createdAt,
+        entityType: event.entityType,
+        entityId: event.entityId,
+        action: event.action,
+        source: resolveAuditSource(event),
+        actor: resolveAuditActor(event),
+        transition: summarizeAuditTransition(event),
+      })),
+    [reconciliationAuditEvents],
+  )
 
   const allVisibleSelected =
     filteredPurchases.length > 0 && filteredPurchases.every((purchase) => selectedSet.has(purchase._id))
@@ -295,6 +514,69 @@ export function ReconcileTab({
       setDuplicateConfirmation(null)
     } finally {
       setIsApplyingDuplicateAction(false)
+    }
+  }
+
+  const closeMonthCloseConfirm = () => {
+    if (isRunningMonthClose) return
+    setMonthCloseConfirmMode(null)
+  }
+
+  const requestMonthClose = (mode: MonthCloseConfirmMode) => {
+    if (!canRequestMonthClose) return
+    if (mode === 'close' && hasCloseBlockers) return
+    setMonthCloseConfirmMode(mode)
+  }
+
+  const confirmMonthClose = async () => {
+    if (!monthCloseConfirmMode || !canRequestMonthClose) return
+    const runMode = monthCloseConfirmMode
+    setIsRunningMonthClose(true)
+    setMonthCloseConfirmMode(null)
+    setMonthCloseFeedback(null)
+
+    try {
+      const idempotencyKey =
+        runMode === 'retry' ? `retry:${closeMonth}:${Date.now()}` : `manual:${closeMonth}`
+      const result = (await runPurchaseMonthClose({
+        month: closeMonth,
+        source: 'manual',
+        idempotencyKey,
+      })) as {
+        status: 'completed' | 'failed'
+        wasDeduplicated: boolean
+        monthKey: string
+        summary?: {
+          purchaseCount: number
+          pendingCount: number
+          totalAmount: number
+        }
+        failureReason?: string | null
+      }
+
+      if (result.status === 'completed') {
+        const summaryLine = result.summary
+          ? `${result.summary.purchaseCount} rows · ${result.summary.pendingCount} pending · ${formatMoney(
+              result.summary.totalAmount,
+            )} cleared`
+          : 'close summary updated'
+        if (result.wasDeduplicated && runMode === 'close') {
+          setMonthCloseFeedback(`Month ${result.monthKey} was already closed. ${summaryLine}.`)
+        } else if (result.wasDeduplicated && runMode === 'retry') {
+          setMonthCloseFeedback(`Retry key already processed for ${result.monthKey}. ${summaryLine}.`)
+        } else if (runMode === 'retry') {
+          setMonthCloseFeedback(`Retry recalculation complete for ${result.monthKey}. ${summaryLine}.`)
+        } else {
+          setMonthCloseFeedback(`Month close complete for ${result.monthKey}. ${summaryLine}.`)
+        }
+      } else {
+        setMonthCloseFeedback(result.failureReason ?? 'Month close failed.')
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Month close failed.'
+      setMonthCloseFeedback(message)
+    } finally {
+      setIsRunningMonthClose(false)
     }
   }
 
@@ -974,6 +1256,209 @@ export function ReconcileTab({
             <p className="form-hint">Use row quick actions to stage undo checkpoints.</p>
           )}
 
+          <section className="reconcile-kpi-panel" aria-label="Reconciliation KPI block">
+            <div className="reconcile-kpi-head">
+              <h3>Trust KPI block</h3>
+              <span className={reconciliationKpis.pendingCount > 0 ? 'pill pill--warning' : 'pill pill--good'}>
+                {reconciliationKpis.purchaseCount} in close month
+              </span>
+            </div>
+            <div className="reconcile-kpi-grid">
+              <article>
+                <p>Reconciliation completion</p>
+                <strong>{formatRate(reconciliationKpis.completionRate)}</strong>
+                <small>reconciled over posted+reconciled</small>
+              </article>
+              <article>
+                <p>Match accuracy</p>
+                <strong>{formatRate(reconciliationKpis.matchAccuracyRate)}</strong>
+                <small>quality-weighted from pending/duplicate/anomaly signals</small>
+              </article>
+              <article>
+                <p>Duplicate rate</p>
+                <strong>{formatRate(reconciliationKpis.duplicateRate)}</strong>
+                <small>duplicate groups relative to month volume</small>
+              </article>
+              <article>
+                <p>Anomaly rate</p>
+                <strong>{formatRate(reconciliationKpis.anomalyRate)}</strong>
+                <small>outlier rows relative to month volume</small>
+              </article>
+              <article>
+                <p>Close success rate</p>
+                <strong>{formatRate(reconciliationKpis.closeSuccessRate)}</strong>
+                <small>{closeRunSummary.completed} completed · {closeRunSummary.failed} failed recent runs</small>
+              </article>
+            </div>
+          </section>
+
+          <section className="reconcile-close-panel" aria-label="Month close flow">
+            <div className="reconcile-close-head">
+              <div>
+                <h3>Month close flow</h3>
+                <p className="subnote">Pre-checks, blocker list, confirmation, idempotent close and retry-safe recalculation.</p>
+              </div>
+              <label className="form-field reconcile-close-month">
+                <span>Close month</span>
+                <input
+                  type="month"
+                  value={closeMonth}
+                  onChange={(event) => setCloseMonth(event.target.value)}
+                />
+              </label>
+            </div>
+
+            {closePrecheck?.summary ? (
+              <div className="reconcile-close-summary">
+                <article>
+                  <p>Transactions</p>
+                  <strong>{closePrecheck.summary.purchaseCount}</strong>
+                  <small>{formatMoney(closePrecheck.summary.totalAmount)} cleared value</small>
+                </article>
+                <article>
+                  <p>Pending</p>
+                  <strong>{closePrecheck.summary.pendingCount}</strong>
+                  <small>{formatMoney(closePrecheck.summary.pendingAmount)} unresolved value</small>
+                </article>
+                <article>
+                  <p>Data quality alerts</p>
+                  <strong>{closePrecheck.summary.duplicateCount + closePrecheck.summary.anomalyCount}</strong>
+                  <small>{closePrecheck.summary.duplicateCount} duplicates · {closePrecheck.summary.anomalyCount} anomalies</small>
+                </article>
+                <article>
+                  <p>Category warnings</p>
+                  <strong>{closePrecheck.summary.missingCategoryCount}</strong>
+                  <small>non-blocking warning count</small>
+                </article>
+              </div>
+            ) : (
+              <p className="form-hint">Loading pre-close checks…</p>
+            )}
+
+            {monthCloseChecks.length > 0 ? (
+              <ul className="reconcile-close-checks">
+                {monthCloseChecks.map((check) => (
+                  <li key={check.id}>
+                    <div>
+                      <p>{check.label}</p>
+                      <small>{check.detail}</small>
+                    </div>
+                    <span className={closeCheckPillClass(check.status)}>
+                      {check.status === 'pass' ? 'pass' : check.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            {closePrecheck?.blockers?.length ? (
+              <div className="reconcile-close-issues">
+                <h4>Blockers</h4>
+                <ul>
+                  {closePrecheck.blockers.map((issue) => (
+                    <li key={issue.id}>
+                      <strong>{issue.label}</strong> <span>{issue.detail}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {closePrecheck?.warnings?.length ? (
+              <div className="reconcile-close-issues reconcile-close-issues--warning">
+                <h4>Warnings</h4>
+                <ul>
+                  {closePrecheck.warnings.map((issue) => (
+                    <li key={issue.id}>
+                      <strong>{issue.label}</strong> <span>{issue.detail}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="reconcile-close-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn--sm"
+                onClick={() => requestMonthClose('close')}
+                disabled={!canRequestMonthClose || hasCloseBlockers}
+              >
+                {isRunningMonthClose ? 'Running close…' : 'Close month'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn--sm"
+                onClick={() => requestMonthClose('retry')}
+                disabled={!canRequestMonthClose}
+              >
+                Retry recalculation
+              </button>
+            </div>
+            {hasCloseBlockers ? <p className="form-hint">Resolve blockers before close. Retry is available for recalculation checks.</p> : null}
+            {monthCloseFeedback ? <p className="form-hint">{monthCloseFeedback}</p> : null}
+
+            <div className="reconcile-close-run-log">
+              <h4>Close audit log</h4>
+              {recentCloseRuns.length === 0 ? (
+                <p className="form-hint">No close runs yet.</p>
+              ) : (
+                <ul className="reconcile-close-run-list">
+                  {(recentCloseRuns as PurchaseMonthCloseRunEntry[]).slice(0, 8).map((run) => (
+                    <li key={run._id}>
+                      <div>
+                        <p>{run.monthKey} · {run.status}</p>
+                        <small>
+                          {run.source} · {run.idempotencyKey ?? 'no key'} · {run.totalPurchases} rows · {formatMoney(run.totalAmount)}
+                        </small>
+                      </div>
+                      <span className={run.status === 'failed' ? 'pill pill--critical' : 'pill pill--good'}>
+                        {dateLabel.format(new Date(run.ranAt))}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+
+          <section className="reconcile-audit-panel" aria-label="Full audit trail per action">
+            <div className="reconcile-audit-head">
+              <div>
+                <h3>Action audit trail</h3>
+                <p className="subnote">Before/after snapshots, actor, timestamp, and source for reconciliation actions.</p>
+              </div>
+              <label className="form-field">
+                <span>Rows</span>
+                <select
+                  value={auditLimit}
+                  onChange={(event) => setAuditLimit(Number(event.target.value) as 25 | 50 | 100)}
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </label>
+            </div>
+
+            {auditTrailRows.length === 0 ? (
+              <p className="form-hint">No audit events for selected close month.</p>
+            ) : (
+              <ul className="reconcile-audit-list">
+                {auditTrailRows.map((row) => (
+                  <li key={row.id}>
+                    <div>
+                      <p>{row.action.replaceAll('_', ' ')} · {row.entityType} ({row.entityId})</p>
+                      <small>{row.transition}</small>
+                      <small>{row.actor} · {row.source}</small>
+                    </div>
+                    <span className="pill pill--neutral">{dateLabel.format(new Date(row.createdAt))}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
           <section className="reconcile-duplicate-panel" aria-label="Duplicate and overlap detection">
             <div className="reconcile-duplicate-head">
               <h3>Duplicate + overlap detection</h3>
@@ -1099,6 +1584,83 @@ export function ReconcileTab({
                 disabled={isApplyingDuplicateAction}
               >
                 {isApplyingDuplicateAction ? 'Applying...' : duplicateConfirmationCopy.confirmLabel}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {monthCloseConfirmMode ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={closeMonthCloseConfirm}>
+          <section
+            className="modal reconcile-close-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reconcile-close-confirm-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="modal__header reconcile-close-confirm-modal__header">
+              <div>
+                <p className="panel-kicker">Reconcile</p>
+                <h2 id="reconcile-close-confirm-title">
+                  {monthCloseConfirmMode === 'retry' ? 'Confirm Retry Recalculation' : 'Confirm Month Close'}
+                </h2>
+                <p className="subnote">
+                  {monthCloseConfirmMode === 'retry'
+                    ? 'Runs a new recalculation with a fresh idempotency key and appends a new close audit entry.'
+                    : 'Finalizes this month checkpoint using idempotent close logic and writes a close audit entry.'}
+                </p>
+              </div>
+              <button type="button" className="btn btn-ghost" onClick={closeMonthCloseConfirm} disabled={isRunningMonthClose}>
+                Close
+              </button>
+            </header>
+
+            <div className="modal__body reconcile-close-confirm-modal__body">
+              <div className="reconcile-close-confirm-grid">
+                <article>
+                  <span>Target month</span>
+                  <strong>{closeMonth}</strong>
+                  <small>{closePrecheck?.summary ? `${closePrecheck.summary.purchaseCount} rows in month` : 'Loading summary'}</small>
+                </article>
+                <article>
+                  <span>Open blockers</span>
+                  <strong>{monthCloseChecks.filter((check) => check.status === 'blocker').length}</strong>
+                  <small>{monthCloseConfirmMode === 'retry' ? 'Retry allowed with blockers' : 'Close requires zero blockers'}</small>
+                </article>
+              </div>
+              {monthCloseChecks.length > 0 ? (
+                <ul className="reconcile-close-checks">
+                  {monthCloseChecks.map((check) => (
+                    <li key={`confirm-${check.id}`}>
+                      <div>
+                        <p>{check.label}</p>
+                        <small>{check.detail}</small>
+                      </div>
+                      <span className={closeCheckPillClass(check.status)}>
+                        {check.status === 'pass' ? 'pass' : check.status}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+
+            <footer className="modal__footer">
+              <button type="button" className="btn btn-ghost" onClick={closeMonthCloseConfirm} disabled={isRunningMonthClose}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => void confirmMonthClose()}
+                disabled={isRunningMonthClose || (monthCloseConfirmMode === 'close' && hasCloseBlockers)}
+              >
+                {isRunningMonthClose
+                  ? 'Running...'
+                  : monthCloseConfirmMode === 'retry'
+                    ? 'Confirm retry'
+                    : 'Confirm close'}
               </button>
             </footer>
           </section>

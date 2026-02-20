@@ -6630,6 +6630,262 @@ tbody td {
   border-color: color-mix(in oklab, var(--tone-warning) 34%, var(--stroke));
 }
 
+.reconcile-kpi-panel,
+.reconcile-close-panel,
+.reconcile-audit-panel {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-finance) 9%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.72rem 0.78rem;
+  display: grid;
+  gap: 0.58rem;
+}
+
+.reconcile-kpi-head,
+.reconcile-close-head,
+.reconcile-audit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  align-items: flex-start;
+}
+
+.reconcile-kpi-head h3,
+.reconcile-close-head h3,
+.reconcile-audit-head h3 {
+  margin: 0;
+  font-size: 0.96rem;
+  letter-spacing: -0.012em;
+}
+
+.reconcile-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.reconcile-kpi-grid article {
+  border-radius: 0.82rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.58rem 0.62rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.reconcile-kpi-grid article p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.69rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.reconcile-kpi-grid article strong {
+  font-size: 0.98rem;
+  letter-spacing: -0.012em;
+}
+
+.reconcile-kpi-grid article small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.32;
+}
+
+.reconcile-close-month span {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.reconcile-close-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.48rem;
+}
+
+.reconcile-close-summary article {
+  border-radius: 0.8rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.54rem 0.6rem;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.reconcile-close-summary article p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.reconcile-close-summary article strong {
+  font-size: 0.95rem;
+}
+
+.reconcile-close-summary article small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.reconcile-close-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.reconcile-close-checks li {
+  border-radius: 0.78rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.48rem 0.54rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.reconcile-close-checks p {
+  margin: 0;
+  font-size: 0.81rem;
+  font-weight: 670;
+}
+
+.reconcile-close-checks small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.32;
+}
+
+.reconcile-close-issues {
+  border-radius: 0.82rem;
+  border: 1px solid color-mix(in oklab, var(--tone-negative) 32%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-negative) 9%, var(--surface-card));
+  padding: 0.54rem 0.6rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.reconcile-close-issues--warning {
+  border-color: color-mix(in oklab, var(--tone-warning) 32%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-warning) 8%, var(--surface-card));
+}
+
+.reconcile-close-issues h4,
+.reconcile-close-run-log h4 {
+  margin: 0;
+  font-size: 0.84rem;
+  letter-spacing: -0.01em;
+}
+
+.reconcile-close-issues ul,
+.reconcile-close-run-list,
+.reconcile-audit-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.reconcile-close-issues li {
+  font-size: 0.76rem;
+  line-height: 1.34;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.reconcile-close-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+}
+
+.reconcile-close-run-log {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.reconcile-close-run-list li,
+.reconcile-audit-list li {
+  border-radius: 0.78rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.48rem 0.54rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.reconcile-close-run-list p,
+.reconcile-audit-list p {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 670;
+}
+
+.reconcile-close-run-list small,
+.reconcile-audit-list small {
+  color: var(--text-muted);
+  font-size: 0.73rem;
+  line-height: 1.28;
+  display: block;
+}
+
+.reconcile-close-confirm-modal {
+  width: min(42rem, calc(100vw - 2rem));
+}
+
+.reconcile-close-confirm-modal__header {
+  padding-bottom: 0.66rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+}
+
+.reconcile-close-confirm-modal__body {
+  margin-top: 0.72rem;
+  display: grid;
+  gap: 0.56rem;
+}
+
+.reconcile-close-confirm-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.52rem;
+}
+
+.reconcile-close-confirm-grid article {
+  border-radius: 0.8rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.54rem 0.6rem;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.reconcile-close-confirm-grid article span {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.reconcile-close-confirm-grid article strong {
+  font-size: 0.93rem;
+}
+
+.reconcile-close-confirm-grid article small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
 .reconcile-mobile-list {
   display: none;
 }

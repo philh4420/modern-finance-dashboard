@@ -164,6 +164,7 @@ function App() {
   const cycleAuditLogs = financeState?.data.cycleAuditLogs ?? []
   const cycleStepAlerts = financeState?.data.cycleStepAlerts ?? []
   const monthlyCycleRuns = financeState?.data.monthlyCycleRuns ?? []
+  const purchaseMonthCloseRuns = financeState?.data.purchaseMonthCloseRuns ?? []
   const monthCloseSnapshots = financeState?.data.monthCloseSnapshots ?? []
   const financeAuditEvents = financeState?.data.financeAuditEvents ?? []
   const ledgerEntries = financeState?.data.ledgerEntries ?? []
@@ -408,6 +409,7 @@ function App() {
         cycleAuditLogs,
         cycleStepAlerts,
         monthlyCycleRuns,
+        purchaseMonthCloseRuns,
         monthCloseSnapshots,
         financeAuditEvents,
         ledgerEntries,
@@ -1055,6 +1057,7 @@ function App() {
               purchases={purchases}
               cycleAuditLogs={cycleAuditLogs}
               monthlyCycleRuns={monthlyCycleRuns}
+              purchaseMonthCloseRuns={purchaseMonthCloseRuns}
               financeAuditEvents={financeAuditEvents}
               formatMoney={formatSection.formatMoney}
               cycleDateLabel={cycleDateLabel}

@@ -186,6 +186,25 @@ const recordFinanceAuditEvent = async (ctx: MutationCtx, args: {
   after?: unknown
   metadata?: unknown
 }) => {
+  const now = Date.now()
+  const normalizedMetadataBase = {
+    actorUserId: args.userId,
+    actorLabel: 'self',
+    recordedAt: now,
+  }
+  const normalizedMetadata =
+    args.metadata && typeof args.metadata === 'object' && !Array.isArray(args.metadata)
+      ? {
+          ...normalizedMetadataBase,
+          ...args.metadata,
+        }
+      : args.metadata === undefined
+        ? normalizedMetadataBase
+        : {
+            ...normalizedMetadataBase,
+            payload: args.metadata,
+          }
+
   await ctx.db.insert('financeAuditEvents', {
     userId: args.userId,
     entityType: args.entityType,
@@ -193,10 +212,36 @@ const recordFinanceAuditEvent = async (ctx: MutationCtx, args: {
     action: args.action,
     beforeJson: args.before === undefined ? undefined : stringifyForAudit(args.before),
     afterJson: args.after === undefined ? undefined : stringifyForAudit(args.after),
-    metadataJson: args.metadata === undefined ? undefined : stringifyForAudit(args.metadata),
-    createdAt: Date.now(),
+    metadataJson: stringifyForAudit(normalizedMetadata),
+    createdAt: now,
   })
 }
+
+const buildPurchaseAuditSnapshot = (entry: {
+  item: string
+  amount: number
+  category: string
+  purchaseDate: string
+  reconciliationStatus?: 'pending' | 'posted' | 'reconciled'
+  statementMonth?: string
+  ownership?: 'shared' | 'personal'
+  taxDeductible?: boolean
+  fundingSourceType?: 'unassigned' | 'account' | 'card'
+  fundingSourceId?: string
+  notes?: string
+}) => ({
+  item: entry.item,
+  amount: entry.amount,
+  category: entry.category,
+  purchaseDate: entry.purchaseDate,
+  reconciliationStatus: entry.reconciliationStatus ?? 'posted',
+  statementMonth: entry.statementMonth ?? entry.purchaseDate.slice(0, 7),
+  ownership: entry.ownership ?? 'shared',
+  taxDeductible: entry.taxDeductible ?? false,
+  fundingSourceType: entry.fundingSourceType ?? 'unassigned',
+  fundingSourceId: entry.fundingSourceId ?? null,
+  notes: entry.notes?.trim() || undefined,
+})
 
 const normalizeSplitTemplateName = (value: string) => value.trim()
 
@@ -2274,6 +2319,8 @@ export const bulkUpdatePurchaseReconciliation = mutation({
     const source = sanitizeMutationSource(args.source, 'bulk')
     const now = Date.now()
     const sampleIds: string[] = []
+    const beforeSnapshots: Array<Record<string, unknown>> = []
+    const afterSnapshots: Array<Record<string, unknown>> = []
     for (const id of args.ids) {
       const purchase = await ctx.db.get(id)
       if (!purchase || purchase.userId !== identity.subject) {
@@ -2291,6 +2338,22 @@ export const bulkUpdatePurchaseReconciliation = mutation({
         reconciledAt,
       })
       updated += 1
+      if (beforeSnapshots.length < 40) {
+        const before = buildPurchaseAuditSnapshot(purchase)
+        const after = {
+          ...before,
+          reconciliationStatus: args.reconciliationStatus,
+          statementMonth: args.statementMonth ?? before.statementMonth,
+        }
+        beforeSnapshots.push({
+          id: String(id),
+          ...before,
+        })
+        afterSnapshots.push({
+          id: String(id),
+          ...after,
+        })
+      }
       if (sampleIds.length < 25) {
         sampleIds.push(String(id))
       }
@@ -2302,6 +2365,8 @@ export const bulkUpdatePurchaseReconciliation = mutation({
         entityType: 'purchase',
         entityId: 'bulk',
         action: 'bulk_reconciliation_updated',
+        before: beforeSnapshots,
+        after: afterSnapshots,
         metadata: {
           source,
           mutationAt: now,
@@ -2331,6 +2396,8 @@ export const bulkUpdatePurchaseCategory = mutation({
     const source = sanitizeMutationSource(args.source, 'bulk')
     const now = Date.now()
     const sampleIds: string[] = []
+    const beforeSnapshots: Array<Record<string, unknown>> = []
+    const afterSnapshots: Array<Record<string, unknown>> = []
     for (const id of args.ids) {
       const purchase = await ctx.db.get(id)
       if (!purchase || purchase.userId !== identity.subject) {
@@ -2340,6 +2407,21 @@ export const bulkUpdatePurchaseCategory = mutation({
         category: args.category.trim(),
       })
       updated += 1
+      if (beforeSnapshots.length < 40) {
+        const before = buildPurchaseAuditSnapshot(purchase)
+        const after = {
+          ...before,
+          category: args.category.trim(),
+        }
+        beforeSnapshots.push({
+          id: String(id),
+          ...before,
+        })
+        afterSnapshots.push({
+          id: String(id),
+          ...after,
+        })
+      }
       if (sampleIds.length < 25) {
         sampleIds.push(String(id))
       }
@@ -2351,6 +2433,8 @@ export const bulkUpdatePurchaseCategory = mutation({
         entityType: 'purchase',
         entityId: 'bulk',
         action: 'bulk_category_updated',
+        before: beforeSnapshots,
+        after: afterSnapshots,
         metadata: {
           source,
           mutationAt: now,
@@ -2376,6 +2460,8 @@ export const bulkDeletePurchases = mutation({
     const source = sanitizeMutationSource(args.source, 'bulk')
     const now = Date.now()
     const deletedSample: Array<{ id: string; item: string; amount: number; purchaseDate: string }> = []
+    const beforeSnapshots: Array<Record<string, unknown>> = []
+    const afterSnapshots: Array<Record<string, unknown>> = []
 
     for (const id of args.ids) {
       const purchase = await ctx.db.get(id)
@@ -2391,6 +2477,17 @@ export const bulkDeletePurchases = mutation({
       await Promise.all(splits.map((split) => ctx.db.delete(split._id)))
       await ctx.db.delete(id)
       deleted += 1
+      if (beforeSnapshots.length < 40) {
+        const before = buildPurchaseAuditSnapshot(purchase)
+        beforeSnapshots.push({
+          id: String(id),
+          ...before,
+        })
+        afterSnapshots.push({
+          id: String(id),
+          removed: true,
+        })
+      }
       if (deletedSample.length < 25) {
         deletedSample.push({
           id: String(id),
@@ -2407,6 +2504,8 @@ export const bulkDeletePurchases = mutation({
         entityType: 'purchase',
         entityId: 'bulk',
         action: 'bulk_removed',
+        before: beforeSnapshots,
+        after: afterSnapshots,
         metadata: {
           source,
           mutationAt: now,

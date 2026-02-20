@@ -140,6 +140,13 @@ type PurchaseMonthCloseSummary = {
   }>
 }
 
+type ReconciliationPreCloseIssue = {
+  id: string
+  severity: 'blocker' | 'warning'
+  label: string
+  detail: string
+}
+
 type IncomeDoc = Doc<'incomes'>
 type BillDoc = Doc<'bills'>
 type CardDoc = Doc<'cards'>
@@ -2208,6 +2215,25 @@ const recordFinanceAuditEvent = async (ctx: MutationCtx, args: {
   after?: unknown
   metadata?: unknown
 }) => {
+  const now = Date.now()
+  const normalizedMetadataBase = {
+    actorUserId: args.userId,
+    actorLabel: 'self',
+    recordedAt: now,
+  }
+  const normalizedMetadata =
+    args.metadata && typeof args.metadata === 'object' && !Array.isArray(args.metadata)
+      ? {
+          ...normalizedMetadataBase,
+          ...args.metadata,
+        }
+      : args.metadata === undefined
+        ? normalizedMetadataBase
+        : {
+            ...normalizedMetadataBase,
+            payload: args.metadata,
+          }
+
   await ctx.db.insert('financeAuditEvents', {
     userId: args.userId,
     entityType: args.entityType,
@@ -2215,8 +2241,8 @@ const recordFinanceAuditEvent = async (ctx: MutationCtx, args: {
     action: args.action,
     beforeJson: args.before === undefined ? undefined : stringifyForAudit(args.before),
     afterJson: args.after === undefined ? undefined : stringifyForAudit(args.after),
-    metadataJson: args.metadata === undefined ? undefined : stringifyForAudit(args.metadata),
-    createdAt: Date.now(),
+    metadataJson: stringifyForAudit(normalizedMetadata),
+    createdAt: now,
   })
 }
 
@@ -6537,6 +6563,139 @@ export const getRecentPurchaseMonthCloseRuns = query({
       .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
       .order('desc')
       .take(limit)
+  },
+})
+
+export const getPurchaseMonthClosePrecheck = query({
+  args: {
+    month: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validateStatementMonth(args.month, 'Month')
+
+    const [purchases, runsForMonth] = await Promise.all([
+      ctx.db
+        .query('purchases')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('purchaseMonthCloseRuns')
+        .withIndex('by_userId_monthKey', (q) => q.eq('userId', identity.subject).eq('monthKey', args.month))
+        .collect(),
+    ])
+
+    const summary = computePurchaseMonthCloseSummary(args.month, purchases)
+    const blockers: ReconciliationPreCloseIssue[] = []
+    const warnings: ReconciliationPreCloseIssue[] = []
+
+    if (summary.purchaseCount === 0) {
+      warnings.push({
+        id: 'no_transactions',
+        severity: 'warning',
+        label: 'No transactions in month',
+        detail: 'No purchases were found for this month key. Close can still run to checkpoint an empty period.',
+      })
+    }
+
+    if (summary.pendingCount > 0) {
+      blockers.push({
+        id: 'pending_unresolved',
+        severity: 'blocker',
+        label: `${summary.pendingCount} pending transactions`,
+        detail: `${roundCurrency(summary.pendingAmount)} remains unresolved. Match or exclude before close.`,
+      })
+    }
+
+    if (summary.duplicateCount > 0) {
+      blockers.push({
+        id: 'duplicates_detected',
+        severity: 'blocker',
+        label: `${summary.duplicateCount} duplicate groups`,
+        detail: 'Resolve duplicate or overlap candidates before month close for reliable totals.',
+      })
+    }
+
+    if (summary.anomalyCount > 0) {
+      blockers.push({
+        id: 'anomalies_detected',
+        severity: 'blocker',
+        label: `${summary.anomalyCount} anomaly outliers`,
+        detail: 'Review unusual amount outliers before close so reporting does not carry suspect values.',
+      })
+    }
+
+    if (summary.missingCategoryCount > 0) {
+      warnings.push({
+        id: 'missing_category',
+        severity: 'warning',
+        label: `${summary.missingCategoryCount} missing categories`,
+        detail: 'Recommended to categorize before close to improve planning and forecast quality.',
+      })
+    }
+
+    const latestRun = runsForMonth.sort((left, right) => right.ranAt - left.ranAt)[0] ?? null
+    const completedRuns = runsForMonth.filter((entry) => entry.status === 'completed').length
+    const failedRuns = runsForMonth.filter((entry) => entry.status === 'failed').length
+    const closeSuccessRate = completedRuns + failedRuns > 0 ? completedRuns / (completedRuns + failedRuns) : 1
+
+    return {
+      monthKey: args.month,
+      summary,
+      blockers,
+      warnings,
+      canClose: blockers.length === 0,
+      blockerCount: blockers.length,
+      warningCount: warnings.length,
+      closeSuccessRate,
+      completedRuns,
+      failedRuns,
+      latestRun,
+    }
+  },
+})
+
+export const getRecentReconciliationAuditEvents = query({
+  args: {
+    month: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const limit = clamp(Math.floor(args.limit ?? 50), 1, 200)
+    if (args.month) {
+      validateStatementMonth(args.month, 'Month')
+    }
+
+    const [purchaseEvents, closeEvents] = await Promise.all([
+      ctx.db
+        .query('financeAuditEvents')
+        .withIndex('by_userId_entityType_createdAt', (q) =>
+          q.eq('userId', identity.subject).eq('entityType', 'purchase'),
+        )
+        .order('desc')
+        .take(limit * 2),
+      ctx.db
+        .query('financeAuditEvents')
+        .withIndex('by_userId_entityType_createdAt', (q) =>
+          q.eq('userId', identity.subject).eq('entityType', 'purchase_month_close'),
+        )
+        .order('desc')
+        .take(limit * 2),
+    ])
+
+    const merged = [...purchaseEvents, ...closeEvents]
+      .filter((event) => {
+        if (!args.month) return true
+        if (event.entityType === 'purchase_month_close') {
+          return event.entityId === args.month
+        }
+        const eventMonth = new Date(event.createdAt).toISOString().slice(0, 7)
+        return eventMonth === args.month
+      })
+      .sort((left, right) => right.createdAt - left.createdAt)
+
+    return merged.slice(0, limit)
   },
 })
 
