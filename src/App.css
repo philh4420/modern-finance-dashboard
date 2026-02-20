@@ -6365,37 +6365,37 @@ tbody td {
 
 .data-table--reconcile th:nth-child(2),
 .data-table--reconcile td:nth-child(2) {
-  width: 18%;
+  width: 17%;
 }
 
 .data-table--reconcile th:nth-child(3),
 .data-table--reconcile td:nth-child(3) {
-  width: 11%;
+  width: 10%;
 }
 
 .data-table--reconcile th:nth-child(4),
 .data-table--reconcile td:nth-child(4) {
-  width: 14%;
+  width: 13%;
 }
 
 .data-table--reconcile th:nth-child(5),
 .data-table--reconcile td:nth-child(5) {
-  width: 12%;
+  width: 11%;
 }
 
 .data-table--reconcile th:nth-child(6),
 .data-table--reconcile td:nth-child(6) {
-  width: 10%;
+  width: 9%;
 }
 
 .data-table--reconcile th:nth-child(7),
 .data-table--reconcile td:nth-child(7) {
-  width: 10%;
+  width: 8%;
 }
 
 .data-table--reconcile th:nth-child(8),
 .data-table--reconcile td:nth-child(8) {
-  width: 20%;
+  width: 27%;
 }
 
 .data-table--reconcile tbody td {
@@ -6413,6 +6413,221 @@ tbody td {
 
 .row-actions--reconcile .btn {
   width: 100%;
+}
+
+.reconcile-inline-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.reconcile-rule-feedback {
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--tone-positive) 38%, var(--stroke));
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-positive) 12%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.58rem 0.66rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.reconcile-rule-feedback p {
+  margin: 0;
+  font-size: 0.84rem;
+  color: color-mix(in oklab, var(--tone-positive) 72%, black 28%);
+}
+
+.reconcile-suggestion-panel {
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-positive) 10%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.74rem 0.82rem;
+  display: grid;
+  gap: 0.58rem;
+}
+
+.reconcile-suggestion-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.reconcile-suggestion-head h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  letter-spacing: -0.012em;
+}
+
+.reconcile-suggestion-list,
+.reconcile-anomaly-list,
+.reconcile-duplicate-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.52rem;
+}
+
+.reconcile-suggestion-list li,
+.reconcile-anomaly-list li,
+.reconcile-duplicate-list li {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  padding: 0.58rem 0.62rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.reconcile-suggestion-list p,
+.reconcile-anomaly-list p,
+.reconcile-duplicate-list p {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 680;
+}
+
+.reconcile-suggestion-list small,
+.reconcile-anomaly-list small,
+.reconcile-duplicate-list small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.reconcile-anomaly-overview {
+  margin-top: 0.18rem;
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-warning) 12%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.72rem 0.78rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.reconcile-anomaly-overview-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.reconcile-anomaly-overview-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: -0.012em;
+}
+
+.reconcile-anomaly-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.reconcile-duplicate-panel {
+  margin-top: 0.2rem;
+  border-radius: 0.96rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 76%, transparent);
+  background:
+    radial-gradient(130% 130% at 100% -20%, color-mix(in oklab, var(--tone-warning) 8%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.72rem 0.78rem;
+  display: grid;
+  gap: 0.56rem;
+}
+
+.reconcile-duplicate-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  align-items: flex-start;
+}
+
+.reconcile-duplicate-head h3 {
+  margin: 0;
+  font-size: 0.96rem;
+  letter-spacing: -0.012em;
+}
+
+.reconcile-duplicate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.reconcile-duplicate-grid article {
+  border-radius: 0.76rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 72%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 90%, white 10%);
+  padding: 0.46rem 0.52rem;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.reconcile-duplicate-grid strong {
+  font-size: 0.84rem;
+}
+
+.reconcile-duplicate-grid small {
+  font-size: 0.74rem;
+}
+
+.reconcile-duplicate-confirm-modal {
+  width: min(43rem, calc(100vw - 2rem));
+}
+
+.reconcile-duplicate-confirm-modal__header {
+  padding-bottom: 0.66rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+}
+
+.reconcile-duplicate-confirm-modal__body {
+  margin-top: 0.72rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.reconcile-duplicate-confirm-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.56rem;
+}
+
+.reconcile-duplicate-confirm-card {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  padding: 0.58rem 0.64rem;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.reconcile-duplicate-confirm-card span {
+  color: var(--text-muted);
+  font-size: 0.69rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.reconcile-duplicate-confirm-card strong {
+  font-size: 0.92rem;
+}
+
+.reconcile-duplicate-confirm-card small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.reconcile-duplicate-confirm-card--change {
+  border-color: color-mix(in oklab, var(--tone-warning) 34%, var(--stroke));
 }
 
 .reconcile-mobile-list {
@@ -7214,6 +7429,18 @@ tbody td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .reconcile-suggestion-head,
+  .reconcile-anomaly-overview-head,
+  .reconcile-duplicate-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .reconcile-duplicate-grid,
+  .reconcile-duplicate-confirm-grid {
+    grid-template-columns: 1fr;
+  }
+
   .loan-intelligence-grid,
   .loan-history-summary-grid,
   .loan-strategy-grid,
@@ -7742,7 +7969,9 @@ tbody td {
   .reconcile-summary-strip,
   .reconcile-filter-grid,
   .reconcile-mobile-grid,
-  .row-actions--reconcile-mobile {
+  .row-actions--reconcile-mobile,
+  .reconcile-duplicate-grid,
+  .reconcile-duplicate-confirm-grid {
     grid-template-columns: 1fr;
   }
 

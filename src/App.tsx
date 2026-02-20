@@ -294,6 +294,7 @@ function App() {
 
   const reconciliationSection = useReconciliationSection({
     purchases,
+    transactionRules: phase2Data.transactionRules,
     accounts,
     cards,
     userId,
@@ -866,12 +867,25 @@ function App() {
             runBulkStatus={reconciliationSection.runBulkStatus}
             runBulkCategory={reconciliationSection.runBulkCategory}
             runBulkDelete={reconciliationSection.runBulkDelete}
+            runBulkMatch={reconciliationSection.runBulkMatch}
+            runBulkMarkReconciled={reconciliationSection.runBulkMarkReconciled}
+            runBulkExclude={reconciliationSection.runBulkExclude}
             runQuickMatch={reconciliationSection.runQuickMatch}
             runQuickSplit={reconciliationSection.runQuickSplit}
             runQuickMarkReviewed={reconciliationSection.runQuickMarkReviewed}
             runQuickExclude={reconciliationSection.runQuickExclude}
             runQuickUndo={reconciliationSection.runQuickUndo}
+            runApplyMatchSuggestion={reconciliationSection.runApplyMatchSuggestion}
+            runResolveDuplicateMatch={reconciliationSection.runResolveDuplicateMatch}
+            runCreateOutcomeRuleFromPurchase={reconciliationSection.runCreateOutcomeRuleFromPurchase}
+            runCreateOutcomeRuleFromSuggestion={reconciliationSection.runCreateOutcomeRuleFromSuggestion}
             undoByPurchaseId={reconciliationSection.undoByPurchaseId}
+            ruleFeedback={reconciliationSection.ruleFeedback}
+            dismissRuleFeedback={reconciliationSection.dismissRuleFeedback}
+            matchSuggestions={reconciliationSection.matchSuggestions}
+            duplicateMatches={reconciliationSection.duplicateMatches}
+            anomalySignals={reconciliationSection.anomalySignals}
+            anomalySignalsByPurchaseId={reconciliationSection.anomalySignalsByPurchaseId}
             queue={reconciliationSection.queue}
             formatMoney={formatSection.formatMoney}
             dateLabel={dateLabel}

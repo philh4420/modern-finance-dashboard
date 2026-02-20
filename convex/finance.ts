@@ -746,6 +746,8 @@ const resolvePurchaseRuleOverrides = async (ctx: MutationCtx, userId: string, it
   return {
     category: matchedRule.category.trim(),
     reconciliationStatus: matchedRule.reconciliationStatus,
+    fundingSourceType: matchedRule.fundingSourceType,
+    fundingSourceId: matchedRule.fundingSourceId,
     ruleId: String(matchedRule._id),
   }
 }
@@ -6058,9 +6060,18 @@ export const addPurchase = mutation({
     const requestedStatus = args.reconciliationStatus ?? ruleOverride?.reconciliationStatus
     const ownership: PurchaseOwnership = args.ownership ?? 'shared'
     const taxDeductible = args.taxDeductible ?? false
-    const fundingSourceType: PurchaseFundingSourceType = args.fundingSourceType ?? 'unassigned'
-    const normalizedFundingSourceId = args.fundingSourceId?.trim() || undefined
-    const fundingSourceId = fundingSourceType === 'unassigned' ? undefined : normalizedFundingSourceId
+    const inputFundingSourceType = args.fundingSourceType
+    const normalizedInputFundingSourceId = args.fundingSourceId?.trim() || undefined
+    const hasExplicitFundingSourceInput =
+      inputFundingSourceType !== undefined
+        ? inputFundingSourceType !== 'unassigned' || Boolean(normalizedInputFundingSourceId)
+        : Boolean(normalizedInputFundingSourceId)
+    const ruleFundingSourceType = ruleOverride?.fundingSourceType
+    const ruleFundingSourceId = ruleOverride?.fundingSourceId?.trim() || undefined
+    const fundingSourceType: PurchaseFundingSourceType = hasExplicitFundingSourceInput
+      ? inputFundingSourceType ?? 'unassigned'
+      : ruleFundingSourceType ?? inputFundingSourceType ?? 'unassigned'
+    const fundingSourceId = fundingSourceType === 'unassigned' ? undefined : normalizedInputFundingSourceId ?? ruleFundingSourceId
     if ((fundingSourceType === 'account' || fundingSourceType === 'card') && !fundingSourceId) {
       throw new Error('Choose an account or card source for this purchase.')
     }
@@ -6168,10 +6179,23 @@ export const updatePurchase = mutation({
     const requestedStatus = args.reconciliationStatus ?? ruleOverride?.reconciliationStatus
     const ownership: PurchaseOwnership = args.ownership ?? existing.ownership ?? 'shared'
     const taxDeductible = args.taxDeductible ?? existing.taxDeductible ?? false
-    const fundingSourceType: PurchaseFundingSourceType = args.fundingSourceType ?? existing.fundingSourceType ?? 'unassigned'
-    const normalizedFundingSourceId = args.fundingSourceId?.trim() || undefined
-    const resolvedFundingSourceId = normalizedFundingSourceId ?? existing.fundingSourceId
-    const fundingSourceId = fundingSourceType === 'unassigned' ? undefined : resolvedFundingSourceId
+    const inputFundingSourceType = args.fundingSourceType
+    const normalizedInputFundingSourceId = args.fundingSourceId?.trim() || undefined
+    const baselineFundingSourceType: PurchaseFundingSourceType = inputFundingSourceType ?? existing.fundingSourceType ?? 'unassigned'
+    const baselineFundingSourceId = normalizedInputFundingSourceId ?? existing.fundingSourceId
+    const hasExplicitFundingSourceInput =
+      inputFundingSourceType !== undefined
+        ? inputFundingSourceType !== 'unassigned' || Boolean(normalizedInputFundingSourceId)
+        : Boolean(normalizedInputFundingSourceId)
+    const useRuleFundingOverride =
+      !hasExplicitFundingSourceInput && baselineFundingSourceType === 'unassigned' && !baselineFundingSourceId
+    const fundingSourceType: PurchaseFundingSourceType = useRuleFundingOverride
+      ? ruleOverride?.fundingSourceType ?? baselineFundingSourceType
+      : baselineFundingSourceType
+    const fundingSourceIdCandidate = useRuleFundingOverride
+      ? ruleOverride?.fundingSourceId?.trim() || baselineFundingSourceId
+      : baselineFundingSourceId
+    const fundingSourceId = fundingSourceType === 'unassigned' ? undefined : fundingSourceIdCandidate
     if ((fundingSourceType === 'account' || fundingSourceType === 'card') && !fundingSourceId) {
       throw new Error('Choose an account or card source for this purchase.')
     }

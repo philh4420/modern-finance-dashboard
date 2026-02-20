@@ -5,6 +5,7 @@ import { requireIdentity } from './lib/authz'
 
 const ruleMatchTypeValidator = v.union(v.literal('contains'), v.literal('exact'), v.literal('starts_with'))
 const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
+const purchaseFundingSourceTypeValidator = v.union(v.literal('unassigned'), v.literal('account'), v.literal('card'))
 const incomeAllocationTargetValidator = v.union(
   v.literal('bills'),
   v.literal('savings'),
@@ -21,6 +22,7 @@ type BillDoc = Doc<'bills'>
 type TransactionRuleDoc = Doc<'transactionRules'>
 type IncomeDoc = Doc<'incomes'>
 type IncomePaymentCheckDoc = Doc<'incomePaymentChecks'>
+type PurchaseFundingSourceType = 'unassigned' | 'account' | 'card'
 type PurchaseSplitTemplateLine = {
   category: string
   percentage: number
@@ -103,6 +105,14 @@ const validateRequiredText = (value: string, label: string) => {
   }
 }
 
+const validateOptionalText = (value: string | undefined, label: string, maxLength = 140) => {
+  if (value === undefined) return
+  const trimmed = value.trim()
+  if (trimmed.length > maxLength) {
+    throw new Error(`${label} must be ${maxLength} characters or less.`)
+  }
+}
+
 const validatePositive = (value: number, label: string) => {
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`${label} must be greater than 0.`)
@@ -124,6 +134,24 @@ const validatePercentage = (value: number, label: string) => {
 const validateMonthKey = (value: string, label: string) => {
   if (!/^\d{4}-\d{2}$/.test(value)) {
     throw new Error(`${label} must use YYYY-MM format.`)
+  }
+}
+
+const sanitizeTransactionRuleFundingSource = (args: {
+  fundingSourceType?: PurchaseFundingSourceType
+  fundingSourceId?: string
+}) => {
+  const fundingSourceType = args.fundingSourceType ?? 'unassigned'
+  const normalizedFundingSourceId = args.fundingSourceId?.trim() || undefined
+  const fundingSourceId = fundingSourceType === 'unassigned' ? undefined : normalizedFundingSourceId
+
+  if ((fundingSourceType === 'account' || fundingSourceType === 'card') && !fundingSourceId) {
+    throw new Error('Rule source mapping requires a source id.')
+  }
+
+  return {
+    fundingSourceType,
+    fundingSourceId,
   }
 }
 
@@ -1427,6 +1455,8 @@ export const addTransactionRule = mutation({
     merchantPattern: v.string(),
     category: v.string(),
     reconciliationStatus: v.optional(reconciliationStatusValidator),
+    fundingSourceType: v.optional(purchaseFundingSourceTypeValidator),
+    fundingSourceId: v.optional(v.string()),
     priority: v.number(),
     active: v.boolean(),
   },
@@ -1435,7 +1465,12 @@ export const addTransactionRule = mutation({
     validateRequiredText(args.name, 'Rule name')
     validateRequiredText(args.merchantPattern, 'Merchant pattern')
     validateRequiredText(args.category, 'Rule category')
+    validateOptionalText(args.fundingSourceId, 'Rule source id', 80)
     validateNonNegative(args.priority, 'Rule priority')
+    const sourceMapping = sanitizeTransactionRuleFundingSource({
+      fundingSourceType: args.fundingSourceType,
+      fundingSourceId: args.fundingSourceId,
+    })
 
     await ctx.db.insert('transactionRules', {
       userId: identity.subject,
@@ -1444,6 +1479,8 @@ export const addTransactionRule = mutation({
       merchantPattern: args.merchantPattern.trim(),
       category: args.category.trim(),
       reconciliationStatus: args.reconciliationStatus,
+      fundingSourceType: sourceMapping.fundingSourceType,
+      fundingSourceId: sourceMapping.fundingSourceId,
       priority: Math.floor(args.priority),
       active: args.active,
       createdAt: Date.now(),
@@ -1459,6 +1496,8 @@ export const updateTransactionRule = mutation({
     merchantPattern: v.string(),
     category: v.string(),
     reconciliationStatus: v.optional(reconciliationStatusValidator),
+    fundingSourceType: v.optional(purchaseFundingSourceTypeValidator),
+    fundingSourceId: v.optional(v.string()),
     priority: v.number(),
     active: v.boolean(),
   },
@@ -1472,7 +1511,12 @@ export const updateTransactionRule = mutation({
     validateRequiredText(args.name, 'Rule name')
     validateRequiredText(args.merchantPattern, 'Merchant pattern')
     validateRequiredText(args.category, 'Rule category')
+    validateOptionalText(args.fundingSourceId, 'Rule source id', 80)
     validateNonNegative(args.priority, 'Rule priority')
+    const sourceMapping = sanitizeTransactionRuleFundingSource({
+      fundingSourceType: args.fundingSourceType ?? (existing.fundingSourceType as PurchaseFundingSourceType | undefined),
+      fundingSourceId: args.fundingSourceId ?? existing.fundingSourceId,
+    })
 
     await ctx.db.patch(args.id, {
       name: args.name.trim(),
@@ -1480,6 +1524,8 @@ export const updateTransactionRule = mutation({
       merchantPattern: args.merchantPattern.trim(),
       category: args.category.trim(),
       reconciliationStatus: args.reconciliationStatus,
+      fundingSourceType: sourceMapping.fundingSourceType,
+      fundingSourceId: sourceMapping.fundingSourceId,
       priority: Math.floor(args.priority),
       active: args.active,
     })
@@ -2400,6 +2446,11 @@ export const bulkApplyTransactionRule = mutation({
       await ctx.db.patch(id, {
         category: rule.category,
         reconciliationStatus: rule.reconciliationStatus ?? purchase.reconciliationStatus ?? 'posted',
+        fundingSourceType: rule.fundingSourceType ?? purchase.fundingSourceType ?? 'unassigned',
+        fundingSourceId:
+          (rule.fundingSourceType ?? purchase.fundingSourceType ?? 'unassigned') === 'unassigned'
+            ? undefined
+            : rule.fundingSourceId ?? purchase.fundingSourceId,
       })
       updated += 1
     }

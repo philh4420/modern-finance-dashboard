@@ -603,6 +603,8 @@ export default defineSchema({
     merchantPattern: v.string(),
     category: v.string(),
     reconciliationStatus: v.optional(reconciliationStatus),
+    fundingSourceType: v.optional(purchaseFundingSourceType),
+    fundingSourceId: v.optional(v.string()),
     priority: v.number(),
     active: v.boolean(),
     createdAt: v.number(),
