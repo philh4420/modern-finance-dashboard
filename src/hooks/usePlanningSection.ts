@@ -39,9 +39,12 @@ type BudgetForm = {
 }
 
 type WhatIfInput = {
-  incomeDeltaPercent: string
-  commitmentDeltaPercent: string
-  spendDeltaPercent: string
+  incomeDropPercent: string
+  billIncreasePercent: string
+  extraDebtPayment: string
+  oneOffExpense: string
+  seasonalSmoothingEnabled: boolean
+  seasonalSmoothingMonths: string
 }
 
 type AllocationRuleForm = {
@@ -92,9 +95,12 @@ const emptyBudgetForm = (monthKey: string): BudgetForm => ({
 })
 
 const defaultWhatIf: WhatIfInput = {
-  incomeDeltaPercent: '0',
-  commitmentDeltaPercent: '0',
-  spendDeltaPercent: '0',
+  incomeDropPercent: '0',
+  billIncreasePercent: '0',
+  extraDebtPayment: '0',
+  oneOffExpense: '0',
+  seasonalSmoothingEnabled: true,
+  seasonalSmoothingMonths: '6',
 }
 
 const emptyAllocationRuleForm: AllocationRuleForm = {

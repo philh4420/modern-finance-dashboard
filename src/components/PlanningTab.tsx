@@ -41,9 +41,20 @@ type BudgetForm = {
 }
 
 type WhatIfInput = {
-  incomeDeltaPercent: string
-  commitmentDeltaPercent: string
-  spendDeltaPercent: string
+  incomeDropPercent: string
+  billIncreasePercent: string
+  extraDebtPayment: string
+  oneOffExpense: string
+  seasonalSmoothingEnabled: boolean
+  seasonalSmoothingMonths: string
+}
+
+type ReallocationSuggestion = {
+  id: string
+  title: string
+  detail: string
+  impactAmount: number
+  severity: 'critical' | 'warning' | 'good'
 }
 
 type AllocationRuleForm = {
@@ -162,6 +173,11 @@ const allocationActionTypeLabel: Record<AutoAllocationSuggestionEntry['actionTyp
 }
 
 const planningVersionOrder: PlanningVersionKey[] = ['base', 'conservative', 'aggressive']
+const seasonalIrregularCategoryPattern =
+  /\b(utilit(?:y|ies)|electric|gas|water|energy|heat(?:ing)?|holiday|annual|renew(?:al)?|insurance|tax|school|travel)\b/i
+
+const roundCurrency = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
 export function PlanningTab({
   summary,
@@ -225,21 +241,200 @@ export function PlanningTab({
   const [allocationQuery, setAllocationQuery] = useState('')
   const [allocationSortKey, setAllocationSortKey] = useState<AllocationSortKey>('target_asc')
 
-  const incomeDelta = Number.parseFloat(whatIfInput.incomeDeltaPercent || '0') / 100
-  const commitmentDelta = Number.parseFloat(whatIfInput.commitmentDeltaPercent || '0') / 100
-  const spendDelta = Number.parseFloat(whatIfInput.spendDeltaPercent || '0') / 100
-  const baselineMonthlySpend = summary.purchasesThisMonth
-  const baselineMonthlyNet = summary.projectedMonthlyNet
-  const scenarioMonthlyNet =
-    summary.monthlyIncome * (1 + incomeDelta) -
-    summary.monthlyCommitments * (1 + commitmentDelta) -
-    baselineMonthlySpend * (1 + spendDelta)
-  const scenarioDelta = scenarioMonthlyNet - baselineMonthlyNet
-
-  const forecastByWindow = useMemo(
+  const baselineForecastByWindow = useMemo(
     () => new Map<ForecastWindow['days'], ForecastWindow>(forecastWindows.map((window) => [window.days, window])),
     [forecastWindows],
   )
+  const incomeDropRatio = clamp((Number.parseFloat(whatIfInput.incomeDropPercent || '0') || 0) / 100, 0, 1)
+  const billIncreaseRatio = clamp((Number.parseFloat(whatIfInput.billIncreasePercent || '0') || 0) / 100, 0, 5)
+  const extraDebtPayment = Math.max(Number.parseFloat(whatIfInput.extraDebtPayment || '0') || 0, 0)
+  const oneOffExpense = Math.max(Number.parseFloat(whatIfInput.oneOffExpense || '0') || 0, 0)
+  const seasonalSmoothingMonths = clamp(Math.round(Number.parseFloat(whatIfInput.seasonalSmoothingMonths || '6') || 6), 2, 24)
+  const commitmentsBillShare =
+    summary.monthlyCommitments > 0 ? clamp(summary.monthlyBills / summary.monthlyCommitments, 0, 1) : 0
+
+  const irregularBudgetRows = useMemo(
+    () =>
+      budgetPerformance
+        .map((row) => {
+          const effectiveTarget = Math.max(row.effectiveTarget, 0.01)
+          const projectedVarianceRatio = Math.abs(row.projectedMonthEnd - row.effectiveTarget) / effectiveTarget
+          const seasonalSignal = seasonalIrregularCategoryPattern.test(row.category)
+          return {
+            ...row,
+            projectedVarianceRatio,
+            isIrregular: seasonalSignal || projectedVarianceRatio >= 0.24,
+          }
+        })
+        .filter((row) => row.isIrregular),
+    [budgetPerformance],
+  )
+
+  const irregularOvershoot = useMemo(
+    () => irregularBudgetRows.reduce((sum, row) => sum + Math.max(row.projectedMonthEnd - row.effectiveTarget, 0), 0),
+    [irregularBudgetRows],
+  )
+  const smoothingWeight = whatIfInput.seasonalSmoothingEnabled
+    ? clamp(seasonalSmoothingMonths / 12, 0.2, 1.5)
+    : 0
+  const seasonalSmoothingAdjustment = roundCurrency(irregularOvershoot * smoothingWeight)
+  const baselineMonthlyNet = planningWorkspace.plannedMonthlyNet
+  const plannedIncomeAfterDrop = planningWorkspace.plannedExpectedIncome * (1 - incomeDropRatio)
+  const estimatedBillIncrease = planningWorkspace.plannedFixedCommitments * commitmentsBillShare * billIncreaseRatio
+  const plannedFixedAfterWhatIf = planningWorkspace.plannedFixedCommitments + estimatedBillIncrease + extraDebtPayment
+  const plannedVariableAfterWhatIf = planningWorkspace.plannedVariableSpendingCap + seasonalSmoothingAdjustment
+  const scenarioMonthlyNet = plannedIncomeAfterDrop - plannedFixedAfterWhatIf - plannedVariableAfterWhatIf
+  const scenarioDelta = scenarioMonthlyNet - baselineMonthlyNet
+  const monthlyRunRateOutflow = plannedFixedAfterWhatIf + plannedVariableAfterWhatIf
+
+  const planningForecastWindows = useMemo(() => {
+    return ([30, 90, 365] as const).map((days) => {
+      const periodFactor = days / 30
+      const projectedNet = roundCurrency(scenarioMonthlyNet * periodFactor - oneOffExpense)
+      const projectedCash = roundCurrency(summary.liquidReserves + projectedNet)
+      const baselineWindow = baselineForecastByWindow.get(days)
+      const baselineProjectedCash = baselineWindow
+        ? baselineWindow.projectedCash
+        : roundCurrency(summary.liquidReserves + baselineMonthlyNet * periodFactor)
+      const deltaProjectedCash = roundCurrency(projectedCash - baselineProjectedCash)
+      const coverageMonths = monthlyRunRateOutflow > 0 ? roundCurrency(projectedCash / monthlyRunRateOutflow) : 99
+      const risk: ForecastWindow['risk'] =
+        projectedCash < 0 ? 'critical' : projectedCash < plannedFixedAfterWhatIf ? 'warning' : 'healthy'
+      return {
+        days,
+        projectedNet,
+        projectedCash,
+        coverageMonths,
+        risk,
+        baselineProjectedCash,
+        deltaProjectedCash,
+      }
+    })
+  }, [
+    baselineForecastByWindow,
+    baselineMonthlyNet,
+    monthlyRunRateOutflow,
+    oneOffExpense,
+    plannedFixedAfterWhatIf,
+    scenarioMonthlyNet,
+    summary.liquidReserves,
+  ])
+
+  const forecastByWindow = useMemo(
+    () => new Map<ForecastWindow['days'], (typeof planningForecastWindows)[number]>(planningForecastWindows.map((window) => [window.days, window])),
+    [planningForecastWindows],
+  )
+
+  const autoReallocationSuggestions = useMemo<ReallocationSuggestion[]>(() => {
+    const monthlyGapFromNet = Math.max(roundCurrency(-scenarioMonthlyNet), 0)
+    const monthlyGapFromCash = planningForecastWindows.reduce((maxGap, window) => {
+      if (window.projectedCash >= 0) return maxGap
+      return Math.max(maxGap, roundCurrency((-window.projectedCash / window.days) * 30))
+    }, 0)
+    const gap = Math.max(monthlyGapFromNet, monthlyGapFromCash)
+
+    if (gap <= 0) {
+      return [
+        {
+          id: 'stable-plan',
+          title: 'Plan is cash-positive across 30/90/365 days',
+          detail: 'No automatic reallocation required. Keep monitoring seasonal categories and bill risk alerts.',
+          impactAmount: 0,
+          severity: 'good',
+        },
+      ]
+    }
+
+    const suggestions: ReallocationSuggestion[] = []
+    let remainingGap = gap
+
+    const variableCapCut = roundCurrency(Math.min(remainingGap, plannedVariableAfterWhatIf * 0.22))
+    if (variableCapCut > 0) {
+      suggestions.push({
+        id: 'trim-variable-cap',
+        title: 'Trim variable spending cap',
+        detail: `Reduce discretionary cap by ${formatMoney(variableCapCut)} / month to close the immediate forecast gap.`,
+        impactAmount: variableCapCut,
+        severity: 'critical',
+      })
+      remainingGap = roundCurrency(Math.max(remainingGap - variableCapCut, 0))
+    }
+
+    const savingsAndGoalsCapacity = autoAllocationPlan.buckets
+      .filter((bucket) => bucket.active && (bucket.target === 'savings' || bucket.target === 'goals'))
+      .reduce((sum, bucket) => sum + bucket.monthlyAmount, 0)
+    const reallocationShift = roundCurrency(Math.min(remainingGap, savingsAndGoalsCapacity))
+    if (reallocationShift > 0) {
+      suggestions.push({
+        id: 'shift-allocation',
+        title: 'Shift savings/goals allocation to bills',
+        detail: `Temporarily re-route ${formatMoney(reallocationShift)} / month from savings/goals buckets to bill coverage.`,
+        impactAmount: reallocationShift,
+        severity: remainingGap > gap * 0.35 ? 'critical' : 'warning',
+      })
+      remainingGap = roundCurrency(Math.max(remainingGap - reallocationShift, 0))
+    }
+
+    if (extraDebtPayment > 0 && remainingGap > 0) {
+      const pauseDebtOverpay = roundCurrency(Math.min(remainingGap, extraDebtPayment))
+      suggestions.push({
+        id: 'pause-extra-debt',
+        title: 'Pause extra debt overpay',
+        detail: `Hold ${formatMoney(pauseDebtOverpay)} / month in extra debt payments until forecast returns above zero.`,
+        impactAmount: pauseDebtOverpay,
+        severity: 'warning',
+      })
+      remainingGap = roundCurrency(Math.max(remainingGap - pauseDebtOverpay, 0))
+    }
+
+    if (oneOffExpense > 0 && remainingGap > 0) {
+      const spreadRelief = roundCurrency(Math.min(remainingGap, oneOffExpense / 3))
+      suggestions.push({
+        id: 'spread-one-off',
+        title: 'Split one-off expense over 3 months',
+        detail: `Spreading the one-off cost frees about ${formatMoney(spreadRelief)} / month in near-term cashflow.`,
+        impactAmount: spreadRelief,
+        severity: 'warning',
+      })
+      remainingGap = roundCurrency(Math.max(remainingGap - spreadRelief, 0))
+    }
+
+    if (irregularBudgetRows.length > 0 && remainingGap > 0) {
+      const irregularFocusAmount = roundCurrency(Math.min(remainingGap, irregularOvershoot))
+      suggestions.push({
+        id: 'tighten-irregular-categories',
+        title: 'Target irregular categories first',
+        detail: `Focus controls on ${irregularBudgetRows.length} irregular categories to recover ${formatMoney(
+          irregularFocusAmount,
+        )} / month.`,
+        impactAmount: irregularFocusAmount,
+        severity: 'warning',
+      })
+      remainingGap = roundCurrency(Math.max(remainingGap - irregularFocusAmount, 0))
+    }
+
+    if (remainingGap > 0) {
+      suggestions.push({
+        id: 'residual-gap',
+        title: 'Residual gap requires structural changes',
+        detail: `${formatMoney(remainingGap)} / month still uncovered. Consider renegotiating fixed commitments or increasing income assumptions.`,
+        impactAmount: remainingGap,
+        severity: 'critical',
+      })
+    }
+
+    return suggestions
+  }, [
+    autoAllocationPlan.buckets,
+    extraDebtPayment,
+    formatMoney,
+    irregularBudgetRows,
+    irregularOvershoot,
+    oneOffExpense,
+    planningForecastWindows,
+    plannedVariableAfterWhatIf,
+    scenarioMonthlyNet,
+  ])
 
   const budgetById = useMemo(() => {
     const lookup = new Map<string, EnvelopeBudgetEntry>()
@@ -1417,91 +1612,146 @@ export function PlanningTab({
       <article className="panel panel-cash-events">
         <header className="panel-header">
           <div>
-            <p className="panel-kicker">Forecast</p>
-            <h2>30 / 90 / 365 outlook</h2>
+            <p className="panel-kicker">Phase 2 Forecast</p>
+            <h2>Plan-linked 30 / 90 / 365 outlook</h2>
+            <p className="panel-value">{formatMoney(scenarioMonthlyNet)} scenario monthly net</p>
           </div>
+          <span className={scenarioDeltaPill}>
+            {scenarioDelta >= 0 ? '+' : ''}
+            {formatMoney(scenarioDelta)}
+          </span>
         </header>
-        {forecastWindows.length === 0 ? (
-          <p className="empty-state">Forecast unavailable until data is added.</p>
-        ) : (
-          <div className="table-wrap table-wrap--card">
-            <table className="data-table">
-              <caption className="sr-only">Forecast windows</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Window</th>
-                  <th scope="col">Projected cash</th>
-                  <th scope="col">Projected net</th>
-                  <th scope="col">Coverage</th>
-                  <th scope="col">Risk</th>
+        <div className="table-wrap table-wrap--card">
+          <table className="data-table">
+            <caption className="sr-only">Plan-linked forecast windows</caption>
+            <thead>
+              <tr>
+                <th scope="col">Window</th>
+                <th scope="col">Projected cash</th>
+                <th scope="col">Vs baseline</th>
+                <th scope="col">Projected net</th>
+                <th scope="col">Coverage</th>
+                <th scope="col">Risk</th>
+              </tr>
+            </thead>
+            <tbody>
+              {planningForecastWindows.map((window) => (
+                <tr key={window.days}>
+                  <td>{window.days} days</td>
+                  <td className="table-amount">{formatMoney(window.projectedCash)}</td>
+                  <td className={`table-amount ${window.deltaProjectedCash < 0 ? 'amount-negative' : 'amount-positive'}`}>
+                    {window.deltaProjectedCash >= 0 ? '+' : ''}
+                    {formatMoney(window.deltaProjectedCash)}
+                  </td>
+                  <td className={`table-amount ${window.projectedNet < 0 ? 'amount-negative' : 'amount-positive'}`}>
+                    {formatMoney(window.projectedNet)}
+                  </td>
+                  <td>{window.coverageMonths.toFixed(1)} months</td>
+                  <td>
+                    <span className={forecastRiskPill(window.risk)}>{window.risk}</span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {forecastWindows.map((window) => (
-                  <tr key={window.days}>
-                    <td>{window.days} days</td>
-                    <td className="table-amount">{formatMoney(window.projectedCash)}</td>
-                    <td className={`table-amount ${window.projectedNet < 0 ? 'amount-negative' : 'amount-positive'}`}>
-                      {formatMoney(window.projectedNet)}
-                    </td>
-                    <td>{window.coverageMonths.toFixed(1)} months</td>
-                    <td>
-                      <span className={forecastRiskPill(window.risk)}>{window.risk}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              ))}
+            </tbody>
+          </table>
+        </div>
       </article>
 
       <article className="panel panel-cash-events">
         <header className="panel-header">
           <div>
-            <p className="panel-kicker">What-If</p>
-            <h2>Scenario simulator</h2>
+            <p className="panel-kicker">What-If Simulator</p>
+            <h2>Income, bills, debt, and one-off shock testing</h2>
           </div>
         </header>
         <div className="entry-form entry-form--grid">
           <div className="form-grid">
             <div className="form-field">
-              <label htmlFor="whatif-income">Income delta %</label>
+              <label htmlFor="whatif-income-drop">Income drop %</label>
               <input
-                id="whatif-income"
+                id="whatif-income-drop"
                 type="number"
                 inputMode="decimal"
-                step="1"
-                value={whatIfInput.incomeDeltaPercent}
+                min="0"
+                step="0.1"
+                value={whatIfInput.incomeDropPercent}
                 onChange={(event) =>
-                  setWhatIfInput((previous) => ({ ...previous, incomeDeltaPercent: event.target.value }))
+                  setWhatIfInput((previous) => ({ ...previous, incomeDropPercent: event.target.value }))
                 }
               />
             </div>
 
             <div className="form-field">
-              <label htmlFor="whatif-commitments">Commitments delta %</label>
+              <label htmlFor="whatif-bill-increase">Bill increase %</label>
               <input
-                id="whatif-commitments"
+                id="whatif-bill-increase"
                 type="number"
                 inputMode="decimal"
-                step="1"
-                value={whatIfInput.commitmentDeltaPercent}
+                min="0"
+                step="0.1"
+                value={whatIfInput.billIncreasePercent}
                 onChange={(event) =>
-                  setWhatIfInput((previous) => ({ ...previous, commitmentDeltaPercent: event.target.value }))
+                  setWhatIfInput((previous) => ({ ...previous, billIncreasePercent: event.target.value }))
                 }
               />
             </div>
 
-            <div className="form-field form-field--span2">
-              <label htmlFor="whatif-spend">Variable spend delta %</label>
+            <div className="form-field">
+              <label htmlFor="whatif-extra-debt">Extra debt payment / month</label>
               <input
-                id="whatif-spend"
+                id="whatif-extra-debt"
                 type="number"
                 inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={whatIfInput.extraDebtPayment}
+                onChange={(event) =>
+                  setWhatIfInput((previous) => ({ ...previous, extraDebtPayment: event.target.value }))
+                }
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="whatif-oneoff">One-off expense</label>
+              <input
+                id="whatif-oneoff"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={whatIfInput.oneOffExpense}
+                onChange={(event) => setWhatIfInput((previous) => ({ ...previous, oneOffExpense: event.target.value }))}
+              />
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="whatif-seasonal-smoothing-enabled">
+                <input
+                  id="whatif-seasonal-smoothing-enabled"
+                  type="checkbox"
+                  checked={whatIfInput.seasonalSmoothingEnabled}
+                  onChange={(event) =>
+                    setWhatIfInput((previous) => ({ ...previous, seasonalSmoothingEnabled: event.target.checked }))
+                  }
+                />
+                Enable seasonal smoothing for irregular categories
+              </label>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="whatif-seasonal-lookback">Smoothing lookback (months)</label>
+              <input
+                id="whatif-seasonal-lookback"
+                type="number"
+                inputMode="numeric"
+                min="2"
+                max="24"
                 step="1"
-                value={whatIfInput.spendDeltaPercent}
-                onChange={(event) => setWhatIfInput((previous) => ({ ...previous, spendDeltaPercent: event.target.value }))}
+                value={whatIfInput.seasonalSmoothingMonths}
+                disabled={!whatIfInput.seasonalSmoothingEnabled}
+                onChange={(event) =>
+                  setWhatIfInput((previous) => ({ ...previous, seasonalSmoothingMonths: event.target.value }))
+                }
               />
             </div>
           </div>
@@ -1510,7 +1760,7 @@ export function PlanningTab({
             <div>
               <p>Baseline monthly net</p>
               <strong>{formatMoney(baselineMonthlyNet)}</strong>
-              <small>Current projection</small>
+              <small>Selected plan version before simulator shocks</small>
             </div>
             <div>
               <p>Scenario monthly net</p>
@@ -1522,8 +1772,40 @@ export function PlanningTab({
                 </span>
               </small>
             </div>
+            <div>
+              <p>Seasonal adjustment</p>
+              <strong>{formatMoney(seasonalSmoothingAdjustment)}</strong>
+              <small>
+                {irregularBudgetRows.length} irregular categories · {seasonalSmoothingMonths}m lookback
+              </small>
+            </div>
           </div>
         </div>
+      </article>
+
+      <article className="panel panel-cash-events">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Auto-Reallocation</p>
+            <h2>Negative forecast response</h2>
+            <p className="panel-value">
+              {planningForecastWindows.some((window) => window.projectedCash < 0) ? 'Forecast breach detected' : 'No breach detected'}
+            </p>
+          </div>
+        </header>
+        <ul className="timeline-list">
+          {autoReallocationSuggestions.map((suggestion) => (
+            <li key={suggestion.id}>
+              <div>
+                <p>{suggestion.title}</p>
+                <small>{suggestion.detail}</small>
+              </div>
+              <span className={suggestion.severity === 'critical' ? 'pill pill--critical' : suggestion.severity === 'warning' ? 'pill pill--warning' : 'pill pill--good'}>
+                {suggestion.impactAmount > 0 ? formatMoney(suggestion.impactAmount) : 'stable'}
+              </span>
+            </li>
+          ))}
+        </ul>
       </article>
 
       <article className="panel panel-categories">
