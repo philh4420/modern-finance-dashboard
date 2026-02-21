@@ -12,6 +12,7 @@ const incomeAllocationTargetValidator = v.union(
   v.literal('goals'),
   v.literal('debt_overpay'),
 )
+const planningVersionKeyValidator = v.union(v.literal('base'), v.literal('conservative'), v.literal('aggressive'))
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
@@ -40,6 +41,7 @@ type BillRiskLevel = 'good' | 'warning' | 'critical'
 type ForecastRiskLevel = 'healthy' | 'warning' | 'critical'
 type IncomeAllocationTarget = 'bills' | 'savings' | 'goals' | 'debt_overpay'
 type AutoAllocationActionType = 'reserve_bills' | 'move_to_savings' | 'fund_goals' | 'debt_overpay'
+type PlanningVersionKey = 'base' | 'conservative' | 'aggressive'
 
 type ForecastWindow = {
   days: 30 | 90 | 365
@@ -92,6 +94,19 @@ type AutoAllocationSuggestion = {
   month: string
   runId: string
   createdAt: number
+}
+
+type PlanningVersionDraft = {
+  versionKey: PlanningVersionKey
+  label: string
+  description: string
+  expectedIncome: number
+  fixedCommitments: number
+  variableSpendingCap: number
+  notes: string
+  isSelected: boolean
+  isPersisted: boolean
+  updatedAt: number
 }
 
 const validateRequiredText = (value: string, label: string) => {
@@ -311,6 +326,17 @@ const incomeAllocationTargetLabel: Record<IncomeAllocationTarget, string> = {
   goals: 'Goals',
   debt_overpay: 'Debt Overpay',
 }
+const planningVersionLabel: Record<PlanningVersionKey, string> = {
+  base: 'Base',
+  conservative: 'Conservative',
+  aggressive: 'Aggressive',
+}
+const planningVersionDescription: Record<PlanningVersionKey, string> = {
+  base: 'Balanced baseline aligned with current monthly behavior.',
+  conservative: 'Defensive assumptions for tighter cash preservation.',
+  aggressive: 'Growth-leaning assumptions for faster progress.',
+}
+const planningVersionOrder: PlanningVersionKey[] = ['base', 'conservative', 'aggressive']
 
 const allocationTargets: IncomeAllocationTarget[] = ['bills', 'savings', 'goals', 'debt_overpay']
 
@@ -700,6 +726,58 @@ const estimateLoanMonthlyPayment = (loan: Doc<'loans'>) => {
   return roundCurrency(duePayment * occurrencesPerMonth)
 }
 
+const buildDefaultPlanningVersionMap = (args: {
+  baselineExpectedIncome: number
+  baselineFixedCommitments: number
+  baselineVariableSpendingCap: number
+  baselineNotes?: string
+  selectedVersion?: PlanningVersionKey
+  nowTimestamp: number
+}) => {
+  const baseIncome = roundCurrency(Math.max(args.baselineExpectedIncome, 0))
+  const baseCommitments = roundCurrency(Math.max(args.baselineFixedCommitments, 0))
+  const baseVariableCap = roundCurrency(Math.max(args.baselineVariableSpendingCap, 0))
+  const defaults: Record<PlanningVersionKey, Omit<PlanningVersionDraft, 'versionKey'>> = {
+    base: {
+      label: planningVersionLabel.base,
+      description: planningVersionDescription.base,
+      expectedIncome: baseIncome,
+      fixedCommitments: baseCommitments,
+      variableSpendingCap: baseVariableCap,
+      notes: args.baselineNotes ?? '',
+      isSelected: (args.selectedVersion ?? 'base') === 'base',
+      isPersisted: false,
+      updatedAt: args.nowTimestamp,
+    },
+    conservative: {
+      label: planningVersionLabel.conservative,
+      description: planningVersionDescription.conservative,
+      expectedIncome: roundCurrency(baseIncome * 0.95),
+      fixedCommitments: roundCurrency(baseCommitments * 1.03),
+      variableSpendingCap: roundCurrency(baseVariableCap * 0.85),
+      notes: '',
+      isSelected: (args.selectedVersion ?? 'base') === 'conservative',
+      isPersisted: false,
+      updatedAt: args.nowTimestamp,
+    },
+    aggressive: {
+      label: planningVersionLabel.aggressive,
+      description: planningVersionDescription.aggressive,
+      expectedIncome: roundCurrency(baseIncome * 1.05),
+      fixedCommitments: roundCurrency(baseCommitments * 0.98),
+      variableSpendingCap: roundCurrency(baseVariableCap * 1.15),
+      notes: '',
+      isSelected: (args.selectedVersion ?? 'base') === 'aggressive',
+      isPersisted: false,
+      updatedAt: args.nowTimestamp,
+    },
+  }
+
+  return new Map<PlanningVersionKey, Omit<PlanningVersionDraft, 'versionKey'>>(
+    planningVersionOrder.map((versionKey) => [versionKey, defaults[versionKey]]),
+  )
+}
+
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
 
 const dateWithClampedDay = (year: number, month: number, day: number) => {
@@ -945,6 +1023,305 @@ export const applyRulesPreview = query({
       : {
           matched: false,
         }
+  },
+})
+
+export const getPlanningPhase1Data = query({
+  args: {
+    month: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity()
+    const now = new Date()
+    const nowTimestamp = now.getTime()
+    const monthKey = args.month ?? toMonthKey(now)
+    if (args.month) {
+      validateMonthKey(args.month, 'Month')
+    }
+
+    const emptyBaseline = {
+      expectedIncome: 0,
+      fixedCommitments: 0,
+      variableSpendingCap: 0,
+      monthlyNet: 0,
+    }
+    if (!identity) {
+      const defaults = buildDefaultPlanningVersionMap({
+        baselineExpectedIncome: 0,
+        baselineFixedCommitments: 0,
+        baselineVariableSpendingCap: 0,
+        nowTimestamp,
+      })
+      const versions = planningVersionOrder.map((versionKey) => ({
+        id: `default:${monthKey}:${versionKey}`,
+        month: monthKey,
+        versionKey,
+        label: planningVersionLabel[versionKey],
+        description: planningVersionDescription[versionKey],
+        expectedIncome: defaults.get(versionKey)!.expectedIncome,
+        fixedCommitments: defaults.get(versionKey)!.fixedCommitments,
+        variableSpendingCap: defaults.get(versionKey)!.variableSpendingCap,
+        monthlyNet: 0,
+        notes: '',
+        isSelected: versionKey === 'base',
+        isPersisted: false,
+        updatedAt: nowTimestamp,
+      }))
+      return {
+        monthKey,
+        selectedVersion: 'base' as PlanningVersionKey,
+        versions,
+        workspace: {
+          month: monthKey,
+          baselineExpectedIncome: 0,
+          baselineFixedCommitments: 0,
+          baselineVariableSpendingCap: 0,
+          baselineMonthlyNet: 0,
+          plannedExpectedIncome: 0,
+          plannedFixedCommitments: 0,
+          plannedVariableSpendingCap: 0,
+          plannedMonthlyNet: 0,
+          deltaExpectedIncome: 0,
+          deltaFixedCommitments: 0,
+          deltaVariableSpendingCap: 0,
+          deltaMonthlyNet: 0,
+          envelopeTargetTotal: 0,
+          envelopeCarryoverTotal: 0,
+          envelopeEffectiveTargetTotal: 0,
+          envelopeProjectedSpendTotal: 0,
+          envelopeSuggestedRolloverTotal: 0,
+          envelopeCoveragePercent: 0,
+        },
+      }
+    }
+
+    const [
+      incomes,
+      incomePaymentChecks,
+      bills,
+      cards,
+      loans,
+      purchases,
+      purchaseSplits,
+      envelopeBudgets,
+      planningMonthVersions,
+    ] = await Promise.all([
+      ctx.db
+        .query('incomes')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('incomePaymentChecks')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('bills')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('cards')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('loans')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('purchases')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('purchaseSplits')
+        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('envelopeBudgets')
+        .withIndex('by_userId_month', (q) => q.eq('userId', identity.subject).eq('month', monthKey))
+        .collect(),
+      ctx.db
+        .query('planningMonthVersions')
+        .withIndex('by_userId_month', (q) => q.eq('userId', identity.subject).eq('month', monthKey))
+        .collect(),
+    ])
+
+    const incomeChecksByIncomeId = new Map<string, Map<string, IncomePaymentCheckDoc>>()
+    incomePaymentChecks.forEach((entry) => {
+      const incomeId = String(entry.incomeId)
+      const checksByMonth = incomeChecksByIncomeId.get(incomeId) ?? new Map<string, IncomePaymentCheckDoc>()
+      const existing = checksByMonth.get(entry.cycleMonth)
+      if (!existing || entry.updatedAt > existing.updatedAt) {
+        checksByMonth.set(entry.cycleMonth, entry)
+      }
+      incomeChecksByIncomeId.set(incomeId, checksByMonth)
+    })
+
+    const monthlyIncomeForForecast = incomes.reduce((sum, income) => {
+      const paymentChecksByMonth = incomeChecksByIncomeId.get(String(income._id)) ?? new Map<string, IncomePaymentCheckDoc>()
+      return (
+        sum +
+        resolveIncomeForecastMonthlyAmount({
+          income,
+          anchorMonthKey: monthKey,
+          paymentChecksByMonth,
+        })
+      )
+    }, 0)
+
+    const monthlyBills = bills.reduce(
+      (sum, bill) => sum + toMonthlyAmount(bill.amount, bill.cadence, bill.customInterval, bill.customUnit),
+      0,
+    )
+    const monthlyCardPayments = cards.reduce((sum, card) => sum + finiteOrZero(card.minimumPayment), 0)
+    const monthlyLoanPayments = loans.reduce(
+      (sum, loan) =>
+        sum +
+        estimateLoanMonthlyPayment(loan) +
+        finiteOrZero(loan.subscriptionCost),
+      0,
+    )
+    const monthlyCommitments = roundCurrency(monthlyBills + monthlyCardPayments + monthlyLoanPayments)
+
+    const ninetyDayWindowStart = new Date(now.getTime() - 90 * 86400000)
+    const recentPurchases = purchases.filter((purchase) => new Date(`${purchase.purchaseDate}T00:00:00`) >= ninetyDayWindowStart)
+    const averageDailySpend = recentPurchases.reduce((sum, purchase) => sum + purchase.amount, 0) / 90
+    const monthlySpendEstimate = roundCurrency(averageDailySpend * 30)
+
+    const baseline = {
+      expectedIncome: roundCurrency(monthlyIncomeForForecast),
+      fixedCommitments: roundCurrency(monthlyCommitments),
+      variableSpendingCap: roundCurrency(monthlySpendEstimate),
+      monthlyNet: roundCurrency(monthlyIncomeForForecast - monthlyCommitments - monthlySpendEstimate),
+    }
+
+    const selectedSavedVersion = planningMonthVersions.find((entry) => entry.isSelected)?.versionKey ?? 'base'
+    const defaultVersionMap = buildDefaultPlanningVersionMap({
+      baselineExpectedIncome: baseline.expectedIncome,
+      baselineFixedCommitments: baseline.fixedCommitments,
+      baselineVariableSpendingCap: baseline.variableSpendingCap,
+      selectedVersion: selectedSavedVersion,
+      nowTimestamp,
+    })
+    const savedByVersion = new Map<PlanningVersionKey, Doc<'planningMonthVersions'>>()
+    planningMonthVersions.forEach((entry) => {
+      savedByVersion.set(entry.versionKey as PlanningVersionKey, entry)
+    })
+
+    const versions = planningVersionOrder.map((versionKey) => {
+      const saved = savedByVersion.get(versionKey)
+      const fallback = defaultVersionMap.get(versionKey)!
+      const expectedIncome = roundCurrency(saved?.expectedIncome ?? fallback.expectedIncome)
+      const fixedCommitments = roundCurrency(saved?.fixedCommitments ?? fallback.fixedCommitments)
+      const variableSpendingCap = roundCurrency(saved?.variableSpendingCap ?? fallback.variableSpendingCap)
+      return {
+        id: saved ? String(saved._id) : `default:${monthKey}:${versionKey}`,
+        month: monthKey,
+        versionKey,
+        label: planningVersionLabel[versionKey],
+        description: planningVersionDescription[versionKey],
+        expectedIncome,
+        fixedCommitments,
+        variableSpendingCap,
+        monthlyNet: roundCurrency(expectedIncome - fixedCommitments - variableSpendingCap),
+        notes: saved?.notes?.trim() ?? fallback.notes,
+        isSelected: saved ? saved.isSelected : versionKey === selectedSavedVersion,
+        isPersisted: Boolean(saved),
+        updatedAt: saved?.updatedAt ?? fallback.updatedAt,
+      }
+    })
+
+    const splitMap = new Map<string, Array<{ category: string; amount: number }>>()
+    purchaseSplits.forEach((split) => {
+      const key = String(split.purchaseId)
+      const current = splitMap.get(key) ?? []
+      current.push({
+        category: split.category,
+        amount: split.amount,
+      })
+      splitMap.set(key, current)
+    })
+
+    const monthPurchases = purchases.filter((purchase) => purchase.purchaseDate.startsWith(monthKey))
+    const monthSpendByCategory = new Map<string, number>()
+    monthPurchases.forEach((purchase) => {
+      const splits = splitMap.get(String(purchase._id))
+      if (splits && splits.length > 0) {
+        splits.forEach((split) => {
+          monthSpendByCategory.set(split.category, (monthSpendByCategory.get(split.category) ?? 0) + split.amount)
+        })
+      } else {
+        monthSpendByCategory.set(purchase.category, (monthSpendByCategory.get(purchase.category) ?? 0) + purchase.amount)
+      }
+    })
+
+    const monthDate = new Date(`${monthKey}-01T00:00:00`)
+    const daysInMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).getDate()
+    const isCurrentMonth = monthKey === toMonthKey(now)
+    const elapsedDays = isCurrentMonth ? Math.max(now.getDate(), 1) : daysInMonth
+    const projectedSpendByCategory = new Map<string, number>()
+    monthSpendByCategory.forEach((spent, category) => {
+      const projected = roundCurrency((spent / elapsedDays) * daysInMonth)
+      projectedSpendByCategory.set(category, projected)
+    })
+
+    const envelopeTargetTotal = roundCurrency(envelopeBudgets.reduce((sum, budget) => sum + budget.targetAmount, 0))
+    const envelopeCarryoverTotal = roundCurrency(
+      envelopeBudgets.reduce((sum, budget) => sum + finiteOrZero(budget.carryoverAmount), 0),
+    )
+    const envelopeEffectiveTargetTotal = roundCurrency(envelopeTargetTotal + envelopeCarryoverTotal)
+    const envelopeProjectedSpendTotal = roundCurrency(
+      [...projectedSpendByCategory.values()].reduce((sum, amount) => sum + amount, 0),
+    )
+    const envelopeSuggestedRolloverTotal = roundCurrency(
+      envelopeBudgets.reduce((sum, budget) => {
+        if (!budget.rolloverEnabled) return sum
+        const projectedSpent = projectedSpendByCategory.get(budget.category) ?? 0
+        const effectiveTarget = budget.targetAmount + finiteOrZero(budget.carryoverAmount)
+        return sum + Math.max(roundCurrency(effectiveTarget - projectedSpent), 0)
+      }, 0),
+    )
+
+    const selectedVersion = versions.find((version) => version.isSelected)?.versionKey ?? 'base'
+    const selectedPlan = versions.find((version) => version.versionKey === selectedVersion) ?? versions[0]
+    const planned = selectedPlan
+      ? {
+          expectedIncome: selectedPlan.expectedIncome,
+          fixedCommitments: selectedPlan.fixedCommitments,
+          variableSpendingCap: selectedPlan.variableSpendingCap,
+          monthlyNet: selectedPlan.monthlyNet,
+        }
+      : emptyBaseline
+
+    const envelopeCoveragePercent =
+      planned.variableSpendingCap > 0
+        ? roundPercent((envelopeEffectiveTargetTotal / planned.variableSpendingCap) * 100)
+        : 0
+
+    return {
+      monthKey,
+      selectedVersion,
+      versions,
+      workspace: {
+        month: monthKey,
+        baselineExpectedIncome: baseline.expectedIncome,
+        baselineFixedCommitments: baseline.fixedCommitments,
+        baselineVariableSpendingCap: baseline.variableSpendingCap,
+        baselineMonthlyNet: baseline.monthlyNet,
+        plannedExpectedIncome: planned.expectedIncome,
+        plannedFixedCommitments: planned.fixedCommitments,
+        plannedVariableSpendingCap: planned.variableSpendingCap,
+        plannedMonthlyNet: planned.monthlyNet,
+        deltaExpectedIncome: roundCurrency(planned.expectedIncome - baseline.expectedIncome),
+        deltaFixedCommitments: roundCurrency(planned.fixedCommitments - baseline.fixedCommitments),
+        deltaVariableSpendingCap: roundCurrency(planned.variableSpendingCap - baseline.variableSpendingCap),
+        deltaMonthlyNet: roundCurrency(planned.monthlyNet - baseline.monthlyNet),
+        envelopeTargetTotal,
+        envelopeCarryoverTotal,
+        envelopeEffectiveTargetTotal,
+        envelopeProjectedSpendTotal,
+        envelopeSuggestedRolloverTotal,
+        envelopeCoveragePercent,
+      },
+    }
   },
 })
 
@@ -1847,6 +2224,85 @@ export const applyIncomeAutoAllocationNow = mutation({
       residualAmount: autoAllocationPlan.residualAmount,
       overAllocatedPercent: autoAllocationPlan.overAllocatedPercent,
       suggestions: created,
+    }
+  },
+})
+
+export const upsertPlanningMonthVersion = mutation({
+  args: {
+    month: v.string(),
+    versionKey: planningVersionKeyValidator,
+    expectedIncome: v.number(),
+    fixedCommitments: v.number(),
+    variableSpendingCap: v.number(),
+    notes: v.optional(v.string()),
+    selectAfterSave: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validateMonthKey(args.month, 'Month')
+    validateNonNegative(args.expectedIncome, 'Expected income')
+    validateNonNegative(args.fixedCommitments, 'Fixed commitments')
+    validateNonNegative(args.variableSpendingCap, 'Variable spending cap')
+    validateOptionalText(args.notes, 'Version notes', 500)
+
+    const now = Date.now()
+    const monthRows = await ctx.db
+      .query('planningMonthVersions')
+      .withIndex('by_userId_month', (q) => q.eq('userId', identity.subject).eq('month', args.month))
+      .collect()
+
+    const existing = monthRows.find((row) => row.versionKey === args.versionKey)
+    const hasSelectedVersion = monthRows.some((row) => row.isSelected)
+    const shouldSelect =
+      args.selectAfterSave === true ||
+      (!hasSelectedVersion && args.versionKey === 'base')
+
+    let targetId: Id<'planningMonthVersions'>
+    if (existing) {
+      targetId = existing._id
+      await ctx.db.patch(existing._id, {
+        expectedIncome: roundCurrency(args.expectedIncome),
+        fixedCommitments: roundCurrency(args.fixedCommitments),
+        variableSpendingCap: roundCurrency(args.variableSpendingCap),
+        notes: args.notes?.trim() || undefined,
+        updatedAt: now,
+      })
+    } else {
+      targetId = await ctx.db.insert('planningMonthVersions', {
+        userId: identity.subject,
+        month: args.month,
+        versionKey: args.versionKey,
+        expectedIncome: roundCurrency(args.expectedIncome),
+        fixedCommitments: roundCurrency(args.fixedCommitments),
+        variableSpendingCap: roundCurrency(args.variableSpendingCap),
+        notes: args.notes?.trim() || undefined,
+        isSelected: false,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+
+    if (shouldSelect) {
+      for (const row of monthRows) {
+        if (row._id === targetId) continue
+        if (!row.isSelected) continue
+        await ctx.db.patch(row._id, { isSelected: false, updatedAt: now })
+      }
+      await ctx.db.patch(targetId, { isSelected: true, updatedAt: now })
+    }
+
+    const target = await ctx.db.get(targetId)
+    return {
+      id: String(targetId),
+      monthKey: args.month,
+      versionKey: args.versionKey,
+      isSelected: target?.isSelected ?? shouldSelect,
+      expectedIncome: target?.expectedIncome ?? roundCurrency(args.expectedIncome),
+      fixedCommitments: target?.fixedCommitments ?? roundCurrency(args.fixedCommitments),
+      variableSpendingCap: target?.variableSpendingCap ?? roundCurrency(args.variableSpendingCap),
+      notes: target?.notes ?? args.notes?.trim() ?? '',
+      updatedAt: target?.updatedAt ?? now,
     }
   },
 })

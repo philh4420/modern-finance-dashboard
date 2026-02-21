@@ -27,6 +27,7 @@ export type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 export type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
 export type IncomeAllocationTarget = 'bills' | 'savings' | 'goals' | 'debt_overpay'
 export type AutoAllocationActionType = 'reserve_bills' | 'move_to_savings' | 'fund_goals' | 'debt_overpay'
+export type PlanningVersionKey = 'base' | 'conservative' | 'aggressive'
 export type BillCategory =
   | 'housing'
   | 'utilities'
@@ -104,6 +105,7 @@ export type FinanceAuditEventEntry = Doc<'financeAuditEvents'>
 export type LedgerEntry = Doc<'ledgerEntries'>
 export type TransactionRuleEntry = Doc<'transactionRules'>
 export type EnvelopeBudgetEntry = Doc<'envelopeBudgets'>
+export type PlanningMonthVersionEntry = Doc<'planningMonthVersions'>
 export type IncomeAllocationRuleEntry = Doc<'incomeAllocationRules'>
 export type PurchaseSplitEntry = Doc<'purchaseSplits'>
 export type PurchaseSplitTemplateEntry = Doc<'purchaseSplitTemplates'>
@@ -481,6 +483,51 @@ export type AutoAllocationSuggestionEntry = {
   createdAt: number
 }
 
+export type PlanningPlanVersion = {
+  id: string
+  month: string
+  versionKey: PlanningVersionKey
+  label: string
+  description: string
+  expectedIncome: number
+  fixedCommitments: number
+  variableSpendingCap: number
+  monthlyNet: number
+  notes: string
+  isSelected: boolean
+  isPersisted: boolean
+  updatedAt: number
+}
+
+export type PlanningWorkspaceSummary = {
+  month: string
+  baselineExpectedIncome: number
+  baselineFixedCommitments: number
+  baselineVariableSpendingCap: number
+  baselineMonthlyNet: number
+  plannedExpectedIncome: number
+  plannedFixedCommitments: number
+  plannedVariableSpendingCap: number
+  plannedMonthlyNet: number
+  deltaExpectedIncome: number
+  deltaFixedCommitments: number
+  deltaVariableSpendingCap: number
+  deltaMonthlyNet: number
+  envelopeTargetTotal: number
+  envelopeCarryoverTotal: number
+  envelopeEffectiveTargetTotal: number
+  envelopeProjectedSpendTotal: number
+  envelopeSuggestedRolloverTotal: number
+  envelopeCoveragePercent: number
+}
+
+export type PlanningPhase1Data = {
+  monthKey: string
+  selectedVersion: PlanningVersionKey
+  versions: PlanningPlanVersion[]
+  workspace: PlanningWorkspaceSummary
+}
+
 export type Phase2Data = {
   monthKey: string
   transactionRules: TransactionRuleEntry[]
@@ -552,4 +599,5 @@ export type AccountId = Id<'accounts'>
 export type GoalId = Id<'goals'>
 export type TransactionRuleId = Id<'transactionRules'>
 export type EnvelopeBudgetId = Id<'envelopeBudgets'>
+export type PlanningMonthVersionId = Id<'planningMonthVersions'>
 export type IncomeAllocationRuleId = Id<'incomeAllocationRules'>

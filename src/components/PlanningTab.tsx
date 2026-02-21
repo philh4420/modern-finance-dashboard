@@ -10,6 +10,9 @@ import type {
   IncomeAllocationRuleEntry,
   IncomeAllocationRuleId,
   IncomeAllocationTarget,
+  PlanningPlanVersion,
+  PlanningVersionKey,
+  PlanningWorkspaceSummary,
   MonthCloseChecklistItem,
   RecurringCandidate,
   ReconciliationStatus,
@@ -49,8 +52,14 @@ type AllocationRuleForm = {
   active: boolean
 }
 
+type PlanningVersionForm = {
+  expectedIncome: string
+  fixedCommitments: string
+  variableSpendingCap: string
+  notes: string
+}
+
 type PlanningTabProps = {
-  monthKey: string
   summary: Summary
   ruleForm: RuleForm
   setRuleForm: Dispatch<SetStateAction<RuleForm>>
@@ -76,6 +85,19 @@ type PlanningTabProps = {
   submitAllocationRule: (event: FormEvent<HTMLFormElement>) => void
   startAllocationRuleEdit: (entry: IncomeAllocationRuleEntry) => void
   removeAllocationRule: (id: IncomeAllocationRuleId) => Promise<void>
+  planningMonth: string
+  setPlanningMonth: (month: string) => void
+  planningVersions: PlanningPlanVersion[]
+  activePlanningVersion: PlanningVersionKey
+  setActivePlanningVersion: (version: PlanningVersionKey) => void
+  planningVersionForm: PlanningVersionForm
+  setPlanningVersionForm: (value: PlanningVersionForm) => void
+  planningVersionDirty: boolean
+  planningWorkspace: PlanningWorkspaceSummary
+  isSavingPlanningVersion: boolean
+  planningVersionFeedback: string | null
+  submitPlanningVersion: (event: FormEvent<HTMLFormElement>) => void
+  resetPlanningVersionForm: () => void
   incomeAllocationSuggestions: AutoAllocationSuggestionEntry[]
   isApplyingAutoAllocation: boolean
   autoAllocationLastRunNote: string | null
@@ -139,8 +161,9 @@ const allocationActionTypeLabel: Record<AutoAllocationSuggestionEntry['actionTyp
   debt_overpay: 'Debt overpay',
 }
 
+const planningVersionOrder: PlanningVersionKey[] = ['base', 'conservative', 'aggressive']
+
 export function PlanningTab({
-  monthKey,
   summary,
   ruleForm,
   setRuleForm,
@@ -166,6 +189,19 @@ export function PlanningTab({
   submitAllocationRule,
   startAllocationRuleEdit,
   removeAllocationRule,
+  planningMonth,
+  setPlanningMonth,
+  planningVersions,
+  activePlanningVersion,
+  setActivePlanningVersion,
+  planningVersionForm,
+  setPlanningVersionForm,
+  planningVersionDirty,
+  planningWorkspace,
+  isSavingPlanningVersion,
+  planningVersionFeedback,
+  submitPlanningVersion,
+  resetPlanningVersionForm,
   incomeAllocationSuggestions,
   isApplyingAutoAllocation,
   autoAllocationLastRunNote,
@@ -343,7 +379,7 @@ export function PlanningTab({
   const resetBudgetForm = () => {
     setBudgetEditId(null)
     setBudgetForm({
-      month: monthKey,
+      month: planningMonth,
       category: '',
       targetAmount: '',
       rolloverEnabled: true,
@@ -368,15 +404,240 @@ export function PlanningTab({
   const hasAllocationFilters = allocationQuery.length > 0 || allocationSortKey !== 'target_asc'
   const latestAllocationSuggestionAt =
     incomeAllocationSuggestions.length > 0 ? Math.max(...incomeAllocationSuggestions.map((entry) => entry.createdAt)) : null
+  const planningVersionByKey = useMemo(
+    () => new Map<PlanningVersionKey, PlanningPlanVersion>(planningVersions.map((version) => [version.versionKey, version])),
+    [planningVersions],
+  )
+  const activePlanningVersionRow =
+    planningVersionByKey.get(activePlanningVersion) ??
+    planningVersions.find((entry) => entry.isSelected) ??
+    planningVersions[0]
+  const activePlanningVersionLabel = activePlanningVersionRow?.label ?? 'Plan'
+  const planningDeltaPill = planningWorkspace.deltaMonthlyNet >= 0 ? 'pill pill--good' : 'pill pill--critical'
+  const deltaAmountClass = (value: number) => (value >= 0 ? 'amount-positive' : 'amount-negative')
 
   return (
     <section className="content-grid" aria-label="Planning and automation">
+      <article className="panel panel-planning-workspace">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 1 Workspace</p>
+            <h2>Monthly planning versions</h2>
+            <p className="panel-value">
+              {planningMonth} - {activePlanningVersionLabel}
+            </p>
+            <p className="subnote">Build and save Base, Conservative, and Aggressive plan versions by month.</p>
+          </div>
+          <span className={planningDeltaPill}>
+            {planningWorkspace.deltaMonthlyNet >= 0 ? '+' : ''}
+            {formatMoney(planningWorkspace.deltaMonthlyNet)}
+          </span>
+        </header>
+
+        <div className="planning-version-switch" role="tablist" aria-label="Planning versions">
+          {planningVersionOrder.map((versionKey) => {
+            const version = planningVersionByKey.get(versionKey)
+            return (
+              <button
+                key={versionKey}
+                type="button"
+                role="tab"
+                aria-selected={activePlanningVersion === versionKey}
+                className={activePlanningVersion === versionKey ? 'btn btn-secondary btn--sm' : 'btn btn-ghost btn--sm'}
+                onClick={() => setActivePlanningVersion(versionKey)}
+              >
+                {version?.label ?? versionKey}
+              </button>
+            )
+          })}
+        </div>
+
+        <form className="entry-form entry-form--grid" onSubmit={submitPlanningVersion}>
+          <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="planning-month">Month</label>
+              <input
+                id="planning-month"
+                type="month"
+                value={planningMonth}
+                onChange={(event) => setPlanningMonth(event.target.value)}
+                required
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="planning-expected-income">Expected income</label>
+              <input
+                id="planning-expected-income"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={planningVersionForm.expectedIncome}
+                onChange={(event) =>
+                  setPlanningVersionForm({
+                    ...planningVersionForm,
+                    expectedIncome: event.target.value,
+                  })
+                }
+                required
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="planning-fixed-commitments">Fixed commitments</label>
+              <input
+                id="planning-fixed-commitments"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={planningVersionForm.fixedCommitments}
+                onChange={(event) =>
+                  setPlanningVersionForm({
+                    ...planningVersionForm,
+                    fixedCommitments: event.target.value,
+                  })
+                }
+                required
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="planning-variable-cap">Variable spending cap</label>
+              <input
+                id="planning-variable-cap"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={planningVersionForm.variableSpendingCap}
+                onChange={(event) =>
+                  setPlanningVersionForm({
+                    ...planningVersionForm,
+                    variableSpendingCap: event.target.value,
+                  })
+                }
+                required
+              />
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label htmlFor="planning-version-notes">Version notes</label>
+              <textarea
+                id="planning-version-notes"
+                value={planningVersionForm.notes}
+                onChange={(event) =>
+                  setPlanningVersionForm({
+                    ...planningVersionForm,
+                    notes: event.target.value,
+                  })
+                }
+                placeholder="Optional assumptions for this version"
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <p className="form-hint">
+            Save writes this version for the selected month and keeps it as the active planning profile.
+          </p>
+
+          <div className="form-actions row-actions">
+            <button type="submit" className="btn btn-primary" disabled={isSavingPlanningVersion}>
+              {isSavingPlanningVersion ? 'Saving...' : `Save ${activePlanningVersionLabel}`}
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={resetPlanningVersionForm} disabled={!planningVersionDirty}>
+              Reset
+            </button>
+          </div>
+
+          {planningVersionFeedback ? <p className="form-hint">{planningVersionFeedback}</p> : null}
+        </form>
+      </article>
+
+      <article className="panel panel-planning-compare">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Baseline vs Planned</p>
+            <h2>Version comparison</h2>
+            <p className="panel-value">{formatMoney(planningWorkspace.plannedMonthlyNet)} planned net</p>
+          </div>
+          <span className={planningDeltaPill}>
+            {planningWorkspace.deltaMonthlyNet >= 0 ? '+' : ''}
+            {formatMoney(planningWorkspace.deltaMonthlyNet)}
+          </span>
+        </header>
+        <div className="table-wrap table-wrap--card">
+          <table className="data-table">
+            <caption className="sr-only">Baseline versus planned metrics</caption>
+            <thead>
+              <tr>
+                <th scope="col">Metric</th>
+                <th scope="col">Baseline</th>
+                <th scope="col">Planned</th>
+                <th scope="col">Delta</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Expected income</td>
+                <td className="table-amount">{formatMoney(planningWorkspace.baselineExpectedIncome)}</td>
+                <td className="table-amount">{formatMoney(planningWorkspace.plannedExpectedIncome)}</td>
+                <td className={`table-amount ${deltaAmountClass(planningWorkspace.deltaExpectedIncome)}`}>
+                  {formatMoney(planningWorkspace.deltaExpectedIncome)}
+                </td>
+              </tr>
+              <tr>
+                <td>Fixed commitments</td>
+                <td className="table-amount">{formatMoney(planningWorkspace.baselineFixedCommitments)}</td>
+                <td className="table-amount">{formatMoney(planningWorkspace.plannedFixedCommitments)}</td>
+                <td className={`table-amount ${deltaAmountClass(planningWorkspace.deltaFixedCommitments * -1)}`}>
+                  {formatMoney(planningWorkspace.deltaFixedCommitments)}
+                </td>
+              </tr>
+              <tr>
+                <td>Variable spending cap</td>
+                <td className="table-amount">{formatMoney(planningWorkspace.baselineVariableSpendingCap)}</td>
+                <td className="table-amount">{formatMoney(planningWorkspace.plannedVariableSpendingCap)}</td>
+                <td className={`table-amount ${deltaAmountClass(planningWorkspace.deltaVariableSpendingCap * -1)}`}>
+                  {formatMoney(planningWorkspace.deltaVariableSpendingCap)}
+                </td>
+              </tr>
+              <tr>
+                <td>Monthly net</td>
+                <td className="table-amount">{formatMoney(planningWorkspace.baselineMonthlyNet)}</td>
+                <td className="table-amount">{formatMoney(planningWorkspace.plannedMonthlyNet)}</td>
+                <td className={`table-amount ${deltaAmountClass(planningWorkspace.deltaMonthlyNet)}`}>
+                  {formatMoney(planningWorkspace.deltaMonthlyNet)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bulk-summary">
+          <div>
+            <p>Envelope target total</p>
+            <strong>{formatMoney(planningWorkspace.envelopeEffectiveTargetTotal)}</strong>
+            <small>
+              {formatMoney(planningWorkspace.envelopeTargetTotal)} target + {formatMoney(planningWorkspace.envelopeCarryoverTotal)} carryover
+            </small>
+          </div>
+          <div>
+            <p>Rollover preview</p>
+            <strong>{formatMoney(planningWorkspace.envelopeSuggestedRolloverTotal)}</strong>
+            <small>{planningWorkspace.envelopeCoveragePercent.toFixed(1)}% of planned variable cap covered by envelopes</small>
+          </div>
+        </div>
+      </article>
+
       <article className="panel panel-trust-kpis">
         <header className="panel-header">
           <div>
             <p className="panel-kicker">Planning</p>
             <h2>Command center</h2>
-            <p className="panel-value">{monthKey}</p>
+            <p className="panel-value">{planningMonth}</p>
           </div>
         </header>
         <div className="trust-kpi-grid" aria-label="Planning KPI summary">

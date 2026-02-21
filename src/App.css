@@ -537,6 +537,21 @@ h2 {
   grid-column: span 5;
 }
 
+.panel-planning-workspace {
+  grid-column: span 8;
+  background:
+    radial-gradient(150% 170% at 0% 0%, color-mix(in oklab, var(--tone-finance) 14%, transparent), transparent 68%),
+    radial-gradient(130% 140% at 100% -20%, color-mix(in oklab, var(--tone-savings) 12%, transparent), transparent 68%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+}
+
+.panel-planning-compare {
+  grid-column: span 4;
+  background:
+    radial-gradient(145% 165% at 100% -20%, color-mix(in oklab, var(--tone-warning) 11%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 94%, white 6%);
+}
+
 .panel-risk-center {
   grid-column: span 12;
   background:
@@ -644,6 +659,18 @@ h2 {
 .launch-readiness strong {
   font-weight: 750;
   text-align: right;
+}
+
+.planning-version-switch {
+  margin-top: 0.82rem;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.planning-version-switch .btn {
+  width: 100%;
+  justify-content: center;
 }
 
 .forecast-window-strip {

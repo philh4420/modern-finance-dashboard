@@ -306,6 +306,7 @@ function App() {
 
   const planningSection = usePlanningSection({
     monthKey: phase2Data.monthKey,
+    summary,
     transactionRules: phase2Data.transactionRules,
     envelopeBudgets: phase2Data.envelopeBudgets,
     incomeAllocationRules: phase2Data.incomeAllocationRules,
@@ -896,7 +897,6 @@ function App() {
 
         {activeTab === 'planning' ? (
           <PlanningTab
-            monthKey={phase2Data.monthKey}
             summary={summary}
             ruleForm={planningSection.ruleForm}
             setRuleForm={planningSection.setRuleForm}
@@ -922,6 +922,19 @@ function App() {
             submitAllocationRule={planningSection.submitAllocationRule}
             startAllocationRuleEdit={planningSection.startAllocationRuleEdit}
             removeAllocationRule={planningSection.removeAllocationRule}
+            planningMonth={planningSection.planningMonth}
+            setPlanningMonth={planningSection.setPlanningMonth}
+            planningVersions={planningSection.planningVersions}
+            activePlanningVersion={planningSection.activePlanningVersion}
+            setActivePlanningVersion={planningSection.setActivePlanningVersion}
+            planningVersionForm={planningSection.planningVersionForm}
+            setPlanningVersionForm={planningSection.setPlanningVersionForm}
+            planningVersionDirty={planningSection.planningVersionDirty}
+            planningWorkspace={planningSection.planningWorkspace}
+            isSavingPlanningVersion={planningSection.isSavingPlanningVersion}
+            planningVersionFeedback={planningSection.planningVersionFeedback}
+            submitPlanningVersion={planningSection.submitPlanningVersion}
+            resetPlanningVersionForm={planningSection.resetPlanningVersionForm}
             incomeAllocationSuggestions={phase2Data.incomeAllocationSuggestions}
             isApplyingAutoAllocation={planningSection.isApplyingAutoAllocation}
             autoAllocationLastRunNote={planningSection.autoAllocationLastRunNote}
