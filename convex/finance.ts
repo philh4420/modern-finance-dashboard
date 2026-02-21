@@ -2515,6 +2515,9 @@ export const getFinanceData = query({
           accountTransfers: [],
           accountReconciliationChecks: [],
           goals: [],
+          envelopeBudgets: [],
+          planningMonthVersions: [],
+          planningActionTasks: [],
           cycleAuditLogs: [],
           cycleStepAlerts: [],
           monthlyCycleRuns: [],
@@ -2547,6 +2550,9 @@ export const getFinanceData = query({
       accountTransfers,
       accountReconciliationChecks,
       goals,
+      envelopeBudgets,
+      planningMonthVersions,
+      planningActionTasks,
       cycleAuditLogs,
       cycleStepAlerts,
       monthlyCycleRuns,
@@ -2630,6 +2636,18 @@ export const getFinanceData = query({
         .query('goals')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
+        .collect(),
+      ctx.db
+        .query('envelopeBudgets')
+        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('planningMonthVersions')
+        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('planningActionTasks')
+        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
         .collect(),
       ctx.db
         .query('cycleAuditLogs')
@@ -2796,6 +2814,9 @@ export const getFinanceData = query({
       ...accountTransfers.map((entry) => entry.createdAt),
       ...accountReconciliationChecks.map((entry) => entry.updatedAt ?? entry.createdAt),
       ...goals.map((entry) => entry.createdAt),
+      ...envelopeBudgets.map((entry) => entry.createdAt),
+      ...planningMonthVersions.map((entry) => entry.updatedAt ?? entry.createdAt),
+      ...planningActionTasks.map((entry) => entry.updatedAt ?? entry.createdAt),
       ...cycleAuditLogs.map((entry) => entry.createdAt),
       ...cycleStepAlerts.map((entry) => entry.createdAt),
       ...monthlyCycleRuns.map((entry) => entry.createdAt),
@@ -2827,6 +2848,9 @@ export const getFinanceData = query({
         accountTransfers,
         accountReconciliationChecks,
         goals,
+        envelopeBudgets,
+        planningMonthVersions,
+        planningActionTasks,
         cycleAuditLogs,
         cycleStepAlerts,
         monthlyCycleRuns,

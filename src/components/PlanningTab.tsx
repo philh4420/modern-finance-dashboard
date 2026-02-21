@@ -10,6 +10,11 @@ import type {
   IncomeAllocationRuleEntry,
   IncomeAllocationRuleId,
   IncomeAllocationTarget,
+  PlanningActionTask,
+  PlanningActionTaskStatus,
+  PlanningAdherenceRow,
+  PlanningAuditEvent,
+  PlanningKpiSummary,
   PlanningPlanVersion,
   PlanningVersionKey,
   PlanningWorkspaceSummary,
@@ -109,6 +114,15 @@ type PlanningTabProps = {
   planningVersionFeedback: string | null
   submitPlanningVersion: (event: FormEvent<HTMLFormElement>) => void
   resetPlanningVersionForm: () => void
+  planningActionTasks: PlanningActionTask[]
+  planningAdherenceRows: PlanningAdherenceRow[]
+  planningKpis: PlanningKpiSummary
+  planningAuditEvents: PlanningAuditEvent[]
+  isApplyingPlanToMonth: boolean
+  applyPlanFeedback: string | null
+  updatingPlanningTaskId: string | null
+  onApplyPlanToMonth: () => Promise<void>
+  onUpdatePlanningTaskStatus: (id: string, status: PlanningActionTaskStatus) => Promise<void>
   incomeAllocationSuggestions: AutoAllocationSuggestionEntry[]
   isApplyingAutoAllocation: boolean
   autoAllocationLastRunNote: string | null
@@ -218,6 +232,15 @@ export function PlanningTab({
   planningVersionFeedback,
   submitPlanningVersion,
   resetPlanningVersionForm,
+  planningActionTasks,
+  planningAdherenceRows,
+  planningKpis,
+  planningAuditEvents,
+  isApplyingPlanToMonth,
+  applyPlanFeedback,
+  updatingPlanningTaskId,
+  onApplyPlanToMonth,
+  onUpdatePlanningTaskStatus,
   incomeAllocationSuggestions,
   isApplyingAutoAllocation,
   autoAllocationLastRunNote,
@@ -527,12 +550,6 @@ export function PlanningTab({
     })
   }, [allocationQuery, allocationSortKey, sortedIncomeAllocationRules])
 
-  const activeRuleCount = sortedRules.filter((rule) => rule.active).length
-  const activeAllocationRuleCount = sortedIncomeAllocationRules.filter((rule) => rule.active).length
-  const overBudgetCount = budgetPerformance.filter((entry) => entry.status === 'over').length
-  const warningBudgetCount = budgetPerformance.filter((entry) => entry.status === 'warning').length
-  const criticalRiskCount = billRiskAlerts.filter((alert) => alert.risk === 'critical').length
-  const warningRiskCount = billRiskAlerts.filter((alert) => alert.risk === 'warning').length
   const monthCloseDoneCount = monthCloseChecklist.filter((item) => item.done).length
   const monthCloseCompletion =
     monthCloseChecklist.length > 0 ? Math.round((monthCloseDoneCount / monthCloseChecklist.length) * 100) : 0
@@ -565,6 +582,34 @@ export function PlanningTab({
     if (risk === 'warning') return 'pill pill--warning'
     return 'pill pill--good'
   }
+  const planningTaskStatusPill = (status: PlanningActionTaskStatus) => {
+    if (status === 'done') return 'pill pill--good'
+    if (status === 'in_progress') return 'pill pill--warning'
+    if (status === 'dismissed') return 'pill pill--neutral'
+    return 'pill pill--critical'
+  }
+  const adherenceStatusPill = (status: PlanningAdherenceRow['status']) => {
+    if (status === 'on_track') return 'pill pill--good'
+    if (status === 'warning') return 'pill pill--warning'
+    return 'pill pill--critical'
+  }
+  const parseAuditMetadata = (value?: string) => {
+    if (!value) return null
+    try {
+      return JSON.parse(value) as Record<string, unknown>
+    } catch {
+      return null
+    }
+  }
+  const planningTaskSummary = useMemo(
+    () => ({
+      total: planningActionTasks.length,
+      done: planningActionTasks.filter((task) => task.status === 'done').length,
+      inProgress: planningActionTasks.filter((task) => task.status === 'in_progress').length,
+      open: planningActionTasks.filter((task) => task.status === 'suggested').length,
+    }),
+    [planningActionTasks],
+  )
 
   const resetRuleForm = () => {
     setRuleEditId(null)
@@ -827,6 +872,143 @@ export function PlanningTab({
         </div>
       </article>
 
+      <article className="panel panel-form">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 3 Execution</p>
+            <h2>Apply plan to month</h2>
+            <p className="panel-value">
+              {planningTaskSummary.done}/{planningTaskSummary.total} tasks complete
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary btn--sm"
+            onClick={() => void onApplyPlanToMonth()}
+            disabled={isApplyingPlanToMonth}
+          >
+            {isApplyingPlanToMonth ? 'Applying...' : 'Apply plan to month'}
+          </button>
+        </header>
+        <div className="bulk-summary">
+          <div>
+            <p>Open tasks</p>
+            <strong>{planningTaskSummary.open}</strong>
+            <small>{planningTaskSummary.inProgress} in progress</small>
+          </div>
+          <div>
+            <p>Total impact</p>
+            <strong>{formatMoney(planningActionTasks.reduce((sum, task) => sum + Math.max(task.impactAmount, 0), 0))}</strong>
+            <small>Execution workload for {planningMonth}</small>
+          </div>
+        </div>
+        {applyPlanFeedback ? <p className="subnote">{applyPlanFeedback}</p> : null}
+        {planningActionTasks.length === 0 ? (
+          <p className="empty-state">No execution tasks yet. Use Apply plan to month to generate them.</p>
+        ) : (
+          <div className="table-wrap table-wrap--card">
+            <table className="data-table">
+              <caption className="sr-only">Planning action tasks</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Task</th>
+                  <th scope="col">Category</th>
+                  <th scope="col">Impact</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {planningActionTasks.map((task) => (
+                  <tr key={task.id}>
+                    <td>
+                      <div>
+                        <strong>{task.title}</strong>
+                        <p className="subnote">{task.detail}</p>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="pill pill--neutral">{task.category}</span>
+                    </td>
+                    <td className="table-amount">{formatMoney(task.impactAmount)}</td>
+                    <td>
+                      <span className={planningTaskStatusPill(task.status)}>{task.status}</span>
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn--sm"
+                          disabled={updatingPlanningTaskId === task.id || task.status === 'in_progress'}
+                          onClick={() => void onUpdatePlanningTaskStatus(task.id, 'in_progress')}
+                        >
+                          In progress
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn--sm"
+                          disabled={updatingPlanningTaskId === task.id || task.status === 'done'}
+                          onClick={() => void onUpdatePlanningTaskStatus(task.id, 'done')}
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </article>
+
+      <article className="panel panel-list">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Plan Adherence</p>
+            <h2>Planned vs actual variance</h2>
+            <p className="panel-value">{planningAdherenceRows.length} categories tracked</p>
+          </div>
+        </header>
+        {planningAdherenceRows.length === 0 ? (
+          <p className="empty-state">No adherence rows yet. Add budgets and purchases for this month.</p>
+        ) : (
+          <div className="table-wrap table-wrap--card">
+            <table className="data-table data-table--wide">
+              <caption className="sr-only">Planning adherence by category</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Category</th>
+                  <th scope="col">Planned</th>
+                  <th scope="col">Actual</th>
+                  <th scope="col">Variance</th>
+                  <th scope="col">Variance %</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {planningAdherenceRows.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.category}</td>
+                    <td className="table-amount">{formatMoney(row.planned)}</td>
+                    <td className="table-amount">{formatMoney(row.actual)}</td>
+                    <td className={`table-amount ${row.variance > 0 ? 'amount-negative' : 'amount-positive'}`}>
+                      {formatMoney(row.variance)}
+                    </td>
+                    <td className={`table-amount ${row.varianceRatePercent > 0 ? 'amount-negative' : 'amount-positive'}`}>
+                      {row.varianceRatePercent.toFixed(1)}%
+                    </td>
+                    <td>
+                      <span className={adherenceStatusPill(row.status)}>{row.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </article>
+
       <article className="panel panel-trust-kpis">
         <header className="panel-header">
           <div>
@@ -837,24 +1019,20 @@ export function PlanningTab({
         </header>
         <div className="trust-kpi-grid" aria-label="Planning KPI summary">
           <div className="trust-kpi-tile">
-            <p>Rules active</p>
-            <strong>{activeRuleCount}</strong>
-            <small>
-              {sortedRules.length} transaction / {activeAllocationRuleCount} allocation
-            </small>
+            <p>Forecast accuracy</p>
+            <strong>{planningKpis.forecastAccuracyPercent.toFixed(1)}%</strong>
+            <small>{formatMoney(planningKpis.actualNet)} actual vs {formatMoney(planningKpis.plannedNet)} planned net</small>
           </div>
           <div className="trust-kpi-tile">
-            <p>Budgets in month</p>
-            <strong>{budgetPerformance.length}</strong>
-            <small>
-              {overBudgetCount} over / {warningBudgetCount} warning
-            </small>
+            <p>Variance rate</p>
+            <strong>{planningKpis.varianceRatePercent.toFixed(1)}%</strong>
+            <small>{planningAdherenceRows.length} category variance rows</small>
           </div>
           <div className="trust-kpi-tile">
-            <p>Bill risk alerts</p>
-            <strong>{billRiskAlerts.length}</strong>
+            <p>Plan completion</p>
+            <strong>{planningKpis.planCompletionPercent.toFixed(1)}%</strong>
             <small>
-              {criticalRiskCount} critical / {warningRiskCount} warning
+              {planningKpis.completedTasks} / {planningKpis.totalTasks} execution tasks done
             </small>
           </div>
           <div className="trust-kpi-tile">
@@ -1922,6 +2100,44 @@ export function PlanningTab({
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <h3>Planning audit log</h3>
+        {planningAuditEvents.length === 0 ? (
+          <p className="empty-state">No planning audit events yet.</p>
+        ) : (
+          <div className="table-wrap table-wrap--card">
+            <table className="data-table data-table--wide">
+              <caption className="sr-only">Planning audit events</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Event</th>
+                  <th scope="col">Source</th>
+                  <th scope="col">Actor</th>
+                  <th scope="col">Entity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {planningAuditEvents.slice(0, 20).map((event) => {
+                  const metadata = parseAuditMetadata(event.metadataJson)
+                  const source = typeof metadata?.source === 'string' ? metadata.source : 'planning_tab'
+                  const actor = typeof metadata?.actorLabel === 'string' ? metadata.actorLabel : 'self'
+                  return (
+                    <tr key={event.id}>
+                      <td>{new Date(event.createdAt).toLocaleString()}</td>
+                      <td>
+                        <strong>{event.action}</strong>
+                        <p className="subnote">{event.entityType}</p>
+                      </td>
+                      <td>{source}</td>
+                      <td>{actor}</td>
+                      <td>{event.entityId}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

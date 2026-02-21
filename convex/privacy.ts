@@ -35,6 +35,7 @@ type DeletionTable =
   | 'transactionRules'
   | 'envelopeBudgets'
   | 'planningMonthVersions'
+  | 'planningActionTasks'
   | 'incomeAllocationRules'
   | 'incomeAllocationSuggestions'
   | 'purchaseSplitTemplates'
@@ -72,6 +73,7 @@ const deletionTableValidator = v.union(
   v.literal('transactionRules'),
   v.literal('envelopeBudgets'),
   v.literal('planningMonthVersions'),
+  v.literal('planningActionTasks'),
   v.literal('incomeAllocationRules'),
   v.literal('incomeAllocationSuggestions'),
   v.literal('purchaseSplitTemplates'),
@@ -805,6 +807,7 @@ export const requestDeletion = action({
       'transactionRules',
       'envelopeBudgets',
       'planningMonthVersions',
+      'planningActionTasks',
       'incomeAllocationRules',
       'incomeAllocationSuggestions',
       'incomes',
@@ -960,6 +963,7 @@ export const _collectExportData = internalQuery({
       transactionRules,
       envelopeBudgets,
       planningMonthVersions,
+      planningActionTasks,
       incomeAllocationRules,
       incomeAllocationSuggestions,
       purchaseSplits,
@@ -995,6 +999,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('transactionRules').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('envelopeBudgets').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('planningMonthVersions').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('planningActionTasks').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomeAllocationRules').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomeAllocationSuggestions').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('purchaseSplits').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -1032,6 +1037,7 @@ export const _collectExportData = internalQuery({
       transactionRules: docsToPortableRows(transactionRules),
       envelopeBudgets: docsToPortableRows(envelopeBudgets),
       planningMonthVersions: docsToPortableRows(planningMonthVersions),
+      planningActionTasks: docsToPortableRows(planningActionTasks),
       incomeAllocationRules: docsToPortableRows(incomeAllocationRules),
       incomeAllocationSuggestions: docsToPortableRows(incomeAllocationSuggestions),
       purchaseSplits: docsToPortableRows(purchaseSplits),

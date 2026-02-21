@@ -161,6 +161,9 @@ function App() {
   const accountTransfers = financeState?.data.accountTransfers ?? []
   const accountReconciliationChecks = financeState?.data.accountReconciliationChecks ?? []
   const goals = financeState?.data.goals ?? []
+  const envelopeBudgetHistory = financeState?.data.envelopeBudgets ?? []
+  const planningMonthVersions = financeState?.data.planningMonthVersions ?? []
+  const planningActionTasks = financeState?.data.planningActionTasks ?? []
   const cycleAuditLogs = financeState?.data.cycleAuditLogs ?? []
   const cycleStepAlerts = financeState?.data.cycleStepAlerts ?? []
   const monthlyCycleRuns = financeState?.data.monthlyCycleRuns ?? []
@@ -935,6 +938,15 @@ function App() {
             planningVersionFeedback={planningSection.planningVersionFeedback}
             submitPlanningVersion={planningSection.submitPlanningVersion}
             resetPlanningVersionForm={planningSection.resetPlanningVersionForm}
+            planningActionTasks={planningSection.planningActionTasks}
+            planningAdherenceRows={planningSection.planningAdherenceRows}
+            planningKpis={planningSection.planningKpis}
+            planningAuditEvents={planningSection.planningAuditEvents}
+            isApplyingPlanToMonth={planningSection.isApplyingPlanToMonth}
+            applyPlanFeedback={planningSection.applyPlanFeedback}
+            updatingPlanningTaskId={planningSection.updatingPlanningTaskId}
+            onApplyPlanToMonth={planningSection.onApplyPlanToMonth}
+            onUpdatePlanningTaskStatus={planningSection.onUpdatePlanningTaskStatus}
             incomeAllocationSuggestions={phase2Data.incomeAllocationSuggestions}
             isApplyingAutoAllocation={planningSection.isApplyingAutoAllocation}
             autoAllocationLastRunNote={planningSection.autoAllocationLastRunNote}
@@ -1068,6 +1080,10 @@ function App() {
               accountReconciliationChecks={accountReconciliationChecks}
               goals={goals}
               purchases={purchases}
+              envelopeBudgets={envelopeBudgetHistory}
+              planningMonthVersions={planningMonthVersions}
+              planningActionTasks={planningActionTasks}
+              planningForecastWindows={phase2Data.forecastWindows}
               cycleAuditLogs={cycleAuditLogs}
               monthlyCycleRuns={monthlyCycleRuns}
               purchaseMonthCloseRuns={purchaseMonthCloseRuns}

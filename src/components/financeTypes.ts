@@ -28,6 +28,8 @@ export type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
 export type IncomeAllocationTarget = 'bills' | 'savings' | 'goals' | 'debt_overpay'
 export type AutoAllocationActionType = 'reserve_bills' | 'move_to_savings' | 'fund_goals' | 'debt_overpay'
 export type PlanningVersionKey = 'base' | 'conservative' | 'aggressive'
+export type PlanningActionTaskStatus = 'suggested' | 'in_progress' | 'done' | 'dismissed'
+export type PlanningActionTaskSource = 'manual_apply' | 'reapply' | 'system'
 export type BillCategory =
   | 'housing'
   | 'utilities'
@@ -106,6 +108,7 @@ export type LedgerEntry = Doc<'ledgerEntries'>
 export type TransactionRuleEntry = Doc<'transactionRules'>
 export type EnvelopeBudgetEntry = Doc<'envelopeBudgets'>
 export type PlanningMonthVersionEntry = Doc<'planningMonthVersions'>
+export type PlanningActionTaskEntry = Doc<'planningActionTasks'>
 export type IncomeAllocationRuleEntry = Doc<'incomeAllocationRules'>
 export type PurchaseSplitEntry = Doc<'purchaseSplits'>
 export type PurchaseSplitTemplateEntry = Doc<'purchaseSplitTemplates'>
@@ -528,6 +531,60 @@ export type PlanningPhase1Data = {
   workspace: PlanningWorkspaceSummary
 }
 
+export type PlanningActionTask = {
+  id: string
+  month: string
+  versionKey: PlanningVersionKey
+  title: string
+  detail: string
+  category: string
+  impactAmount: number
+  status: PlanningActionTaskStatus
+  source: PlanningActionTaskSource
+  createdAt: number
+  updatedAt: number
+}
+
+export type PlanningAdherenceRow = {
+  id: string
+  category: string
+  planned: number
+  actual: number
+  variance: number
+  varianceRatePercent: number
+  status: 'on_track' | 'warning' | 'over'
+}
+
+export type PlanningKpiSummary = {
+  forecastAccuracyPercent: number
+  varianceRatePercent: number
+  planCompletionPercent: number
+  totalTasks: number
+  completedTasks: number
+  plannedNet: number
+  actualNet: number
+}
+
+export type PlanningAuditEvent = {
+  id: string
+  entityType: string
+  entityId: string
+  action: string
+  beforeJson?: string
+  afterJson?: string
+  metadataJson?: string
+  createdAt: number
+}
+
+export type PlanningPhase3Data = {
+  monthKey: string
+  selectedVersionKey: PlanningVersionKey
+  actionTasks: PlanningActionTask[]
+  adherenceRows: PlanningAdherenceRow[]
+  planningKpis: PlanningKpiSummary
+  auditEvents: PlanningAuditEvent[]
+}
+
 export type Phase2Data = {
   monthKey: string
   transactionRules: TransactionRuleEntry[]
@@ -600,4 +657,5 @@ export type GoalId = Id<'goals'>
 export type TransactionRuleId = Id<'transactionRules'>
 export type EnvelopeBudgetId = Id<'envelopeBudgets'>
 export type PlanningMonthVersionId = Id<'planningMonthVersions'>
+export type PlanningActionTaskId = Id<'planningActionTasks'>
 export type IncomeAllocationRuleId = Id<'incomeAllocationRules'>

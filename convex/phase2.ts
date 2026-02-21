@@ -13,6 +13,13 @@ const incomeAllocationTargetValidator = v.union(
   v.literal('debt_overpay'),
 )
 const planningVersionKeyValidator = v.union(v.literal('base'), v.literal('conservative'), v.literal('aggressive'))
+const planningActionTaskStatusValidator = v.union(
+  v.literal('suggested'),
+  v.literal('in_progress'),
+  v.literal('done'),
+  v.literal('dismissed'),
+)
+const planningActionTaskSourceValidator = v.union(v.literal('manual_apply'), v.literal('reapply'), v.literal('system'))
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom' | 'one_time'
 type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
@@ -42,6 +49,8 @@ type ForecastRiskLevel = 'healthy' | 'warning' | 'critical'
 type IncomeAllocationTarget = 'bills' | 'savings' | 'goals' | 'debt_overpay'
 type AutoAllocationActionType = 'reserve_bills' | 'move_to_savings' | 'fund_goals' | 'debt_overpay'
 type PlanningVersionKey = 'base' | 'conservative' | 'aggressive'
+type PlanningActionTaskStatus = 'suggested' | 'in_progress' | 'done' | 'dismissed'
+type PlanningActionTaskSource = 'manual_apply' | 'reapply' | 'system'
 
 type ForecastWindow = {
   days: 30 | 90 | 365
@@ -107,6 +116,14 @@ type PlanningVersionDraft = {
   isSelected: boolean
   isPersisted: boolean
   updatedAt: number
+}
+
+type PlanningActionTaskDraft = {
+  title: string
+  detail: string
+  category: string
+  impactAmount: number
+  status: PlanningActionTaskStatus
 }
 
 const validateRequiredText = (value: string, label: string) => {
@@ -776,6 +793,150 @@ const buildDefaultPlanningVersionMap = (args: {
   return new Map<PlanningVersionKey, Omit<PlanningVersionDraft, 'versionKey'>>(
     planningVersionOrder.map((versionKey) => [versionKey, defaults[versionKey]]),
   )
+}
+
+const computeMonthlyCommitmentsFromRecords = (args: {
+  bills: Doc<'bills'>[]
+  cards: Doc<'cards'>[]
+  loans: Doc<'loans'>[]
+}) => {
+  const monthlyBills = args.bills.reduce(
+    (sum, bill) => sum + toMonthlyAmount(bill.amount, bill.cadence, bill.customInterval, bill.customUnit),
+    0,
+  )
+  const monthlyCardPayments = args.cards.reduce((sum, card) => sum + finiteOrZero(card.minimumPayment), 0)
+  const monthlyLoanPayments = args.loans.reduce(
+    (sum, loan) =>
+      sum +
+      estimateLoanMonthlyPayment(loan) +
+      finiteOrZero(loan.subscriptionCost),
+    0,
+  )
+  return {
+    monthlyBills: roundCurrency(monthlyBills),
+    monthlyCardPayments: roundCurrency(monthlyCardPayments),
+    monthlyLoanPayments: roundCurrency(monthlyLoanPayments),
+    monthlyCommitments: roundCurrency(monthlyBills + monthlyCardPayments + monthlyLoanPayments),
+  }
+}
+
+const buildMonthSpendByCategory = (args: {
+  monthKey: string
+  purchases: Doc<'purchases'>[]
+  purchaseSplits: Doc<'purchaseSplits'>[]
+}) => {
+  const spendByCategory = new Map<string, number>()
+  const splitMap = new Map<string, Array<{ category: string; amount: number }>>()
+
+  args.purchaseSplits.forEach((split) => {
+    const key = String(split.purchaseId)
+    const current = splitMap.get(key) ?? []
+    current.push({
+      category: split.category,
+      amount: split.amount,
+    })
+    splitMap.set(key, current)
+  })
+
+  args.purchases.forEach((purchase) => {
+    if (!purchase.purchaseDate.startsWith(args.monthKey)) return
+    const splits = splitMap.get(String(purchase._id))
+    if (splits && splits.length > 0) {
+      splits.forEach((split) => {
+        spendByCategory.set(split.category, roundCurrency((spendByCategory.get(split.category) ?? 0) + split.amount))
+      })
+      return
+    }
+    spendByCategory.set(purchase.category, roundCurrency((spendByCategory.get(purchase.category) ?? 0) + purchase.amount))
+  })
+
+  return spendByCategory
+}
+
+const buildPlanningActionTaskDrafts = (args: {
+  monthKey: string
+  version: {
+    versionKey: PlanningVersionKey
+    expectedIncome: number
+    fixedCommitments: number
+    variableSpendingCap: number
+  }
+  envelopeBudgets: Doc<'envelopeBudgets'>[]
+  monthSpendByCategory: Map<string, number>
+  autoAllocationPlan: AutoAllocationPlan
+}): PlanningActionTaskDraft[] => {
+  const drafts: PlanningActionTaskDraft[] = []
+  const plannedNet = roundCurrency(args.version.expectedIncome - args.version.fixedCommitments - args.version.variableSpendingCap)
+  const envelopeTargetTotal = roundCurrency(
+    args.envelopeBudgets.reduce((sum, budget) => sum + budget.targetAmount + finiteOrZero(budget.carryoverAmount), 0),
+  )
+
+  if (plannedNet < 0) {
+    drafts.push({
+      title: 'Close negative planned net',
+      detail: `Planned net is ${roundCurrency(Math.abs(plannedNet))} below zero for ${args.monthKey}. Reduce variable spend cap or increase income assumptions.`,
+      category: 'cashflow',
+      impactAmount: roundCurrency(Math.abs(plannedNet)),
+      status: 'suggested',
+    })
+  }
+
+  const coverageGap = roundCurrency(args.version.variableSpendingCap - envelopeTargetTotal)
+  if (coverageGap > 0) {
+    drafts.push({
+      title: 'Increase envelope coverage',
+      detail: `Envelope targets are below variable cap by ${coverageGap}. Add or resize category budgets before month close.`,
+      category: 'budget',
+      impactAmount: coverageGap,
+      status: 'suggested',
+    })
+  }
+
+  if (args.autoAllocationPlan.unallocatedPercent > 0.01) {
+    drafts.push({
+      title: 'Allocate unassigned income',
+      detail: `${args.autoAllocationPlan.unallocatedPercent.toFixed(
+        2,
+      )}% of income is unallocated. Route it to bills, savings, goals, or debt overpay.`,
+      category: 'allocation',
+      impactAmount: roundCurrency(Math.max(args.autoAllocationPlan.residualAmount, 0)),
+      status: 'suggested',
+    })
+  }
+
+  if (args.autoAllocationPlan.overAllocatedPercent > 0.01) {
+    drafts.push({
+      title: 'Resolve over-allocation conflict',
+      detail: `Allocation rules exceed income by ${args.autoAllocationPlan.overAllocatedPercent.toFixed(2)}%. Rebalance active percentages.`,
+      category: 'allocation',
+      impactAmount: roundCurrency(Math.max(args.autoAllocationPlan.totalAllocatedAmount - args.autoAllocationPlan.monthlyIncome, 0)),
+      status: 'suggested',
+    })
+  }
+
+  args.envelopeBudgets.forEach((budget) => {
+    const effectiveTarget = roundCurrency(budget.targetAmount + finiteOrZero(budget.carryoverAmount))
+    const actualSpend = roundCurrency(args.monthSpendByCategory.get(budget.category) ?? 0)
+    const variance = roundCurrency(actualSpend - effectiveTarget)
+    if (variance <= 0.01) return
+    drafts.push({
+      title: `Recover overspend in ${budget.category}`,
+      detail: `${budget.category} is over plan by ${variance}. Add an adjustment task before closing ${args.monthKey}.`,
+      category: 'variance',
+      impactAmount: variance,
+      status: 'suggested',
+    })
+  })
+
+  drafts.push({
+    title: `Run close checklist for ${args.monthKey}`,
+    detail: 'Run monthly cycle, reconcile pending entries, and confirm planning KPIs before final close.',
+    category: 'close',
+    impactAmount: 0,
+    status: 'suggested',
+  })
+
+  return drafts.slice(0, 12)
 }
 
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -2237,6 +2398,7 @@ export const upsertPlanningMonthVersion = mutation({
     variableSpendingCap: v.number(),
     notes: v.optional(v.string()),
     selectAfterSave: v.optional(v.boolean()),
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -2257,6 +2419,19 @@ export const upsertPlanningMonthVersion = mutation({
     const shouldSelect =
       args.selectAfterSave === true ||
       (!hasSelectedVersion && args.versionKey === 'base')
+
+    const beforeSnapshot = existing
+      ? {
+          month: existing.month,
+          versionKey: existing.versionKey,
+          expectedIncome: existing.expectedIncome,
+          fixedCommitments: existing.fixedCommitments,
+          variableSpendingCap: existing.variableSpendingCap,
+          notes: existing.notes ?? '',
+          isSelected: existing.isSelected,
+          updatedAt: existing.updatedAt,
+        }
+      : undefined
 
     let targetId: Id<'planningMonthVersions'>
     if (existing) {
@@ -2293,6 +2468,34 @@ export const upsertPlanningMonthVersion = mutation({
     }
 
     const target = await ctx.db.get(targetId)
+    const afterSnapshot = target
+      ? {
+          month: target.month,
+          versionKey: target.versionKey,
+          expectedIncome: target.expectedIncome,
+          fixedCommitments: target.fixedCommitments,
+          variableSpendingCap: target.variableSpendingCap,
+          notes: target.notes ?? '',
+          isSelected: target.isSelected,
+          updatedAt: target.updatedAt,
+        }
+      : undefined
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'planning_month_version',
+      entityId: String(targetId),
+      action: existing ? 'update' : 'create',
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      metadata: {
+        source: sanitizeMutationSource(args.source, 'planning_tab'),
+        month: args.month,
+        versionKey: args.versionKey,
+        selectAfterSave: args.selectAfterSave ?? false,
+      },
+    })
+
     return {
       id: String(targetId),
       monthKey: args.month,
@@ -2303,6 +2506,471 @@ export const upsertPlanningMonthVersion = mutation({
       variableSpendingCap: target?.variableSpendingCap ?? roundCurrency(args.variableSpendingCap),
       notes: target?.notes ?? args.notes?.trim() ?? '',
       updatedAt: target?.updatedAt ?? now,
+    }
+  },
+})
+
+export const applyPlanningVersionToMonth = mutation({
+  args: {
+    month: v.optional(v.string()),
+    versionKey: v.optional(planningVersionKeyValidator),
+    source: v.optional(planningActionTaskSourceValidator),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const nowTimestamp = Date.now()
+    const now = new Date(nowTimestamp)
+    const monthKey = args.month ?? toMonthKey(now)
+    if (args.month) {
+      validateMonthKey(args.month, 'Month')
+    }
+
+    const [
+      monthVersions,
+      existingTasks,
+      envelopeBudgets,
+      purchases,
+      purchaseSplits,
+      incomes,
+      bills,
+      cards,
+      loans,
+      incomeAllocationRules,
+    ] = await Promise.all([
+      ctx.db
+        .query('planningMonthVersions')
+        .withIndex('by_userId_month', (q) => q.eq('userId', identity.subject).eq('month', monthKey))
+        .collect(),
+      ctx.db
+        .query('planningActionTasks')
+        .withIndex('by_userId_month_createdAt', (q) => q.eq('userId', identity.subject).eq('month', monthKey))
+        .collect(),
+      ctx.db
+        .query('envelopeBudgets')
+        .withIndex('by_userId_month', (q) => q.eq('userId', identity.subject).eq('month', monthKey))
+        .collect(),
+      ctx.db
+        .query('purchases')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('purchaseSplits')
+        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('incomes')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('bills')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('cards')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('loans')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('incomeAllocationRules')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+    ])
+
+    const monthSpendByCategory = buildMonthSpendByCategory({
+      monthKey,
+      purchases,
+      purchaseSplits,
+    })
+    const monthPurchaseSpend = roundCurrency([...monthSpendByCategory.values()].reduce((sum, value) => sum + value, 0))
+
+    const commitments = computeMonthlyCommitmentsFromRecords({
+      bills,
+      cards,
+      loans,
+    })
+    const monthlyIncome = roundCurrency(
+      incomes.reduce(
+        (sum, income) =>
+          sum + toMonthlyAmount(resolveIncomeNetAmount(income), income.cadence, income.customInterval, income.customUnit),
+        0,
+      ),
+    )
+
+    const selectedSaved = monthVersions.find((entry) => entry.isSelected)
+    const requestedVersion = args.versionKey
+      ? monthVersions.find((entry) => entry.versionKey === args.versionKey)
+      : undefined
+    const fallbackDefaults = buildDefaultPlanningVersionMap({
+      baselineExpectedIncome: monthlyIncome,
+      baselineFixedCommitments: commitments.monthlyCommitments,
+      baselineVariableSpendingCap: monthPurchaseSpend,
+      selectedVersion: args.versionKey ?? (selectedSaved?.versionKey as PlanningVersionKey | undefined),
+      nowTimestamp,
+    })
+    const fallbackVersionKey = args.versionKey ?? (selectedSaved?.versionKey as PlanningVersionKey | undefined) ?? 'base'
+    const fallbackVersion = fallbackDefaults.get(fallbackVersionKey)!
+
+    const selectedVersion = requestedVersion ??
+      selectedSaved ??
+      monthVersions.find((entry) => entry.versionKey === 'base') ?? {
+        _id: `default:${monthKey}:${fallbackVersionKey}` as Id<'planningMonthVersions'>,
+        _creationTime: nowTimestamp,
+        userId: identity.subject,
+        month: monthKey,
+        versionKey: fallbackVersionKey,
+        expectedIncome: fallbackVersion.expectedIncome,
+        fixedCommitments: fallbackVersion.fixedCommitments,
+        variableSpendingCap: fallbackVersion.variableSpendingCap,
+        notes: fallbackVersion.notes,
+        isSelected: true,
+        createdAt: nowTimestamp,
+        updatedAt: nowTimestamp,
+      }
+
+    const autoAllocationPlan = buildAutoAllocationPlan(monthlyIncome, incomeAllocationRules)
+    const taskSource: PlanningActionTaskSource =
+      args.source ?? (existingTasks.length > 0 ? 'reapply' : 'manual_apply')
+    const taskDrafts = buildPlanningActionTaskDrafts({
+      monthKey,
+      version: {
+        versionKey: selectedVersion.versionKey as PlanningVersionKey,
+        expectedIncome: selectedVersion.expectedIncome,
+        fixedCommitments: selectedVersion.fixedCommitments,
+        variableSpendingCap: selectedVersion.variableSpendingCap,
+      },
+      envelopeBudgets,
+      monthSpendByCategory,
+      autoAllocationPlan,
+    })
+
+    await Promise.all(existingTasks.map((entry) => ctx.db.delete(entry._id)))
+
+    const insertedTaskIds: string[] = []
+    for (const draft of taskDrafts) {
+      const id = await ctx.db.insert('planningActionTasks', {
+        userId: identity.subject,
+        month: monthKey,
+        versionKey: selectedVersion.versionKey as PlanningVersionKey,
+        title: draft.title,
+        detail: draft.detail,
+        category: draft.category,
+        impactAmount: roundCurrency(draft.impactAmount),
+        status: draft.status,
+        source: taskSource,
+        createdAt: nowTimestamp,
+        updatedAt: nowTimestamp,
+      })
+      insertedTaskIds.push(String(id))
+    }
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'planning_plan_apply',
+      entityId: `${monthKey}:${selectedVersion.versionKey}`,
+      action: existingTasks.length > 0 ? 'reapply' : 'apply',
+      before: {
+        month: monthKey,
+        versionKey: selectedVersion.versionKey,
+        existingTaskCount: existingTasks.length,
+        existingTaskStatusCounts: existingTasks.reduce(
+          (acc, task) => {
+            acc[task.status] = (acc[task.status] ?? 0) + 1
+            return acc
+          },
+          {} as Record<string, number>,
+        ),
+      },
+      after: {
+        month: monthKey,
+        versionKey: selectedVersion.versionKey,
+        createdTaskCount: taskDrafts.length,
+        totalImpactAmount: roundCurrency(taskDrafts.reduce((sum, draft) => sum + Math.max(draft.impactAmount, 0), 0)),
+      },
+      metadata: {
+        source: taskSource,
+        month: monthKey,
+        versionKey: selectedVersion.versionKey,
+      },
+    })
+
+    return {
+      monthKey,
+      versionKey: selectedVersion.versionKey as PlanningVersionKey,
+      source: taskSource,
+      tasksCreated: taskDrafts.length,
+      taskIds: insertedTaskIds,
+      totalImpactAmount: roundCurrency(taskDrafts.reduce((sum, draft) => sum + Math.max(draft.impactAmount, 0), 0)),
+    }
+  },
+})
+
+export const updatePlanningActionTaskStatus = mutation({
+  args: {
+    id: v.id('planningActionTasks'),
+    status: planningActionTaskStatusValidator,
+    source: v.optional(planningActionTaskSourceValidator),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const existing = await ctx.db.get(args.id)
+    if (!existing || existing.userId !== identity.subject) {
+      throw new Error('Planning action task not found.')
+    }
+
+    const beforeSnapshot = {
+      month: existing.month,
+      versionKey: existing.versionKey,
+      title: existing.title,
+      category: existing.category,
+      impactAmount: existing.impactAmount,
+      status: existing.status,
+      source: existing.source,
+      updatedAt: existing.updatedAt,
+    }
+
+    const now = Date.now()
+    await ctx.db.patch(args.id, {
+      status: args.status,
+      updatedAt: now,
+    })
+
+    const updated = await ctx.db.get(args.id)
+    const afterSnapshot = updated
+      ? {
+          month: updated.month,
+          versionKey: updated.versionKey,
+          title: updated.title,
+          category: updated.category,
+          impactAmount: updated.impactAmount,
+          status: updated.status,
+          source: updated.source,
+          updatedAt: updated.updatedAt,
+        }
+      : undefined
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'planning_action_task',
+      entityId: String(args.id),
+      action: 'status_update',
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      metadata: {
+        source: args.source ?? 'planning_tab',
+        month: existing.month,
+        versionKey: existing.versionKey,
+      },
+    })
+
+    return {
+      id: String(args.id),
+      status: args.status,
+      updatedAt: now,
+    }
+  },
+})
+
+export const getPlanningPhase3Data = query({
+  args: {
+    month: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity()
+    const now = new Date()
+    const monthKey = args.month ?? toMonthKey(now)
+    if (args.month) {
+      validateMonthKey(args.month, 'Month')
+    }
+
+    if (!identity) {
+      return {
+        monthKey,
+        selectedVersionKey: 'base' as PlanningVersionKey,
+        actionTasks: [],
+        adherenceRows: [],
+        planningKpis: {
+          forecastAccuracyPercent: 100,
+          varianceRatePercent: 0,
+          planCompletionPercent: 0,
+          totalTasks: 0,
+          completedTasks: 0,
+          plannedNet: 0,
+          actualNet: 0,
+        },
+        auditEvents: [],
+      }
+    }
+
+    const [
+      monthVersions,
+      actionTasks,
+      envelopeBudgets,
+      purchases,
+      purchaseSplits,
+      bills,
+      cards,
+      loans,
+      planningVersionAudits,
+      planningApplyAudits,
+      planningTaskAudits,
+    ] = await Promise.all([
+      ctx.db
+        .query('planningMonthVersions')
+        .withIndex('by_userId_month', (q) => q.eq('userId', identity.subject).eq('month', monthKey))
+        .collect(),
+      ctx.db
+        .query('planningActionTasks')
+        .withIndex('by_userId_month_createdAt', (q) => q.eq('userId', identity.subject).eq('month', monthKey))
+        .order('desc')
+        .take(120),
+      ctx.db
+        .query('envelopeBudgets')
+        .withIndex('by_userId_month', (q) => q.eq('userId', identity.subject).eq('month', monthKey))
+        .collect(),
+      ctx.db
+        .query('purchases')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('purchaseSplits')
+        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('bills')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('cards')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('loans')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .collect(),
+      ctx.db
+        .query('financeAuditEvents')
+        .withIndex('by_userId_entityType_createdAt', (q) =>
+          q.eq('userId', identity.subject).eq('entityType', 'planning_month_version'),
+        )
+        .order('desc')
+        .take(80),
+      ctx.db
+        .query('financeAuditEvents')
+        .withIndex('by_userId_entityType_createdAt', (q) =>
+          q.eq('userId', identity.subject).eq('entityType', 'planning_plan_apply'),
+        )
+        .order('desc')
+        .take(80),
+      ctx.db
+        .query('financeAuditEvents')
+        .withIndex('by_userId_entityType_createdAt', (q) =>
+          q.eq('userId', identity.subject).eq('entityType', 'planning_action_task'),
+        )
+        .order('desc')
+        .take(80),
+    ])
+
+    const selectedVersion =
+      monthVersions.find((entry) => entry.isSelected) ??
+      monthVersions.find((entry) => entry.versionKey === 'base')
+    const versionKey = (selectedVersion?.versionKey as PlanningVersionKey | undefined) ?? 'base'
+    const monthSpendByCategory = buildMonthSpendByCategory({
+      monthKey,
+      purchases,
+      purchaseSplits,
+    })
+
+    const plannedByCategory = new Map<string, number>()
+    envelopeBudgets.forEach((budget) => {
+      const effectiveTarget = roundCurrency(budget.targetAmount + finiteOrZero(budget.carryoverAmount))
+      plannedByCategory.set(budget.category, roundCurrency((plannedByCategory.get(budget.category) ?? 0) + effectiveTarget))
+    })
+
+    const adherenceCategories = new Set([...plannedByCategory.keys(), ...monthSpendByCategory.keys()])
+    const adherenceRows = Array.from(adherenceCategories)
+      .map((category) => {
+        const planned = roundCurrency(plannedByCategory.get(category) ?? 0)
+        const actual = roundCurrency(monthSpendByCategory.get(category) ?? 0)
+        const variance = roundCurrency(actual - planned)
+        const varianceRatePercent = planned > 0 ? roundPercent((variance / planned) * 100) : actual > 0 ? 100 : 0
+        const status: 'on_track' | 'warning' | 'over' =
+          variance > 0.01 ? 'over' : variance < -planned * 0.25 ? 'warning' : 'on_track'
+        return {
+          id: `${monthKey}:${category}`,
+          category,
+          planned,
+          actual,
+          variance,
+          varianceRatePercent,
+          status,
+        }
+      })
+      .sort((left, right) => Math.abs(right.variance) - Math.abs(left.variance) || left.category.localeCompare(right.category))
+
+    const plannedTotal = roundCurrency(adherenceRows.reduce((sum, row) => sum + row.planned, 0))
+    const actualTotal = roundCurrency(adherenceRows.reduce((sum, row) => sum + row.actual, 0))
+    const absoluteVarianceTotal = roundCurrency(adherenceRows.reduce((sum, row) => sum + Math.abs(row.variance), 0))
+    const commitments = computeMonthlyCommitmentsFromRecords({ bills, cards, loans })
+    const plannedNet = roundCurrency(
+      (selectedVersion?.expectedIncome ?? 0) -
+        (selectedVersion?.fixedCommitments ?? commitments.monthlyCommitments) -
+        (selectedVersion?.variableSpendingCap ?? plannedTotal),
+    )
+    const actualNet = roundCurrency(
+      (selectedVersion?.expectedIncome ?? 0) -
+        (selectedVersion?.fixedCommitments ?? commitments.monthlyCommitments) -
+        actualTotal,
+    )
+    const forecastAccuracyPercent = roundPercent(
+      clamp(100 - (Math.abs(actualNet - plannedNet) / Math.max(Math.abs(plannedNet), 1)) * 100, 0, 100),
+    )
+    const varianceRatePercent = roundPercent(plannedTotal > 0 ? (absoluteVarianceTotal / plannedTotal) * 100 : 0)
+    const completedTasks = actionTasks.filter((task) => task.status === 'done').length
+    const planCompletionPercent = roundPercent(actionTasks.length > 0 ? (completedTasks / actionTasks.length) * 100 : 0)
+    const auditEvents = [...planningVersionAudits, ...planningApplyAudits, ...planningTaskAudits]
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, 120)
+      .map((event) => ({
+        id: String(event._id),
+        entityType: event.entityType,
+        entityId: event.entityId,
+        action: event.action,
+        beforeJson: event.beforeJson ?? undefined,
+        afterJson: event.afterJson ?? undefined,
+        metadataJson: event.metadataJson ?? undefined,
+        createdAt: event.createdAt,
+      }))
+
+    return {
+      monthKey,
+      selectedVersionKey: versionKey,
+      actionTasks: actionTasks.map((task) => ({
+        id: String(task._id),
+        month: task.month,
+        versionKey: task.versionKey,
+        title: task.title,
+        detail: task.detail,
+        category: task.category,
+        impactAmount: task.impactAmount,
+        status: task.status,
+        source: task.source,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      })),
+      adherenceRows,
+      planningKpis: {
+        forecastAccuracyPercent,
+        varianceRatePercent,
+        planCompletionPercent,
+        totalTasks: actionTasks.length,
+        completedTasks,
+        plannedNet,
+        actualNet,
+      },
+      auditEvents,
     }
   },
 })

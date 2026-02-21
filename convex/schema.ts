@@ -196,6 +196,13 @@ const incomeAllocationSuggestionStatus = v.union(
   v.literal('dismissed'),
 )
 const planningVersionKey = v.union(v.literal('base'), v.literal('conservative'), v.literal('aggressive'))
+const planningActionTaskStatus = v.union(
+  v.literal('suggested'),
+  v.literal('in_progress'),
+  v.literal('done'),
+  v.literal('dismissed'),
+)
+const planningActionTaskSource = v.union(v.literal('manual_apply'), v.literal('reapply'), v.literal('system'))
 const billCategory = v.union(
   v.literal('housing'),
   v.literal('utilities'),
@@ -693,6 +700,23 @@ export default defineSchema({
     .index('by_userId_month', ['userId', 'month'])
     .index('by_userId_month_versionKey', ['userId', 'month', 'versionKey'])
     .index('by_userId_month_isSelected', ['userId', 'month', 'isSelected']),
+  planningActionTasks: defineTable({
+    userId: v.string(),
+    month: v.string(),
+    versionKey: planningVersionKey,
+    title: v.string(),
+    detail: v.string(),
+    category: v.string(),
+    impactAmount: v.number(),
+    status: planningActionTaskStatus,
+    source: planningActionTaskSource,
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_month_createdAt', ['userId', 'month', 'createdAt'])
+    .index('by_userId_month_status', ['userId', 'month', 'status'])
+    .index('by_userId_month_versionKey', ['userId', 'month', 'versionKey']),
   cycleAuditLogs: defineTable({
     userId: v.string(),
     source: cycleRunSource,

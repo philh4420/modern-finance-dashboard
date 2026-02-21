@@ -8,8 +8,10 @@ import type {
   CardMinimumPaymentType,
   CardEntry,
   CycleAuditLogEntry,
+  EnvelopeBudgetEntry,
   FinanceAuditEventEntry,
   FinancePreference,
+  ForecastWindow,
   GoalEntry,
   IncomeEntry,
   IncomeChangeDirection,
@@ -21,6 +23,8 @@ import type {
   LoanEventEntry,
   MonthCloseSnapshotEntry,
   MonthlyCycleRunEntry,
+  PlanningActionTaskEntry,
+  PlanningMonthVersionEntry,
   PurchaseEntry,
   PurchaseMonthCloseRunEntry,
   Summary,
@@ -53,6 +57,10 @@ type PrintReportProps = {
   accountReconciliationChecks: AccountReconciliationCheckEntry[]
   goals: GoalEntry[]
   purchases: PurchaseEntry[]
+  envelopeBudgets: EnvelopeBudgetEntry[]
+  planningMonthVersions: PlanningMonthVersionEntry[]
+  planningActionTasks: PlanningActionTaskEntry[]
+  planningForecastWindows: ForecastWindow[]
   cycleAuditLogs: CycleAuditLogEntry[]
   monthlyCycleRuns: MonthlyCycleRunEntry[]
   purchaseMonthCloseRuns: PurchaseMonthCloseRunEntry[]
@@ -186,6 +194,12 @@ const billCategoryLabelMap: Record<BillCategory, string> = {
 const billScopeLabelMap: Record<BillScope, string> = {
   shared: 'Shared / household',
   personal: 'Personal',
+}
+
+const planningVersionSortOrder: Record<string, number> = {
+  base: 0,
+  conservative: 1,
+  aggressive: 2,
 }
 
 const resolveBillCategory = (bill: BillEntry): BillCategory => (bill.category as BillCategory | undefined) ?? 'other'
@@ -613,6 +627,10 @@ export function PrintReport({
   accountReconciliationChecks,
   goals,
   purchases,
+  envelopeBudgets,
+  planningMonthVersions,
+  planningActionTasks,
+  planningForecastWindows,
   cycleAuditLogs,
   monthlyCycleRuns,
   purchaseMonthCloseRuns,
@@ -705,25 +723,67 @@ export function PrintReport({
     categoryTotals.set(key, (categoryTotals.get(key) ?? 0) + row.purchase.amount)
   })
 
-  const topPurchaseCategories = Array.from(categoryTotals.entries())
-    .map(([category, total]) => ({
-      category,
-      total: roundCurrency(total),
-      share: purchasesTotal > 0 ? total / purchasesTotal : 0,
-    }))
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 5)
-
-  const monthlyPurchaseTotals = sortedMonthKeys.map((key) => {
-    const monthTotal = sumBy(monthGroups.get(key) ?? [], (purchase) => purchase.amount)
-    return {
-      key,
-      total: roundCurrency(monthTotal),
-    }
-  })
-
   const avgMonthlyPurchases = rangeMonths > 0 ? roundCurrency(purchasesTotal / rangeMonths) : 0
-  const projectedMonthlyNetAfterPurchases = roundCurrency(summary.monthlyIncome - summary.monthlyCommitments - avgMonthlyPurchases)
+  const planningAssumptionsRows = planningMonthVersions
+    .filter((entry) => inMonthRange(entry.month, config.startMonth, config.endMonth))
+    .sort((left, right) => {
+      if (left.month !== right.month) {
+        return left.month.localeCompare(right.month)
+      }
+      return (planningVersionSortOrder[left.versionKey] ?? 99) - (planningVersionSortOrder[right.versionKey] ?? 99)
+    })
+    .map((entry) => ({
+      id: String(entry._id),
+      month: entry.month,
+      versionKey: entry.versionKey,
+      expectedIncome: entry.expectedIncome,
+      fixedCommitments: entry.fixedCommitments,
+      variableSpendingCap: entry.variableSpendingCap,
+      plannedNet: roundCurrency(entry.expectedIncome - entry.fixedCommitments - entry.variableSpendingCap),
+      notes: entry.notes ?? '',
+      selected: entry.isSelected,
+    }))
+  const planningForecastRows = [...planningForecastWindows].sort((left, right) => left.days - right.days)
+  const plannedCategoryTotals = new Map<string, number>()
+  envelopeBudgets
+    .filter((entry) => inMonthRange(entry.month, config.startMonth, config.endMonth))
+    .forEach((entry) => {
+      const key = entry.category.trim() || 'Uncategorized'
+      const total = entry.targetAmount + (entry.carryoverAmount ?? 0)
+      plannedCategoryTotals.set(key, roundCurrency((plannedCategoryTotals.get(key) ?? 0) + total))
+    })
+  const planningVarianceRows = Array.from(new Set([...plannedCategoryTotals.keys(), ...categoryTotals.keys()]))
+    .map((category) => {
+      const planned = roundCurrency(plannedCategoryTotals.get(category) ?? 0)
+      const actual = roundCurrency(categoryTotals.get(category) ?? 0)
+      const variance = roundCurrency(actual - planned)
+      const varianceRatePercent = planned > 0 ? roundCurrency((variance / planned) * 100) : actual > 0 ? 100 : 0
+      return {
+        id: category,
+        category,
+        planned,
+        actual,
+        variance,
+        varianceRatePercent,
+      }
+    })
+    .sort((left, right) => Math.abs(right.variance) - Math.abs(left.variance))
+  const planningTasksInRange = planningActionTasks
+    .filter((task) => inMonthRange(task.month, config.startMonth, config.endMonth))
+    .sort((left, right) => {
+      if (left.month !== right.month) {
+        return left.month.localeCompare(right.month)
+      }
+      return left.createdAt - right.createdAt
+    })
+  const planningTasksDone = planningTasksInRange.filter((task) => task.status === 'done').length
+  const planningTaskCompletionPercent =
+    planningTasksInRange.length > 0 ? roundCurrency((planningTasksDone / planningTasksInRange.length) * 100) : 0
+  const planningAuditRows = financeAuditEvents
+    .filter((event) => event.entityType.startsWith('planning_'))
+    .filter((event) => inMonthRange(monthKeyFromTimestamp(event.createdAt), config.startMonth, config.endMonth))
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, 80)
   const incomePaymentChecksByIncomeId = incomePaymentChecks.reduce((map, entry) => {
     const key = String(entry.incomeId)
     const current = map.get(key) ?? []
@@ -2473,37 +2533,56 @@ export function PrintReport({
           <h2>Planning</h2>
           <div className="print-kpi-grid">
             <div className="print-kpi">
-              <p>Avg monthly purchases (range)</p>
-              <strong>{formatMoney(avgMonthlyPurchases)}</strong>
+              <p>Assumptions tracked</p>
+              <strong>{planningAssumptionsRows.length}</strong>
+              <small>{rangeMonths} month range</small>
+            </div>
+            <div className="print-kpi">
+              <p>Variance rows</p>
+              <strong>{planningVarianceRows.length}</strong>
               <small>
-                Projected net after purchases: {formatMoney(projectedMonthlyNetAfterPurchases)}
+                Avg monthly purchases {formatMoney(avgMonthlyPurchases)}
               </small>
             </div>
             <div className="print-kpi">
-              <p>Baseline commitments</p>
-              <strong>{formatMoney(summary.monthlyCommitments)}</strong>
-              <small>{formatMoney(summary.monthlyCommitments * rangeMonths)} over selected range</small>
+              <p>Execution completion</p>
+              <strong>{planningTaskCompletionPercent.toFixed(1)}%</strong>
+              <small>
+                {planningTasksDone}/{planningTasksInRange.length} tasks done
+              </small>
             </div>
           </div>
 
-          {topPurchaseCategories.length === 0 ? (
-            <p className="print-subnote">No categorized purchases in this range yet.</p>
+          <h3 className="print-subhead">Assumptions</h3>
+          {planningAssumptionsRows.length === 0 ? (
+            <p className="print-subnote">No saved planning assumptions in this range.</p>
           ) : (
             <div className="print-table-wrap">
               <table className="print-table">
                 <thead>
                   <tr>
-                    <th scope="col">Category</th>
-                    <th scope="col">Total</th>
-                    <th scope="col">Share</th>
+                    <th scope="col">Month</th>
+                    <th scope="col">Version</th>
+                    <th scope="col">Expected Income</th>
+                    <th scope="col">Fixed Commitments</th>
+                    <th scope="col">Variable Cap</th>
+                    <th scope="col">Planned Net</th>
+                    <th scope="col">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {topPurchaseCategories.map((categoryRow) => (
-                    <tr key={`planning-category-${categoryRow.category}`}>
-                      <td>{categoryRow.category}</td>
-                      <td className="table-amount">{formatMoney(categoryRow.total)}</td>
-                      <td>{formatPercent(categoryRow.share)}</td>
+                  {planningAssumptionsRows.map((row) => (
+                    <tr key={`planning-assumption-${row.id}`}>
+                      <td>{row.month}</td>
+                      <td>
+                        {row.versionKey}
+                        {row.selected ? ' (selected)' : ''}
+                      </td>
+                      <td className="table-amount">{formatMoney(row.expectedIncome)}</td>
+                      <td className="table-amount">{formatMoney(row.fixedCommitments)}</td>
+                      <td className="table-amount">{formatMoney(row.variableSpendingCap)}</td>
+                      <td className="table-amount">{formatMoney(row.plannedNet)}</td>
+                      <td>{row.notes || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2511,26 +2590,127 @@ export function PrintReport({
             </div>
           )}
 
-          {monthlyPurchaseTotals.length > 0 ? (
+          <h3 className="print-subhead">Forecast</h3>
+          {planningForecastRows.length === 0 ? (
+            <p className="print-subnote">No forecast windows available.</p>
+          ) : (
             <div className="print-table-wrap">
               <table className="print-table">
                 <thead>
                   <tr>
-                    <th scope="col">Month</th>
-                    <th scope="col">Purchase Total</th>
+                    <th scope="col">Window</th>
+                    <th scope="col">Projected Cash</th>
+                    <th scope="col">Projected Net</th>
+                    <th scope="col">Coverage</th>
+                    <th scope="col">Risk</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {monthlyPurchaseTotals.map((monthTotal) => (
-                    <tr key={`planning-month-${monthTotal.key}`}>
-                      <td>{monthTotal.key}</td>
-                      <td className="table-amount">{formatMoney(monthTotal.total)}</td>
+                  {planningForecastRows.map((row) => (
+                    <tr key={`planning-forecast-${row.days}`}>
+                      <td>{row.days} days</td>
+                      <td className="table-amount">{formatMoney(row.projectedCash)}</td>
+                      <td className="table-amount">{formatMoney(row.projectedNet)}</td>
+                      <td>{row.coverageMonths.toFixed(1)} months</td>
+                      <td>{row.risk}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          ) : null}
+          )}
+
+          <h3 className="print-subhead">Variance by Category</h3>
+          {planningVarianceRows.length === 0 ? (
+            <p className="print-subnote">No variance rows available in this range.</p>
+          ) : (
+            <div className="print-table-wrap">
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Category</th>
+                    <th scope="col">Planned</th>
+                    <th scope="col">Actual</th>
+                    <th scope="col">Variance</th>
+                    <th scope="col">Variance %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {planningVarianceRows.map((row) => (
+                    <tr key={`planning-variance-${row.id}`}>
+                      <td>{row.category}</td>
+                      <td className="table-amount">{formatMoney(row.planned)}</td>
+                      <td className="table-amount">{formatMoney(row.actual)}</td>
+                      <td className="table-amount">{formatMoney(row.variance)}</td>
+                      <td>{row.varianceRatePercent.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h3 className="print-subhead">Execution Tasks</h3>
+          {planningTasksInRange.length === 0 ? (
+            <p className="print-subnote">No planning execution tasks in this range.</p>
+          ) : (
+            <div className="print-table-wrap">
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Month</th>
+                    <th scope="col">Task</th>
+                    <th scope="col">Category</th>
+                    <th scope="col">Impact</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {planningTasksInRange.map((task) => (
+                    <tr key={`planning-task-${task._id}`}>
+                      <td>{task.month}</td>
+                      <td>{task.title}</td>
+                      <td>{task.category}</td>
+                      <td className="table-amount">{formatMoney(task.impactAmount)}</td>
+                      <td>{task.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h3 className="print-subhead">Planning Audit Trail</h3>
+          {planningAuditRows.length === 0 ? (
+            <p className="print-subnote">No planning audit events in this range.</p>
+          ) : (
+            <div className="print-table-wrap">
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th scope="col">When</th>
+                    <th scope="col">Entity</th>
+                    <th scope="col">Action</th>
+                    <th scope="col">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {planningAuditRows.map((event) => {
+                    const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+                    const source = typeof metadata?.source === 'string' ? metadata.source : 'planning_tab'
+                    return (
+                      <tr key={`planning-audit-${event._id}`}>
+                        <td>{cycleDateLabel.format(new Date(event.createdAt))}</td>
+                        <td>{event.entityType}</td>
+                        <td>{event.action}</td>
+                        <td>{source}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       ) : null}
 

@@ -4,6 +4,9 @@ import { api } from '../../convex/_generated/api'
 import type {
   EnvelopeBudgetEntry,
   EnvelopeBudgetId,
+  PlanningActionTaskId,
+  PlanningActionTaskStatus,
+  PlanningPhase3Data,
   IncomeAllocationRuleEntry,
   IncomeAllocationRuleId,
   IncomeAllocationTarget,
@@ -144,6 +147,8 @@ export const usePlanningSection = ({
   const removeIncomeAllocationRule = useMutation(api.phase2.removeIncomeAllocationRule)
   const applyIncomeAutoAllocationNow = useMutation(api.phase2.applyIncomeAutoAllocationNow)
   const upsertPlanningMonthVersion = useMutation(api.phase2.upsertPlanningMonthVersion)
+  const applyPlanningVersionToMonth = useMutation(api.phase2.applyPlanningVersionToMonth)
+  const updatePlanningActionTaskStatus = useMutation(api.phase2.updatePlanningActionTaskStatus)
 
   const [ruleForm, setRuleForm] = useState<RuleForm>(emptyRuleForm)
   const [budgetForm, setBudgetForm] = useState<BudgetForm>(emptyBudgetForm(monthKey))
@@ -160,7 +165,11 @@ export const usePlanningSection = ({
   const [planningVersionDirty, setPlanningVersionDirty] = useState(false)
   const [isSavingPlanningVersion, setIsSavingPlanningVersion] = useState(false)
   const [planningVersionFeedback, setPlanningVersionFeedback] = useState<string | null>(null)
+  const [isApplyingPlanToMonth, setIsApplyingPlanToMonth] = useState(false)
+  const [applyPlanFeedback, setApplyPlanFeedback] = useState<string | null>(null)
+  const [updatingPlanningTaskId, setUpdatingPlanningTaskId] = useState<string | null>(null)
   const planningPhase1DataQuery = useQuery(api.phase2.getPlanningPhase1Data, { month: planningMonth })
+  const planningPhase3DataQuery = useQuery(api.phase2.getPlanningPhase3Data, { month: planningMonth })
 
   const queue = useOfflineQueue({
     storageKey: 'finance-offline-queue-v2-planning',
@@ -194,6 +203,12 @@ export const usePlanningSection = ({
       },
       upsertPlanningMonthVersion: async (args) => {
         await upsertPlanningMonthVersion(args as Parameters<typeof upsertPlanningMonthVersion>[0])
+      },
+      applyPlanningVersionToMonth: async (args) => {
+        await applyPlanningVersionToMonth(args as Parameters<typeof applyPlanningVersionToMonth>[0])
+      },
+      updatePlanningActionTaskStatus: async (args) => {
+        await updatePlanningActionTaskStatus(args as Parameters<typeof updatePlanningActionTaskStatus>[0])
       },
     },
     userId,
@@ -304,6 +319,26 @@ export const usePlanningSection = ({
   }, [planningMonth, summary.monthlyCommitments, summary.monthlyIncome, summary.purchasesThisMonth])
 
   const planningPhase1Data = planningPhase1DataQuery ?? fallbackPlanningPhase1Data
+  const fallbackPlanningPhase3Data = useMemo<PlanningPhase3Data>(
+    () => ({
+      monthKey: planningMonth,
+      selectedVersionKey: activePlanningVersion,
+      actionTasks: [],
+      adherenceRows: [],
+      planningKpis: {
+        forecastAccuracyPercent: 100,
+        varianceRatePercent: 0,
+        planCompletionPercent: 0,
+        totalTasks: 0,
+        completedTasks: 0,
+        plannedNet: planningPhase1Data.workspace.plannedMonthlyNet,
+        actualNet: planningPhase1Data.workspace.plannedMonthlyNet,
+      },
+      auditEvents: [],
+    }),
+    [activePlanningVersion, planningMonth, planningPhase1Data.workspace.plannedMonthlyNet],
+  )
+  const planningPhase3Data = planningPhase3DataQuery ?? fallbackPlanningPhase3Data
 
   const activePlanningVersionRow = useMemo(() => {
     const explicit = planningPhase1Data.versions.find((entry) => entry.versionKey === activePlanningVersion)
@@ -377,6 +412,7 @@ export const usePlanningSection = ({
     setPlanningMonth(month)
     setPlanningVersionDirty(false)
     setPlanningVersionFeedback(null)
+    setApplyPlanFeedback(null)
     setBudgetForm((previous) => ({ ...previous, month }))
   }
 
@@ -415,6 +451,7 @@ export const usePlanningSection = ({
         variableSpendingCap: parseFloatInput(planningVersionForm.variableSpendingCap, 'Variable spending cap'),
         notes: planningVersionForm.notes.trim() || undefined,
         selectAfterSave: true,
+        source: 'planning_tab',
       }
       await queue.runOrQueue('upsertPlanningMonthVersion', payload, async (args) => upsertPlanningMonthVersion(args))
       const versionLabel = planningVersionLabels[activePlanningVersion]
@@ -425,6 +462,58 @@ export const usePlanningSection = ({
       setPlanningVersionFeedback(null)
     } finally {
       setIsSavingPlanningVersion(false)
+    }
+  }
+
+  const onApplyPlanToMonth = async () => {
+    clearError()
+    setApplyPlanFeedback(null)
+    setIsApplyingPlanToMonth(true)
+    try {
+      const execution = await queue.runOrQueue(
+        'applyPlanningVersionToMonth',
+        {
+          month: planningMonth,
+          versionKey: activePlanningVersion,
+          source: 'manual_apply' as const,
+        },
+        async (args) => applyPlanningVersionToMonth(args),
+      )
+      if (execution.queued || !execution.result) {
+        setApplyPlanFeedback(`Plan apply queued for ${planningMonth}. It will run automatically once back online.`)
+      } else {
+        const result = execution.result
+        setApplyPlanFeedback(
+          `Applied ${planningVersionLabels[result.versionKey]} plan to ${result.monthKey}. ${result.tasksCreated} execution task${
+            result.tasksCreated === 1 ? '' : 's'
+          } created.`,
+        )
+      }
+    } catch (error) {
+      setApplyPlanFeedback(null)
+      handleMutationError(error)
+    } finally {
+      setIsApplyingPlanToMonth(false)
+    }
+  }
+
+  const onUpdatePlanningTaskStatus = async (id: string, status: PlanningActionTaskStatus) => {
+    clearError()
+    setUpdatingPlanningTaskId(id)
+    try {
+      await queue.runOrQueue(
+        'updatePlanningActionTaskStatus',
+        {
+          id: id as PlanningActionTaskId,
+          status,
+          source: 'manual_apply' as const,
+        },
+        async (args) => updatePlanningActionTaskStatus(args),
+      )
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setUpdatingPlanningTaskId(null)
     }
   }
 
@@ -634,6 +723,15 @@ export const usePlanningSection = ({
     planningVersionFeedback,
     submitPlanningVersion,
     resetPlanningVersionForm,
+    planningActionTasks: planningPhase3Data.actionTasks,
+    planningAdherenceRows: planningPhase3Data.adherenceRows,
+    planningKpis: planningPhase3Data.planningKpis,
+    planningAuditEvents: planningPhase3Data.auditEvents,
+    isApplyingPlanToMonth,
+    applyPlanFeedback,
+    updatingPlanningTaskId,
+    onApplyPlanToMonth,
+    onUpdatePlanningTaskStatus,
     isApplyingAutoAllocation,
     autoAllocationLastRunNote,
     onApplyAutoAllocationNow,
