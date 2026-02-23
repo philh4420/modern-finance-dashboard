@@ -5,11 +5,16 @@ import type {
   BillScopeOption,
   CadenceOption,
   CustomCadenceUnitOption,
+  DashboardCardId,
+  DefaultMonthPreset,
+  FinancePreference,
   GoalFundingSourceType,
   GoalPriorityOption,
   GoalTypeOption,
   Summary,
   TabKey,
+  UiDensity,
+  WeekStartDay,
 } from '../components/financeTypes'
 
 export const tabs: Array<{ key: TabKey; label: string }> = [
@@ -97,10 +102,46 @@ export const billScopeOptions: BillScopeOption[] = [
   { value: 'personal', label: 'Personal' },
 ]
 
-export const defaultPreference = {
+export const defaultPreference: FinancePreference = {
+  displayName: '',
   currency: 'USD',
   locale: 'en-US',
+  timezone: 'UTC',
+  weekStartDay: 'monday' as WeekStartDay,
+  defaultMonthPreset: 'current' as DefaultMonthPreset,
+  dueRemindersEnabled: true,
+  dueReminderDays: 3,
+  monthlyCycleAlertsEnabled: true,
+  reconciliationRemindersEnabled: true,
+  goalAlertsEnabled: true,
+  defaultBillCategory: 'other',
+  defaultBillScope: 'shared',
+  defaultPurchaseOwnership: 'shared',
+  defaultPurchaseCategory: '',
+  billNotesTemplate: '',
+  purchaseNotesTemplate: '',
+  uiDensity: 'comfortable' as UiDensity,
+  defaultLandingTab: 'dashboard' as TabKey,
+  dashboardCardOrder: [
+    'health-score',
+    'monthly-income',
+    'monthly-commitments',
+    'loan-balance',
+    'projected-net',
+    'net-worth',
+    'runway',
+  ] as DashboardCardId[],
 }
+
+export const dashboardCardOrderOptions: Array<{ id: DashboardCardId; label: string }> = [
+  { id: 'health-score', label: 'Financial Health Score' },
+  { id: 'monthly-income', label: 'Monthly Income' },
+  { id: 'monthly-commitments', label: 'Monthly Commitments' },
+  { id: 'loan-balance', label: 'Loan Balance' },
+  { id: 'projected-net', label: 'Projected Monthly Net' },
+  { id: 'net-worth', label: 'Net Worth' },
+  { id: 'runway', label: 'Cash Runway' },
+]
 
 export const emptySummary: Summary = {
   monthlyIncome: 0,

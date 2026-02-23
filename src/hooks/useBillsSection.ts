@@ -1,12 +1,21 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
-import type { AccountId, BillEditDraft, BillEntry, BillForm, BillId, BillPaymentCheckId } from '../components/financeTypes'
+import type {
+  AccountId,
+  BillEditDraft,
+  BillEntry,
+  BillForm,
+  BillId,
+  BillPaymentCheckId,
+  FinancePreference,
+} from '../components/financeTypes'
 import { isCustomCadence, parseCustomInterval, parseFloatInput, parseIntInput } from '../lib/financeHelpers'
 import type { MutationHandlers } from './useMutationFeedback'
 
 type UseBillsSectionArgs = {
   bills: BillEntry[]
+  preference?: FinancePreference
 } & MutationHandlers
 
 const initialBillForm: BillForm = {
@@ -43,7 +52,27 @@ const initialBillEditDraft: BillEditDraft = {
   notes: '',
 }
 
-export const useBillsSection = ({ bills, clearError, handleMutationError }: UseBillsSectionArgs) => {
+const buildInitialBillForm = (preference?: FinancePreference): BillForm => ({
+  ...initialBillForm,
+  category: preference?.defaultBillCategory ?? initialBillForm.category,
+  scope: preference?.defaultBillScope ?? initialBillForm.scope,
+  notes: preference?.billNotesTemplate ?? initialBillForm.notes,
+})
+
+const isBillFormUntouched = (form: BillForm) =>
+  form.name.trim().length === 0 &&
+  form.amount.trim().length === 0 &&
+  form.dueDay.trim().length === 0 &&
+  form.cadence === initialBillForm.cadence &&
+  form.customInterval.trim().length === 0 &&
+  form.customUnit === initialBillForm.customUnit &&
+  form.deductible === initialBillForm.deductible &&
+  form.isSubscription === initialBillForm.isSubscription &&
+  form.cancelReminderDays === initialBillForm.cancelReminderDays &&
+  form.linkedAccountId.trim().length === 0 &&
+  form.autopay === initialBillForm.autopay
+
+export const useBillsSection = ({ bills, preference, clearError, handleMutationError }: UseBillsSectionArgs) => {
   const addBill = useMutation(api.finance.addBill)
   const updateBill = useMutation(api.finance.updateBill)
   const removeBill = useMutation(api.finance.removeBill)
@@ -52,9 +81,29 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
   const resolveBillDuplicateOverlap = useMutation(api.finance.resolveBillDuplicateOverlap)
   const runBillsMonthlyBulkAction = useMutation(api.finance.runBillsMonthlyBulkAction)
 
-  const [billForm, setBillForm] = useState<BillForm>(initialBillForm)
+  const [billForm, setBillForm] = useState<BillForm>(() => buildInitialBillForm(preference))
   const [billEditId, setBillEditId] = useState<BillId | null>(null)
   const [billEditDraft, setBillEditDraft] = useState<BillEditDraft>(initialBillEditDraft)
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setBillForm((previous) => {
+        if (!isBillFormUntouched(previous)) {
+          return previous
+        }
+        return {
+          ...previous,
+          category: preference?.defaultBillCategory ?? initialBillForm.category,
+          scope: preference?.defaultBillScope ?? initialBillForm.scope,
+          notes: preference?.billNotesTemplate ?? initialBillForm.notes,
+        }
+      })
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [preference?.billNotesTemplate, preference?.defaultBillCategory, preference?.defaultBillScope])
 
   const onAddBill = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -84,7 +133,7 @@ export const useBillsSection = ({ bills, clearError, handleMutationError }: UseB
         notes: billForm.notes || undefined,
       })
 
-      setBillForm(initialBillForm)
+      setBillForm(buildInitialBillForm(preference))
     } catch (error) {
       handleMutationError(error)
     }

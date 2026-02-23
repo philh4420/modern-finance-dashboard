@@ -58,10 +58,39 @@ export type BillCategory =
 export type BillScope = 'shared' | 'personal'
 export type PurchaseOwnership = 'shared' | 'personal'
 export type PurchaseFundingSourceType = 'unassigned' | 'account' | 'card'
+export type WeekStartDay = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
+export type UiDensity = 'comfortable' | 'compact'
+export type DefaultMonthPreset = 'current' | 'previous' | 'next' | 'last_used'
+export type DashboardCardId =
+  | 'health-score'
+  | 'monthly-income'
+  | 'monthly-commitments'
+  | 'loan-balance'
+  | 'projected-net'
+  | 'net-worth'
+  | 'runway'
 
 export type FinancePreference = {
+  displayName: string
   currency: string
   locale: string
+  timezone: string
+  weekStartDay: WeekStartDay
+  defaultMonthPreset: DefaultMonthPreset
+  dueRemindersEnabled: boolean
+  dueReminderDays: number
+  monthlyCycleAlertsEnabled: boolean
+  reconciliationRemindersEnabled: boolean
+  goalAlertsEnabled: boolean
+  defaultBillCategory: BillCategory
+  defaultBillScope: BillScope
+  defaultPurchaseOwnership: PurchaseOwnership
+  defaultPurchaseCategory: string
+  billNotesTemplate: string
+  purchaseNotesTemplate: string
+  uiDensity: UiDensity
+  defaultLandingTab: TabKey
+  dashboardCardOrder: DashboardCardId[]
 }
 
 export type Summary = {

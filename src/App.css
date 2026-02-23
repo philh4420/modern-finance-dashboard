@@ -14,6 +14,32 @@ body {
   gap: 1.1rem;
 }
 
+.dashboard--compact {
+  gap: 0.82rem;
+}
+
+.dashboard--compact .topbar {
+  padding: 0.85rem 1rem;
+}
+
+.dashboard--compact .content-grid {
+  gap: 0.82rem;
+}
+
+.dashboard--compact .panel {
+  padding: 0.82rem 0.9rem;
+}
+
+.dashboard--compact .panel-header {
+  gap: 0.55rem;
+  margin-bottom: 0.72rem;
+}
+
+.dashboard--compact .subnote,
+.dashboard--compact .form-hint {
+  font-size: 0.82rem;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -4376,6 +4402,56 @@ tbody .inline-cadence-controls {
 
 .checkbox-row input {
   width: auto;
+}
+
+.settings-order-list {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 84%, transparent);
+  border-radius: 0.95rem;
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.5rem;
+}
+
+.settings-order-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-radius: 0.8rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 88%, transparent);
+  background: color-mix(in oklab, var(--surface) 90%, white 10%);
+  padding: 0.5rem 0.55rem;
+}
+
+.settings-order-row__meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.settings-order-row__meta strong,
+.settings-order-row__meta small {
+  display: block;
+}
+
+.settings-order-row__meta small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.settings-order-row__index {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, var(--stroke) 90%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 88%, white 12%);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  flex: 0 0 auto;
 }
 
 input[type='checkbox'] {

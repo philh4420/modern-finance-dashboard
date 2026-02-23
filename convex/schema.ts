@@ -141,6 +141,35 @@ const goalEventType = v.union(
   v.literal('removed'),
 )
 const goalEventSource = v.union(v.literal('manual'), v.literal('quick_action'), v.literal('system'))
+const weekStartDay = v.union(
+  v.literal('monday'),
+  v.literal('tuesday'),
+  v.literal('wednesday'),
+  v.literal('thursday'),
+  v.literal('friday'),
+  v.literal('saturday'),
+  v.literal('sunday'),
+)
+const uiDensity = v.union(v.literal('comfortable'), v.literal('compact'))
+const defaultMonthPreset = v.union(
+  v.literal('current'),
+  v.literal('previous'),
+  v.literal('next'),
+  v.literal('last_used'),
+)
+const appTabKey = v.union(
+  v.literal('dashboard'),
+  v.literal('income'),
+  v.literal('bills'),
+  v.literal('cards'),
+  v.literal('loans'),
+  v.literal('purchases'),
+  v.literal('reconcile'),
+  v.literal('planning'),
+  v.literal('settings'),
+  v.literal('accounts'),
+  v.literal('goals'),
+)
 const cycleRunSource = v.union(v.literal('manual'), v.literal('automatic'))
 const cycleRunStatus = v.union(v.literal('completed'), v.literal('failed'))
 const reconciliationStatus = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
@@ -810,6 +839,24 @@ export default defineSchema({
     userId: v.string(),
     currency: v.string(),
     locale: v.string(),
+    displayName: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    weekStartDay: v.optional(weekStartDay),
+    defaultMonthPreset: v.optional(defaultMonthPreset),
+    dueRemindersEnabled: v.optional(v.boolean()),
+    dueReminderDays: v.optional(v.number()),
+    monthlyCycleAlertsEnabled: v.optional(v.boolean()),
+    reconciliationRemindersEnabled: v.optional(v.boolean()),
+    goalAlertsEnabled: v.optional(v.boolean()),
+    defaultBillCategory: v.optional(billCategory),
+    defaultBillScope: v.optional(billScope),
+    defaultPurchaseOwnership: v.optional(purchaseOwnership),
+    defaultPurchaseCategory: v.optional(v.string()),
+    billNotesTemplate: v.optional(v.string()),
+    purchaseNotesTemplate: v.optional(v.string()),
+    uiDensity: v.optional(uiDensity),
+    defaultLandingTab: v.optional(appTabKey),
+    dashboardCardOrder: v.optional(v.array(v.string())),
     updatedAt: v.number(),
   }).index('by_userId', ['userId']),
   consentSettings: defineTable({

@@ -75,6 +75,35 @@ const billCategoryValidator = v.union(
 )
 const billScopeValidator = v.union(v.literal('shared'), v.literal('personal'))
 const purchaseOwnershipValidator = v.union(v.literal('shared'), v.literal('personal'))
+const weekStartDayValidator = v.union(
+  v.literal('monday'),
+  v.literal('tuesday'),
+  v.literal('wednesday'),
+  v.literal('thursday'),
+  v.literal('friday'),
+  v.literal('saturday'),
+  v.literal('sunday'),
+)
+const uiDensityValidator = v.union(v.literal('comfortable'), v.literal('compact'))
+const defaultMonthPresetValidator = v.union(
+  v.literal('current'),
+  v.literal('previous'),
+  v.literal('next'),
+  v.literal('last_used'),
+)
+const appTabKeyValidator = v.union(
+  v.literal('dashboard'),
+  v.literal('income'),
+  v.literal('bills'),
+  v.literal('cards'),
+  v.literal('loans'),
+  v.literal('purchases'),
+  v.literal('reconcile'),
+  v.literal('planning'),
+  v.literal('settings'),
+  v.literal('accounts'),
+  v.literal('goals'),
+)
 const purchaseFundingSourceTypeValidator = v.union(
   v.literal('unassigned'),
   v.literal('account'),
@@ -137,6 +166,21 @@ type BillCategory =
   | 'other'
 type BillScope = 'shared' | 'personal'
 type PurchaseOwnership = 'shared' | 'personal'
+type WeekStartDay = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
+type UiDensity = 'comfortable' | 'compact'
+type DefaultMonthPreset = 'current' | 'previous' | 'next' | 'last_used'
+type AppTabKey =
+  | 'dashboard'
+  | 'income'
+  | 'bills'
+  | 'cards'
+  | 'loans'
+  | 'purchases'
+  | 'reconcile'
+  | 'planning'
+  | 'settings'
+  | 'accounts'
+  | 'goals'
 type PurchaseFundingSourceType = 'unassigned' | 'account' | 'card'
 type BillsMonthlyBulkAction = 'roll_recurring_forward' | 'mark_all_paid_from_account' | 'reconcile_batch'
 type LedgerEntryType =
@@ -184,9 +228,40 @@ type GoalFundingSourceMapItem = {
   allocationPercent?: number
 }
 
+const dashboardCardIds = [
+  'health-score',
+  'monthly-income',
+  'monthly-commitments',
+  'loan-balance',
+  'projected-net',
+  'net-worth',
+  'runway',
+] as const
+type DashboardCardId = (typeof dashboardCardIds)[number]
+
+const defaultDashboardCardOrder: DashboardCardId[] = [...dashboardCardIds]
+
 const defaultPreference = {
   currency: 'USD',
   locale: 'en-US',
+  displayName: '',
+  timezone: 'UTC',
+  weekStartDay: 'monday' as WeekStartDay,
+  defaultMonthPreset: 'current' as DefaultMonthPreset,
+  dueRemindersEnabled: true,
+  dueReminderDays: 3,
+  monthlyCycleAlertsEnabled: true,
+  reconciliationRemindersEnabled: true,
+  goalAlertsEnabled: true,
+  defaultBillCategory: 'other' as BillCategory,
+  defaultBillScope: 'shared' as BillScope,
+  defaultPurchaseOwnership: 'shared' as PurchaseOwnership,
+  defaultPurchaseCategory: '',
+  billNotesTemplate: '',
+  purchaseNotesTemplate: '',
+  uiDensity: 'comfortable' as UiDensity,
+  defaultLandingTab: 'dashboard' as AppTabKey,
+  dashboardCardOrder: defaultDashboardCardOrder,
 }
 
 const defaultSummary = {
@@ -894,6 +969,73 @@ const validateLocale = (locale: string) => {
   } catch {
     return false
   }
+}
+
+const validateTimeZone = (timeZone: string) => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+const isWeekStartDay = (value: unknown): value is WeekStartDay =>
+  value === 'monday' ||
+  value === 'tuesday' ||
+  value === 'wednesday' ||
+  value === 'thursday' ||
+  value === 'friday' ||
+  value === 'saturday' ||
+  value === 'sunday'
+
+const isUiDensity = (value: unknown): value is UiDensity => value === 'comfortable' || value === 'compact'
+
+const isDefaultMonthPreset = (value: unknown): value is DefaultMonthPreset =>
+  value === 'current' || value === 'previous' || value === 'next' || value === 'last_used'
+
+const isAppTabKey = (value: unknown): value is AppTabKey =>
+  value === 'dashboard' ||
+  value === 'income' ||
+  value === 'bills' ||
+  value === 'cards' ||
+  value === 'loans' ||
+  value === 'purchases' ||
+  value === 'reconcile' ||
+  value === 'planning' ||
+  value === 'settings' ||
+  value === 'accounts' ||
+  value === 'goals'
+
+const isDashboardCardId = (value: unknown): value is DashboardCardId =>
+  typeof value === 'string' && (dashboardCardIds as readonly string[]).includes(value)
+
+const normalizeDashboardCardOrder = (value: string[] | undefined) => {
+  if (value === undefined) {
+    return undefined
+  }
+
+  const seen = new Set<string>()
+  const normalized: DashboardCardId[] = []
+  for (const entry of value) {
+    const trimmed = entry.trim()
+    if (!isDashboardCardId(trimmed)) {
+      throw new Error(`Unsupported dashboard card id: ${entry}`)
+    }
+    if (seen.has(trimmed)) {
+      continue
+    }
+    seen.add(trimmed)
+    normalized.push(trimmed)
+  }
+
+  for (const cardId of dashboardCardIds) {
+    if (!seen.has(cardId)) {
+      normalized.push(cardId)
+    }
+  }
+
+  return normalized
 }
 
 const validateCurrencyCode = (currency: string) => {
@@ -2014,14 +2156,68 @@ const getUserPreference = async (ctx: QueryCtx, userId: string) => {
     .first()
 
   if (!existing) {
-    return defaultPreference
+    return {
+      ...defaultPreference,
+      dashboardCardOrder: [...defaultPreference.dashboardCardOrder],
+    }
   }
 
   const currency = existing.currency.toUpperCase()
+  const locale = existing.locale
+  const timezone = existing.timezone?.trim() || defaultPreference.timezone
+  const dashboardCardOrder = (() => {
+    try {
+      return normalizeDashboardCardOrder(existing.dashboardCardOrder) ?? [...defaultPreference.dashboardCardOrder]
+    } catch {
+      return [...defaultPreference.dashboardCardOrder]
+    }
+  })()
 
   return {
     currency: validateCurrencyCode(currency) ? currency : defaultPreference.currency,
-    locale: validateLocale(existing.locale) ? existing.locale : defaultPreference.locale,
+    locale: validateLocale(locale) ? locale : defaultPreference.locale,
+    displayName: existing.displayName?.trim() || defaultPreference.displayName,
+    timezone: validateTimeZone(timezone) ? timezone : defaultPreference.timezone,
+    weekStartDay: isWeekStartDay(existing.weekStartDay) ? existing.weekStartDay : defaultPreference.weekStartDay,
+    defaultMonthPreset: isDefaultMonthPreset(existing.defaultMonthPreset)
+      ? existing.defaultMonthPreset
+      : defaultPreference.defaultMonthPreset,
+    dueRemindersEnabled:
+      typeof existing.dueRemindersEnabled === 'boolean'
+        ? existing.dueRemindersEnabled
+        : defaultPreference.dueRemindersEnabled,
+    dueReminderDays:
+      typeof existing.dueReminderDays === 'number' && Number.isInteger(existing.dueReminderDays) && existing.dueReminderDays >= 0
+        ? existing.dueReminderDays
+        : defaultPreference.dueReminderDays,
+    monthlyCycleAlertsEnabled:
+      typeof existing.monthlyCycleAlertsEnabled === 'boolean'
+        ? existing.monthlyCycleAlertsEnabled
+        : defaultPreference.monthlyCycleAlertsEnabled,
+    reconciliationRemindersEnabled:
+      typeof existing.reconciliationRemindersEnabled === 'boolean'
+        ? existing.reconciliationRemindersEnabled
+        : defaultPreference.reconciliationRemindersEnabled,
+    goalAlertsEnabled:
+      typeof existing.goalAlertsEnabled === 'boolean' ? existing.goalAlertsEnabled : defaultPreference.goalAlertsEnabled,
+    defaultBillCategory:
+      existing.defaultBillCategory === undefined
+        ? defaultPreference.defaultBillCategory
+        : (existing.defaultBillCategory as BillCategory),
+    defaultBillScope:
+      existing.defaultBillScope === 'personal' || existing.defaultBillScope === 'shared'
+        ? existing.defaultBillScope
+        : defaultPreference.defaultBillScope,
+    defaultPurchaseOwnership:
+      existing.defaultPurchaseOwnership === 'personal' || existing.defaultPurchaseOwnership === 'shared'
+        ? existing.defaultPurchaseOwnership
+        : defaultPreference.defaultPurchaseOwnership,
+    defaultPurchaseCategory: existing.defaultPurchaseCategory?.trim() || defaultPreference.defaultPurchaseCategory,
+    billNotesTemplate: existing.billNotesTemplate ?? defaultPreference.billNotesTemplate,
+    purchaseNotesTemplate: existing.purchaseNotesTemplate ?? defaultPreference.purchaseNotesTemplate,
+    uiDensity: isUiDensity(existing.uiDensity) ? existing.uiDensity : defaultPreference.uiDensity,
+    defaultLandingTab: isAppTabKey(existing.defaultLandingTab) ? existing.defaultLandingTab : defaultPreference.defaultLandingTab,
+    dashboardCardOrder,
   }
 }
 
@@ -3234,12 +3430,36 @@ export const upsertFinancePreference = mutation({
   args: {
     currency: v.string(),
     locale: v.string(),
+    displayName: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    weekStartDay: v.optional(weekStartDayValidator),
+    defaultMonthPreset: v.optional(defaultMonthPresetValidator),
+    dueRemindersEnabled: v.optional(v.boolean()),
+    dueReminderDays: v.optional(v.number()),
+    monthlyCycleAlertsEnabled: v.optional(v.boolean()),
+    reconciliationRemindersEnabled: v.optional(v.boolean()),
+    goalAlertsEnabled: v.optional(v.boolean()),
+    defaultBillCategory: v.optional(billCategoryValidator),
+    defaultBillScope: v.optional(billScopeValidator),
+    defaultPurchaseOwnership: v.optional(purchaseOwnershipValidator),
+    defaultPurchaseCategory: v.optional(v.string()),
+    billNotesTemplate: v.optional(v.string()),
+    purchaseNotesTemplate: v.optional(v.string()),
+    uiDensity: v.optional(uiDensityValidator),
+    defaultLandingTab: v.optional(appTabKeyValidator),
+    dashboardCardOrder: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
 
     const currency = args.currency.trim().toUpperCase()
     const locale = args.locale.trim()
+    const normalizedDisplayName = args.displayName?.trim() || undefined
+    const normalizedTimezone = args.timezone?.trim() || undefined
+    const normalizedDefaultPurchaseCategory = args.defaultPurchaseCategory?.trim() || undefined
+    const normalizedBillNotesTemplate = args.billNotesTemplate?.trim() || undefined
+    const normalizedPurchaseNotesTemplate = args.purchaseNotesTemplate?.trim() || undefined
+    const normalizedDashboardCardOrder = normalizeDashboardCardOrder(args.dashboardCardOrder)
 
     if (!validateCurrencyCode(currency)) {
       throw new Error('Currency must be a valid ISO 4217 code supported by the runtime.')
@@ -3249,17 +3469,56 @@ export const upsertFinancePreference = mutation({
       throw new Error('Locale is not valid.')
     }
 
+    validateOptionalText(normalizedDisplayName, 'Display name', 120)
+    validateOptionalText(normalizedDefaultPurchaseCategory, 'Default purchase category', 80)
+    validateOptionalText(normalizedBillNotesTemplate, 'Bill notes template', 2000)
+    validateOptionalText(normalizedPurchaseNotesTemplate, 'Purchase notes template', 2000)
+
+    if (normalizedTimezone && !validateTimeZone(normalizedTimezone)) {
+      throw new Error('Timezone is not valid.')
+    }
+
+    if (args.dueReminderDays !== undefined) {
+      if (!Number.isInteger(args.dueReminderDays) || args.dueReminderDays < 0 || args.dueReminderDays > 60) {
+        throw new Error('Due reminder days must be an integer between 0 and 60.')
+      }
+    }
+
     const existing = await ctx.db
       .query('financePreferences')
       .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
       .first()
 
+    const now = Date.now()
+
     if (existing) {
-      await ctx.db.patch(existing._id, {
+      const patch: Partial<Doc<'financePreferences'>> = {
         currency,
         locale,
-        updatedAt: Date.now(),
-      })
+        updatedAt: now,
+      }
+
+      if (args.displayName !== undefined) patch.displayName = normalizedDisplayName
+      if (args.timezone !== undefined) patch.timezone = normalizedTimezone
+      if (args.weekStartDay !== undefined) patch.weekStartDay = args.weekStartDay
+      if (args.defaultMonthPreset !== undefined) patch.defaultMonthPreset = args.defaultMonthPreset
+      if (args.dueRemindersEnabled !== undefined) patch.dueRemindersEnabled = args.dueRemindersEnabled
+      if (args.dueReminderDays !== undefined) patch.dueReminderDays = args.dueReminderDays
+      if (args.monthlyCycleAlertsEnabled !== undefined) patch.monthlyCycleAlertsEnabled = args.monthlyCycleAlertsEnabled
+      if (args.reconciliationRemindersEnabled !== undefined)
+        patch.reconciliationRemindersEnabled = args.reconciliationRemindersEnabled
+      if (args.goalAlertsEnabled !== undefined) patch.goalAlertsEnabled = args.goalAlertsEnabled
+      if (args.defaultBillCategory !== undefined) patch.defaultBillCategory = args.defaultBillCategory
+      if (args.defaultBillScope !== undefined) patch.defaultBillScope = args.defaultBillScope
+      if (args.defaultPurchaseOwnership !== undefined) patch.defaultPurchaseOwnership = args.defaultPurchaseOwnership
+      if (args.defaultPurchaseCategory !== undefined) patch.defaultPurchaseCategory = normalizedDefaultPurchaseCategory
+      if (args.billNotesTemplate !== undefined) patch.billNotesTemplate = normalizedBillNotesTemplate
+      if (args.purchaseNotesTemplate !== undefined) patch.purchaseNotesTemplate = normalizedPurchaseNotesTemplate
+      if (args.uiDensity !== undefined) patch.uiDensity = args.uiDensity
+      if (args.defaultLandingTab !== undefined) patch.defaultLandingTab = args.defaultLandingTab
+      if (args.dashboardCardOrder !== undefined) patch.dashboardCardOrder = normalizedDashboardCardOrder
+
+      await ctx.db.patch(existing._id, patch)
       return
     }
 
@@ -3267,7 +3526,26 @@ export const upsertFinancePreference = mutation({
       userId: identity.subject,
       currency,
       locale,
-      updatedAt: Date.now(),
+      displayName: normalizedDisplayName ?? (defaultPreference.displayName || undefined),
+      timezone: normalizedTimezone ?? defaultPreference.timezone,
+      weekStartDay: args.weekStartDay ?? defaultPreference.weekStartDay,
+      defaultMonthPreset: args.defaultMonthPreset ?? defaultPreference.defaultMonthPreset,
+      dueRemindersEnabled: args.dueRemindersEnabled ?? defaultPreference.dueRemindersEnabled,
+      dueReminderDays: args.dueReminderDays ?? defaultPreference.dueReminderDays,
+      monthlyCycleAlertsEnabled: args.monthlyCycleAlertsEnabled ?? defaultPreference.monthlyCycleAlertsEnabled,
+      reconciliationRemindersEnabled:
+        args.reconciliationRemindersEnabled ?? defaultPreference.reconciliationRemindersEnabled,
+      goalAlertsEnabled: args.goalAlertsEnabled ?? defaultPreference.goalAlertsEnabled,
+      defaultBillCategory: args.defaultBillCategory ?? defaultPreference.defaultBillCategory,
+      defaultBillScope: args.defaultBillScope ?? defaultPreference.defaultBillScope,
+      defaultPurchaseOwnership: args.defaultPurchaseOwnership ?? defaultPreference.defaultPurchaseOwnership,
+      defaultPurchaseCategory: normalizedDefaultPurchaseCategory ?? (defaultPreference.defaultPurchaseCategory || undefined),
+      billNotesTemplate: normalizedBillNotesTemplate ?? (defaultPreference.billNotesTemplate || undefined),
+      purchaseNotesTemplate: normalizedPurchaseNotesTemplate ?? (defaultPreference.purchaseNotesTemplate || undefined),
+      uiDensity: args.uiDensity ?? defaultPreference.uiDensity,
+      defaultLandingTab: args.defaultLandingTab ?? defaultPreference.defaultLandingTab,
+      dashboardCardOrder: normalizedDashboardCardOrder ?? [...defaultPreference.dashboardCardOrder],
+      updatedAt: now,
     })
   },
 })

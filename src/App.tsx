@@ -17,7 +17,7 @@ import { PlanningTab } from './components/PlanningTab'
 import { PrintReport } from './components/PrintReport'
 import { PrintReportModal, type PrintReportConfig } from './components/PrintReportModal'
 import { SettingsTab } from './components/SettingsTab'
-import type { DashboardCard, TabKey } from './components/financeTypes'
+import type { DashboardCard, DashboardCardId, TabKey } from './components/financeTypes'
 import { GoalsTab } from './components/GoalsTab'
 import { IncomeTab } from './components/IncomeTab'
 import { LoansTab } from './components/LoansTab'
@@ -43,7 +43,7 @@ import {
   accountTypeOptions,
   cadenceOptions,
   customCadenceUnitOptions,
-  dateLabel,
+  dateLabel as fallbackDateLabel,
   defaultPreference,
   emptySummary,
   goalFundingSourceTypeOptions,
@@ -79,6 +79,7 @@ function App() {
 
   const cleanupTriggered = useRef(false)
   const monthlyCycleTriggered = useRef(false)
+  const defaultLandingTabApplied = useRef(false)
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
   const [isRunningMonthlyCycle, setIsRunningMonthlyCycle] = useState(false)
   const [isReconcilingPending, setIsReconcilingPending] = useState(false)
@@ -91,6 +92,7 @@ function App() {
     if (!financeState?.isAuthenticated) {
       cleanupTriggered.current = false
       monthlyCycleTriggered.current = false
+      defaultLandingTabApplied.current = false
       return
     }
 
@@ -149,6 +151,13 @@ function App() {
 
   const preference = financeState?.data.preference ?? defaultPreference
 
+  useEffect(() => {
+    if (!financeState?.isAuthenticated) return
+    if (defaultLandingTabApplied.current) return
+    defaultLandingTabApplied.current = true
+    setActiveTab(preference.defaultLandingTab ?? 'dashboard')
+  }, [financeState?.isAuthenticated, preference.defaultLandingTab])
+
   const incomes = financeState?.data.incomes ?? []
   const incomePaymentChecks = financeState?.data.incomePaymentChecks ?? []
   const incomeChangeEvents = financeState?.data.incomeChangeEvents ?? []
@@ -201,6 +210,7 @@ function App() {
 
   const billsSection = useBillsSection({
     bills,
+    preference,
     clearError,
     handleMutationError,
   })
@@ -225,6 +235,7 @@ function App() {
     recurringCandidates: phase2State?.recurringCandidates ?? [],
     purchaseSplits: phase2State?.purchaseSplits ?? [],
     purchaseSplitTemplates: phase2State?.purchaseSplitTemplates ?? [],
+    preference,
     clearError,
     handleMutationError,
   })
@@ -325,26 +336,65 @@ function App() {
   })
 
   const settingsSection = useSettingsSection({
+    preference,
     clearError,
     handleMutationError,
   })
 
-  const lastUpdated = new Intl.DateTimeFormat(preference.locale || 'en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(financeState?.updatedAt ? new Date(financeState.updatedAt) : new Date())
+  const dateLabel = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat(preference.locale || 'en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: preference.timezone || 'UTC',
+      })
+    } catch {
+      return fallbackDateLabel
+    }
+  }, [preference.locale, preference.timezone])
 
-  const cycleDateLabel = new Intl.DateTimeFormat(preference.locale || 'en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
+  const lastUpdated = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat(preference.locale || 'en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: preference.timezone || 'UTC',
+      }).format(financeState?.updatedAt ? new Date(financeState.updatedAt) : new Date())
+    } catch {
+      return new Intl.DateTimeFormat('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(financeState?.updatedAt ? new Date(financeState.updatedAt) : new Date())
+    }
+  }, [financeState?.updatedAt, preference.locale, preference.timezone])
 
-  const dashboardCards: DashboardCard[] = [
+  const cycleDateLabel = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat(preference.locale || 'en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: preference.timezone || 'UTC',
+      })
+    } catch {
+      return new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+    }
+  }, [preference.locale, preference.timezone])
+
+  const dashboardCardsBase: DashboardCard[] = [
     {
       id: 'health-score',
       label: 'Financial Health Score',
@@ -395,6 +445,26 @@ function App() {
       trend: summary.runwayMonths >= 3 ? 'up' : summary.runwayMonths >= 1 ? 'flat' : 'down',
     },
   ]
+
+  const dashboardCards = (() => {
+    const byId = new Map<DashboardCardId, DashboardCard>(dashboardCardsBase.map((card) => [card.id as DashboardCardId, card]))
+    const ordered: DashboardCard[] = []
+    const seen = new Set<string>()
+
+    for (const id of preference.dashboardCardOrder ?? []) {
+      const card = byId.get(id)
+      if (!card || seen.has(card.id)) continue
+      ordered.push(card)
+      seen.add(card.id)
+    }
+
+    for (const card of dashboardCardsBase) {
+      if (seen.has(card.id)) continue
+      ordered.push(card)
+    }
+
+    return ordered
+  })()
 
   const downloadSnapshot = () => {
     clearError()
@@ -496,7 +566,7 @@ function App() {
   }, [printConfig])
 
   return (
-    <main className="dashboard">
+    <main className={`dashboard dashboard--${preference.uiDensity ?? 'comfortable'}`}>
       <div className="no-print">
       <header className="topbar">
         <div>
@@ -1040,6 +1110,21 @@ function App() {
 
         {activeTab === 'settings' ? (
           <SettingsTab
+            preferenceDraft={settingsSection.preferenceDraft}
+            setPreferenceDraft={settingsSection.setPreferenceDraft}
+            isSavingPreferences={settingsSection.isSavingPreferences}
+            hasUnsavedPreferences={settingsSection.hasUnsavedPreferences}
+            onSavePreferences={settingsSection.onSavePreferences}
+            onResetPreferencesDraft={settingsSection.onResetPreferencesDraft}
+            moveDashboardCard={settingsSection.moveDashboardCard}
+            currencyOptions={settingsSection.currencyOptions}
+            localeOptions={settingsSection.localeOptions}
+            timezoneOptions={settingsSection.timezoneOptions}
+            weekStartDayOptions={settingsSection.weekStartDayOptions}
+            defaultMonthPresetOptions={settingsSection.defaultMonthPresetOptions}
+            uiDensityOptions={settingsSection.uiDensityOptions}
+            defaultLandingTabOptions={settingsSection.defaultLandingTabOptions}
+            dashboardCardOrderOptions={settingsSection.dashboardCardOrderOptions}
             consentSettings={
               settingsSection.privacyData?.consentSettings ?? {
                 diagnosticsEnabled: false,
@@ -1072,6 +1157,7 @@ function App() {
             onClose={() => setPrintModalOpen(false)}
             onStartPrint={startPrint}
             locale={preference.locale}
+            defaultMonthPreset={preference.defaultMonthPreset}
           />
         ) : null}
       </SignedIn>

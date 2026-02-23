@@ -77,17 +77,30 @@ export const useAccountsSection = ({ accounts, clearError, handleMutationError }
     setAccountTransferForm((prev) => {
       const nextSource = availableIds.has(prev.sourceAccountId) ? prev.sourceAccountId : firstId
       const nextDestination = availableIds.has(prev.destinationAccountId) ? prev.destinationAccountId : ''
+      const normalizedDestination = nextDestination === nextSource ? '' : nextDestination
+
+      if (prev.sourceAccountId === nextSource && prev.destinationAccountId === normalizedDestination) {
+        return prev
+      }
+
       return {
         ...prev,
         sourceAccountId: nextSource,
-        destinationAccountId: nextDestination === nextSource ? '' : nextDestination,
+        destinationAccountId: normalizedDestination,
       }
     })
 
-    setAccountReconciliationForm((prev) => ({
-      ...prev,
-      accountId: availableIds.has(prev.accountId) ? prev.accountId : firstId,
-    }))
+    setAccountReconciliationForm((prev) => {
+      const nextAccountId = availableIds.has(prev.accountId) ? prev.accountId : firstId
+      if (prev.accountId === nextAccountId) {
+        return prev
+      }
+
+      return {
+        ...prev,
+        accountId: nextAccountId,
+      }
+    })
   }, [accounts])
 
   const onAddAccount = async (event: FormEvent<HTMLFormElement>) => {

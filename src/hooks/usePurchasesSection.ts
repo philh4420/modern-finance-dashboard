@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import type {
@@ -7,6 +7,7 @@ import type {
   Cadence,
   CardEntry,
   CustomCadenceUnit,
+  FinancePreference,
   GoalEntry,
   PurchaseDuplicateOverlapMatch,
   PurchaseDuplicateOverlapResolution,
@@ -35,6 +36,7 @@ type UsePurchasesSectionArgs = {
   recurringCandidates: RecurringCandidate[]
   purchaseSplits: PurchaseSplitEntry[]
   purchaseSplitTemplates: PurchaseSplitTemplateEntry[]
+  preference?: FinancePreference
 } & MutationHandlers
 
 const initialPurchaseForm: PurchaseForm = {
@@ -74,6 +76,23 @@ const initialPurchaseFilter: PurchaseFilter = {
   taxDeductible: 'all',
   fundingSourceType: 'all',
 }
+
+const buildInitialPurchaseForm = (preference?: FinancePreference): PurchaseForm => ({
+  ...initialPurchaseForm,
+  category: preference?.defaultPurchaseCategory ?? initialPurchaseForm.category,
+  ownership: preference?.defaultPurchaseOwnership ?? initialPurchaseForm.ownership,
+  notes: preference?.purchaseNotesTemplate ?? initialPurchaseForm.notes,
+})
+
+const isPurchaseFormUntouched = (form: PurchaseForm) =>
+  form.item.trim().length === 0 &&
+  form.amount.trim().length === 0 &&
+  form.purchaseDate === initialPurchaseForm.purchaseDate &&
+  form.reconciliationStatus === initialPurchaseForm.reconciliationStatus &&
+  form.statementMonth === initialPurchaseForm.statementMonth &&
+  form.taxDeductible === initialPurchaseForm.taxDeductible &&
+  form.fundingSourceType === initialPurchaseForm.fundingSourceType &&
+  form.fundingSourceId.trim().length === 0
 
 const monthOnlyViews: PurchaseSavedView[] = ['month_all', 'month_pending', 'month_unreconciled', 'month_reconciled']
 
@@ -349,6 +368,7 @@ export const usePurchasesSection = ({
   recurringCandidates,
   purchaseSplits,
   purchaseSplitTemplates,
+  preference,
   clearError,
   handleMutationError,
 }: UsePurchasesSectionArgs) => {
@@ -367,13 +387,33 @@ export const usePurchasesSection = ({
   const removePurchaseSplitTemplateMutation = useMutation(api.phase2.removePurchaseSplitTemplate)
   const applyPurchaseSplitTemplateMutation = useMutation(api.phase2.applyPurchaseSplitTemplate)
 
-  const [purchaseForm, setPurchaseForm] = useState<PurchaseForm>(initialPurchaseForm)
+  const [purchaseForm, setPurchaseForm] = useState<PurchaseForm>(() => buildInitialPurchaseForm(preference))
   const [purchaseEditId, setPurchaseEditId] = useState<PurchaseId | null>(null)
   const [purchaseEditDraft, setPurchaseEditDraft] = useState<PurchaseEditDraft>(initialPurchaseEditDraft)
   const [purchaseFilter, setPurchaseFilter] = useState<PurchaseFilter>(initialPurchaseFilter)
   const [savedView, setSavedView] = useState<PurchaseSavedView>('month_all')
   const [selectedPurchaseIds, setSelectedPurchaseIds] = useState<PurchaseId[]>([])
   const [bulkCategory, setBulkCategory] = useState('')
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setPurchaseForm((previous) => {
+        if (!isPurchaseFormUntouched(previous)) {
+          return previous
+        }
+        return {
+          ...previous,
+          category: preference?.defaultPurchaseCategory ?? initialPurchaseForm.category,
+          ownership: preference?.defaultPurchaseOwnership ?? initialPurchaseForm.ownership,
+          notes: preference?.purchaseNotesTemplate ?? initialPurchaseForm.notes,
+        }
+      })
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [preference?.defaultPurchaseCategory, preference?.defaultPurchaseOwnership, preference?.purchaseNotesTemplate])
 
   const currentMonth = new Date().toISOString().slice(0, 7)
   const purchaseById = useMemo(() => new Map(purchases.map((entry) => [String(entry._id), entry])), [purchases])
@@ -545,7 +585,7 @@ export const usePurchasesSection = ({
         source: 'manual',
       })
 
-      setPurchaseForm(initialPurchaseForm)
+      setPurchaseForm(buildInitialPurchaseForm(preference))
     } catch (error) {
       handleMutationError(error)
     }

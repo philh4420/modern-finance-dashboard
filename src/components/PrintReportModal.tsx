@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import type { DefaultMonthPreset } from './financeTypes'
 
 type PrintReportConfig = {
   startMonth: string
@@ -22,21 +23,72 @@ type PrintReportModalProps = {
   onClose: () => void
   onStartPrint: (config: PrintReportConfig) => void
   locale?: string
+  defaultMonthPreset?: DefaultMonthPreset
 }
 
 const monthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 
 const isValidMonthKey = (value: string) => /^\d{4}-\d{2}$/.test(value)
 
-export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintReportModalProps) {
+const printReportRangeStorageKey = 'finance-print-report:last-range'
+
+const shiftMonth = (value: Date, delta: number) => {
+  const next = new Date(value.getTime())
+  next.setMonth(next.getMonth() + delta)
+  return next
+}
+
+const readLastUsedRange = () => {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(printReportRangeStorageKey)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { startMonth?: unknown; endMonth?: unknown }
+    if (typeof parsed.startMonth !== 'string' || typeof parsed.endMonth !== 'string') return null
+    if (!isValidMonthKey(parsed.startMonth) || !isValidMonthKey(parsed.endMonth)) return null
+    return { startMonth: parsed.startMonth, endMonth: parsed.endMonth }
+  } catch {
+    return null
+  }
+}
+
+const writeLastUsedRange = (startMonth: string, endMonth: string) => {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(printReportRangeStorageKey, JSON.stringify({ startMonth, endMonth }))
+  } catch {
+    // Ignore storage failures (private mode, quota, disabled storage).
+  }
+}
+
+export function PrintReportModal({
+  open,
+  onClose,
+  onStartPrint,
+  locale,
+  defaultMonthPreset = 'current',
+}: PrintReportModalProps) {
   const defaults = useMemo(() => {
     const now = new Date()
     const current = monthKey(now)
+    const previous = monthKey(shiftMonth(now, -1))
+    const next = monthKey(shiftMonth(now, 1))
+    const lastUsed = readLastUsedRange()
+
+    if (defaultMonthPreset === 'last_used' && lastUsed) {
+      return lastUsed
+    }
+    if (defaultMonthPreset === 'previous') {
+      return { startMonth: previous, endMonth: previous }
+    }
+    if (defaultMonthPreset === 'next') {
+      return { startMonth: next, endMonth: next }
+    }
     return {
       startMonth: current,
       endMonth: current,
     }
-  }, [])
+  }, [defaultMonthPreset])
 
   const [startMonthValue, setStartMonthValue] = useState(defaults.startMonth)
   const [endMonthValue, setEndMonthValue] = useState(defaults.endMonth)
@@ -72,7 +124,7 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [onClose, open])
+  }, [defaults.endMonth, defaults.startMonth, onClose, open])
 
   if (!open) {
     return null
@@ -127,6 +179,8 @@ export function PrintReportModal({ open, onClose, onStartPrint, locale }: PrintR
       setError(message)
       return
     }
+
+    writeLastUsedRange(startMonthValue, endMonthValue)
 
     onStartPrint({
       startMonth: startMonthValue,

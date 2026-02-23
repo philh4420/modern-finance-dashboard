@@ -1,13 +1,79 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type {
+  BillCategory,
+  BillScope,
   ConsentLogEntry,
   ConsentSettingsView,
+  DashboardCardId,
   DeletionJobEntry,
+  DefaultMonthPreset,
+  FinancePreference,
   RetentionPolicyRow,
+  UiDensity,
   UserExportEntry,
+  WeekStartDay,
 } from './financeTypes'
 
 type SettingsTabProps = {
+  preferenceDraft: {
+    displayName: string
+    currency: string
+    locale: string
+    timezone: string
+    weekStartDay: WeekStartDay
+    defaultMonthPreset: DefaultMonthPreset
+    dueRemindersEnabled: boolean
+    dueReminderDays: string
+    monthlyCycleAlertsEnabled: boolean
+    reconciliationRemindersEnabled: boolean
+    goalAlertsEnabled: boolean
+    defaultBillCategory: BillCategory
+    defaultBillScope: BillScope
+    defaultPurchaseOwnership: FinancePreference['defaultPurchaseOwnership']
+    defaultPurchaseCategory: string
+    billNotesTemplate: string
+    purchaseNotesTemplate: string
+    uiDensity: UiDensity
+    defaultLandingTab: FinancePreference['defaultLandingTab']
+    dashboardCardOrder: DashboardCardId[]
+  }
+  setPreferenceDraft: Dispatch<
+    SetStateAction<{
+      displayName: string
+      currency: string
+      locale: string
+      timezone: string
+      weekStartDay: WeekStartDay
+      defaultMonthPreset: DefaultMonthPreset
+      dueRemindersEnabled: boolean
+      dueReminderDays: string
+      monthlyCycleAlertsEnabled: boolean
+      reconciliationRemindersEnabled: boolean
+      goalAlertsEnabled: boolean
+      defaultBillCategory: BillCategory
+      defaultBillScope: BillScope
+      defaultPurchaseOwnership: FinancePreference['defaultPurchaseOwnership']
+      defaultPurchaseCategory: string
+      billNotesTemplate: string
+      purchaseNotesTemplate: string
+      uiDensity: UiDensity
+      defaultLandingTab: FinancePreference['defaultLandingTab']
+      dashboardCardOrder: DashboardCardId[]
+    }>
+  >
+  isSavingPreferences: boolean
+  hasUnsavedPreferences: boolean
+  onSavePreferences: () => Promise<void>
+  onResetPreferencesDraft: () => void
+  moveDashboardCard: (cardId: DashboardCardId, direction: -1 | 1) => void
+  currencyOptions: string[]
+  localeOptions: string[]
+  timezoneOptions: string[]
+  weekStartDayOptions: Array<{ value: WeekStartDay; label: string }>
+  defaultMonthPresetOptions: Array<{ value: DefaultMonthPreset; label: string }>
+  uiDensityOptions: Array<{ value: UiDensity; label: string }>
+  defaultLandingTabOptions: Array<{ value: FinancePreference['defaultLandingTab']; label: string }>
+  dashboardCardOrderOptions: Array<{ id: DashboardCardId; label: string }>
   consentSettings: ConsentSettingsView
   consentLogs: ConsentLogEntry[]
   latestExport: UserExportEntry | null
@@ -99,6 +165,21 @@ const parseDeletionProgress = (progressJson: string | undefined) => {
 }
 
 export function SettingsTab({
+  preferenceDraft,
+  setPreferenceDraft,
+  isSavingPreferences,
+  hasUnsavedPreferences,
+  onSavePreferences,
+  onResetPreferencesDraft,
+  moveDashboardCard,
+  currencyOptions,
+  localeOptions,
+  timezoneOptions,
+  weekStartDayOptions,
+  defaultMonthPresetOptions,
+  uiDensityOptions,
+  defaultLandingTabOptions,
+  dashboardCardOrderOptions,
   consentSettings,
   consentLogs,
   latestExport,
@@ -173,9 +254,485 @@ export function SettingsTab({
   const deletionProgress = parseDeletionProgress(latestDeletionJob?.progressJson)
 
   const deleteReady = deleteConfirmText.trim().toUpperCase() === 'DELETE'
+  const dashboardCardLabelMap = new Map(dashboardCardOrderOptions.map((option) => [option.id, option.label] as const))
+  const defaultLandingTabLabel =
+    defaultLandingTabOptions.find((option) => option.value === preferenceDraft.defaultLandingTab)?.label ??
+    preferenceDraft.defaultLandingTab
+  const notificationEnabledCount = [
+    preferenceDraft.dueRemindersEnabled,
+    preferenceDraft.monthlyCycleAlertsEnabled,
+    preferenceDraft.reconciliationRemindersEnabled,
+    preferenceDraft.goalAlertsEnabled,
+  ].filter(Boolean).length
 
   return (
     <section className="content-grid" aria-label="Settings and trust controls">
+      <article className="panel panel-trust-kpis">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Settings</p>
+            <h2>Core settings foundation</h2>
+            <p className="panel-value">Profile, notifications, defaults, and UI personalization</p>
+          </div>
+          <div className="panel-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn--sm"
+              onClick={() => void onSavePreferences()}
+              disabled={isSavingPreferences || !hasUnsavedPreferences}
+            >
+              {isSavingPreferences ? 'Saving...' : 'Save settings'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn--sm"
+              onClick={onResetPreferencesDraft}
+              disabled={isSavingPreferences || !hasUnsavedPreferences}
+            >
+              Reset
+            </button>
+          </div>
+        </header>
+
+        <div className="trust-kpi-grid" aria-label="Settings foundation overview">
+          <div className="trust-kpi-tile">
+            <p>Profile</p>
+            <strong>{preferenceDraft.displayName.trim() || 'Not set'}</strong>
+            <small>{preferenceDraft.timezone}</small>
+          </div>
+          <div className="trust-kpi-tile">
+            <p>Format</p>
+            <strong>
+              {preferenceDraft.currency} · {preferenceDraft.locale}
+            </strong>
+            <small>Week starts {preferenceDraft.weekStartDay}</small>
+          </div>
+          <div className="trust-kpi-tile">
+            <p>Notifications</p>
+            <strong>{notificationEnabledCount}/4 on</strong>
+            <small>Due lead {preferenceDraft.dueReminderDays}d</small>
+          </div>
+          <div className="trust-kpi-tile">
+            <p>Defaults</p>
+            <strong>
+              {preferenceDraft.defaultBillScope === 'personal' ? 'Personal' : 'Shared'} bills
+            </strong>
+            <small>{preferenceDraft.defaultPurchaseOwnership === 'personal' ? 'Personal' : 'Shared'} purchases</small>
+          </div>
+          <div className="trust-kpi-tile">
+            <p>UI Density</p>
+            <strong>{preferenceDraft.uiDensity}</strong>
+            <small>Landing tab {defaultLandingTabLabel}</small>
+          </div>
+          <div className="trust-kpi-tile">
+            <p>Dashboard order</p>
+            <strong>{preferenceDraft.dashboardCardOrder.length} cards</strong>
+            <small>{hasUnsavedPreferences ? 'Unsaved changes' : 'Synced with app shell'}</small>
+          </div>
+        </div>
+      </article>
+
+      <article className="panel panel-form">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 1</p>
+            <h2>Profile + app preferences</h2>
+            <p className="panel-value">Global formatting and calendar defaults used across the app shell</p>
+          </div>
+        </header>
+
+        <div className="entry-form entry-form--grid">
+          <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="settings-display-name">Display name</label>
+              <input
+                id="settings-display-name"
+                value={preferenceDraft.displayName}
+                placeholder="Optional"
+                onChange={(event) => setPreferenceDraft((prev) => ({ ...prev, displayName: event.target.value }))}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-timezone">Timezone</label>
+              <select
+                id="settings-timezone"
+                value={preferenceDraft.timezone}
+                onChange={(event) => setPreferenceDraft((prev) => ({ ...prev, timezone: event.target.value }))}
+              >
+                {timezoneOptions.map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-currency">Base currency</label>
+              <select
+                id="settings-currency"
+                value={preferenceDraft.currency}
+                onChange={(event) => setPreferenceDraft((prev) => ({ ...prev, currency: event.target.value }))}
+              >
+                {currencyOptions.map((currency) => (
+                  <option key={currency} value={currency}>
+                    {currency}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-locale">Locale</label>
+              <select
+                id="settings-locale"
+                value={preferenceDraft.locale}
+                onChange={(event) => setPreferenceDraft((prev) => ({ ...prev, locale: event.target.value }))}
+              >
+                {localeOptions.map((locale) => (
+                  <option key={locale} value={locale}>
+                    {locale}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-week-start">Week start day</label>
+              <select
+                id="settings-week-start"
+                value={preferenceDraft.weekStartDay}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({ ...prev, weekStartDay: event.target.value as WeekStartDay }))
+                }
+              >
+                {weekStartDayOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-default-month">Default month</label>
+              <select
+                id="settings-default-month"
+                value={preferenceDraft.defaultMonthPreset}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({ ...prev, defaultMonthPreset: event.target.value as DefaultMonthPreset }))
+                }
+              >
+                {defaultMonthPresetOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <p className="form-hint">
+            Currency, locale, timezone, density, dashboard order, and landing tab are applied across the app shell after save.
+          </p>
+        </div>
+      </article>
+
+      <article className="panel panel-form">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 1</p>
+            <h2>Notification controls</h2>
+            <p className="panel-value">In-app reminder preferences and alert toggles</p>
+          </div>
+        </header>
+
+        <div className="entry-form entry-form--grid">
+          <div className="form-grid">
+            <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="settings-due-reminders-enabled">
+                <input
+                  id="settings-due-reminders-enabled"
+                  type="checkbox"
+                  checked={preferenceDraft.dueRemindersEnabled}
+                  onChange={(event) =>
+                    setPreferenceDraft((prev) => ({ ...prev, dueRemindersEnabled: event.target.checked }))
+                  }
+                />
+                Due reminders enabled
+              </label>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-due-reminder-days">Due reminder lead days</label>
+              <input
+                id="settings-due-reminder-days"
+                type="number"
+                min="0"
+                max="60"
+                step="1"
+                value={preferenceDraft.dueReminderDays}
+                onChange={(event) => setPreferenceDraft((prev) => ({ ...prev, dueReminderDays: event.target.value }))}
+              />
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="settings-cycle-alerts-enabled">
+                <input
+                  id="settings-cycle-alerts-enabled"
+                  type="checkbox"
+                  checked={preferenceDraft.monthlyCycleAlertsEnabled}
+                  onChange={(event) =>
+                    setPreferenceDraft((prev) => ({ ...prev, monthlyCycleAlertsEnabled: event.target.checked }))
+                  }
+                />
+                Monthly cycle alerts
+              </label>
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="settings-reconcile-reminders-enabled">
+                <input
+                  id="settings-reconcile-reminders-enabled"
+                  type="checkbox"
+                  checked={preferenceDraft.reconciliationRemindersEnabled}
+                  onChange={(event) =>
+                    setPreferenceDraft((prev) => ({ ...prev, reconciliationRemindersEnabled: event.target.checked }))
+                  }
+                />
+                Reconciliation reminders
+              </label>
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="settings-goal-alerts-enabled">
+                <input
+                  id="settings-goal-alerts-enabled"
+                  type="checkbox"
+                  checked={preferenceDraft.goalAlertsEnabled}
+                  onChange={(event) =>
+                    setPreferenceDraft((prev) => ({ ...prev, goalAlertsEnabled: event.target.checked }))
+                  }
+                />
+                Goal alerts
+              </label>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article className="panel panel-form">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 1</p>
+            <h2>Category + naming defaults</h2>
+            <p className="panel-value">Defaults used when creating new bills and purchases</p>
+          </div>
+        </header>
+
+        <div className="entry-form entry-form--grid">
+          <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="settings-default-bill-category">Default bill category</label>
+              <select
+                id="settings-default-bill-category"
+                value={preferenceDraft.defaultBillCategory}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({ ...prev, defaultBillCategory: event.target.value as BillCategory }))
+                }
+              >
+                <option value="housing">Housing</option>
+                <option value="utilities">Utilities</option>
+                <option value="council_tax">Council Tax</option>
+                <option value="insurance">Insurance</option>
+                <option value="transport">Transport</option>
+                <option value="health">Health</option>
+                <option value="debt">Debt</option>
+                <option value="subscriptions">Subscriptions</option>
+                <option value="education">Education</option>
+                <option value="childcare">Childcare</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-default-bill-scope">Default bill ownership</label>
+              <select
+                id="settings-default-bill-scope"
+                value={preferenceDraft.defaultBillScope}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({ ...prev, defaultBillScope: event.target.value as BillScope }))
+                }
+              >
+                <option value="shared">Shared / household</option>
+                <option value="personal">Personal</option>
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-default-purchase-ownership">Default purchase ownership</label>
+              <select
+                id="settings-default-purchase-ownership"
+                value={preferenceDraft.defaultPurchaseOwnership}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({
+                    ...prev,
+                    defaultPurchaseOwnership: event.target.value as FinancePreference['defaultPurchaseOwnership'],
+                  }))
+                }
+              >
+                <option value="shared">Shared / household</option>
+                <option value="personal">Personal</option>
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-default-purchase-category">Default purchase category</label>
+              <input
+                id="settings-default-purchase-category"
+                value={preferenceDraft.defaultPurchaseCategory}
+                placeholder="Optional"
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({ ...prev, defaultPurchaseCategory: event.target.value }))
+                }
+              />
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label htmlFor="settings-bill-notes-template">Bill notes template</label>
+              <textarea
+                id="settings-bill-notes-template"
+                rows={3}
+                value={preferenceDraft.billNotesTemplate}
+                placeholder="Optional default note for new bills"
+                onChange={(event) => setPreferenceDraft((prev) => ({ ...prev, billNotesTemplate: event.target.value }))}
+              />
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label htmlFor="settings-purchase-notes-template">Purchase notes template</label>
+              <textarea
+                id="settings-purchase-notes-template"
+                rows={3}
+                value={preferenceDraft.purchaseNotesTemplate}
+                placeholder="Optional default note for new purchases"
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({ ...prev, purchaseNotesTemplate: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+
+          <p className="form-hint">
+            Bill and Purchase add forms will use these defaults for faster manual entry after you save.
+          </p>
+        </div>
+      </article>
+
+      <article className="panel panel-list">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 1</p>
+            <h2>UI personalization</h2>
+            <p className="panel-value">Density, default landing tab, and dashboard card order</p>
+          </div>
+        </header>
+
+        <div className="entry-form entry-form--grid">
+          <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="settings-ui-density">Density</label>
+              <select
+                id="settings-ui-density"
+                value={preferenceDraft.uiDensity}
+                onChange={(event) => setPreferenceDraft((prev) => ({ ...prev, uiDensity: event.target.value as UiDensity }))}
+              >
+                {uiDensityOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-default-landing-tab">Default landing tab</label>
+              <select
+                id="settings-default-landing-tab"
+                value={preferenceDraft.defaultLandingTab}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({
+                    ...prev,
+                    defaultLandingTab: event.target.value as FinancePreference['defaultLandingTab'],
+                  }))
+                }
+              >
+                {defaultLandingTabOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label>Dashboard card order</label>
+              <div className="settings-order-list" role="list" aria-label="Dashboard card order">
+                {preferenceDraft.dashboardCardOrder.map((cardId, index) => (
+                  <div key={cardId} className="settings-order-row" role="listitem">
+                    <div className="settings-order-row__meta">
+                      <span className="settings-order-row__index">{index + 1}</span>
+                      <div>
+                        <strong>{dashboardCardLabelMap.get(cardId) ?? cardId}</strong>
+                        <small>{cardId}</small>
+                      </div>
+                    </div>
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn--sm"
+                        onClick={() => moveDashboardCard(cardId, -1)}
+                        disabled={index === 0}
+                      >
+                        Up
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn--sm"
+                        onClick={() => moveDashboardCard(cardId, 1)}
+                        disabled={index === preferenceDraft.dashboardCardOrder.length - 1}
+                      >
+                        Down
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="row-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void onSavePreferences()}
+              disabled={isSavingPreferences || !hasUnsavedPreferences}
+            >
+              {isSavingPreferences ? 'Saving settings...' : 'Save core settings'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={onResetPreferencesDraft}
+              disabled={isSavingPreferences || !hasUnsavedPreferences}
+            >
+              Reset changes
+            </button>
+          </div>
+        </div>
+      </article>
+
       <article className="panel panel-trust-kpis">
         <header className="panel-header">
           <div>
