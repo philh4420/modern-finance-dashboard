@@ -2,16 +2,22 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useAuth, useClerk, useSessionList, useUser } from '@clerk/clerk-react'
 import { api } from '../../convex/_generated/api'
+import type { Id } from '../../convex/_generated/dataModel'
 import type {
   BillCategory,
   BillScope,
   DashboardCardId,
   DefaultMonthPreset,
   FinancePreference,
+  MonthlyAutomationRetryStrategy,
+  PlanningAutoApplyMode,
+  PlanningNegativeForecastFallback,
+  PlanningVersionKey,
   PrivacyData,
   PurchaseOwnership,
   RetentionPolicyRow,
   SecuritySessionActivity,
+  SettingsPowerData,
   UiDensity,
   WeekStartDay,
 } from '../components/financeTypes'
@@ -54,6 +60,17 @@ type SettingsPreferenceDraft = {
   uiDensity: UiDensity
   defaultLandingTab: FinancePreference['defaultLandingTab']
   dashboardCardOrder: DashboardCardId[]
+  monthlyAutomationEnabled: boolean
+  monthlyAutomationRunDay: string
+  monthlyAutomationRunHour: string
+  monthlyAutomationRunMinute: string
+  monthlyAutomationRetryStrategy: MonthlyAutomationRetryStrategy
+  monthlyAutomationMaxRetries: string
+  alertEscalationFailureStreakThreshold: string
+  alertEscalationFailedStepsThreshold: string
+  planningDefaultVersionKey: PlanningVersionKey
+  planningAutoApplyMode: PlanningAutoApplyMode
+  planningNegativeForecastFallback: PlanningNegativeForecastFallback
 }
 
 const weekStartDayOptions: Array<{ value: WeekStartDay; label: string }> = [
@@ -76,6 +93,31 @@ const defaultMonthPresetOptions: Array<{ value: DefaultMonthPreset; label: strin
 const uiDensityOptions: Array<{ value: UiDensity; label: string }> = [
   { value: 'comfortable', label: 'Comfortable' },
   { value: 'compact', label: 'Compact' },
+]
+
+const monthlyAutomationRetryStrategyOptions: Array<{ value: MonthlyAutomationRetryStrategy; label: string }> = [
+  { value: 'none', label: 'No retries' },
+  { value: 'same_day_backoff', label: 'Same day backoff' },
+  { value: 'next_day_retry', label: 'Next day retry' },
+]
+
+const planningDefaultVersionOptions: Array<{ value: PlanningVersionKey; label: string }> = [
+  { value: 'base', label: 'Base' },
+  { value: 'conservative', label: 'Conservative' },
+  { value: 'aggressive', label: 'Aggressive' },
+]
+
+const planningAutoApplyModeOptions: Array<{ value: PlanningAutoApplyMode; label: string }> = [
+  { value: 'manual_only', label: 'Manual only' },
+  { value: 'month_start', label: 'Month start' },
+  { value: 'after_cycle', label: 'After cycle' },
+]
+
+const planningNegativeForecastFallbackOptions: Array<{ value: PlanningNegativeForecastFallback; label: string }> = [
+  { value: 'warn_only', label: 'Warn only' },
+  { value: 'reduce_variable_spend', label: 'Reduce variable spend' },
+  { value: 'pause_goals', label: 'Pause goals funding' },
+  { value: 'debt_minimums_only', label: 'Debt minimums only' },
 ]
 
 const commonTimezones = [
@@ -139,6 +181,23 @@ const buildPreferenceDraft = (preference: FinancePreference): SettingsPreference
     preference.dashboardCardOrder && preference.dashboardCardOrder.length > 0
       ? [...preference.dashboardCardOrder]
       : [...defaultPreference.dashboardCardOrder],
+  monthlyAutomationEnabled: preference.monthlyAutomationEnabled ?? defaultPreference.monthlyAutomationEnabled,
+  monthlyAutomationRunDay: String(preference.monthlyAutomationRunDay ?? defaultPreference.monthlyAutomationRunDay),
+  monthlyAutomationRunHour: String(preference.monthlyAutomationRunHour ?? defaultPreference.monthlyAutomationRunHour),
+  monthlyAutomationRunMinute: String(preference.monthlyAutomationRunMinute ?? defaultPreference.monthlyAutomationRunMinute),
+  monthlyAutomationRetryStrategy:
+    preference.monthlyAutomationRetryStrategy ?? defaultPreference.monthlyAutomationRetryStrategy,
+  monthlyAutomationMaxRetries: String(preference.monthlyAutomationMaxRetries ?? defaultPreference.monthlyAutomationMaxRetries),
+  alertEscalationFailureStreakThreshold: String(
+    preference.alertEscalationFailureStreakThreshold ?? defaultPreference.alertEscalationFailureStreakThreshold,
+  ),
+  alertEscalationFailedStepsThreshold: String(
+    preference.alertEscalationFailedStepsThreshold ?? defaultPreference.alertEscalationFailedStepsThreshold,
+  ),
+  planningDefaultVersionKey: preference.planningDefaultVersionKey ?? defaultPreference.planningDefaultVersionKey,
+  planningAutoApplyMode: preference.planningAutoApplyMode ?? defaultPreference.planningAutoApplyMode,
+  planningNegativeForecastFallback:
+    preference.planningNegativeForecastFallback ?? defaultPreference.planningNegativeForecastFallback,
 })
 
 const normalizeDashboardCardOrder = (order: DashboardCardId[]) => {
@@ -162,18 +221,28 @@ const normalizeDashboardCardOrder = (order: DashboardCardId[]) => {
 }
 
 export const useSettingsSection = ({ preference, clearError, handleMutationError }: UseSettingsSectionArgs) => {
+  const { getToken, sessionId } = useAuth()
+  const shouldLoadSettingsPowerData = Boolean(sessionId)
+
   const privacyData = useQuery(api.privacy.getPrivacyData) as PrivacyData | undefined
   const retentionData = useQuery(api.ops.getRetentionPolicies) as { policies: RetentionPolicyRow[] } | undefined
+  const settingsPowerData = useQuery(
+    api.finance.getSettingsPowerData,
+    shouldLoadSettingsPowerData ? {} : 'skip',
+  ) as SettingsPowerData | undefined
 
   const setConsent = useMutation(api.privacy.setConsent)
   const upsertRetentionPolicy = useMutation(api.privacy.upsertRetentionPolicy)
   const upsertFinancePreference = useMutation(api.finance.upsertFinancePreference)
+  const saveSettingsProfile = useMutation(api.finance.saveSettingsProfile)
+  const applySettingsProfile = useMutation(api.finance.applySettingsProfile)
+  const deleteSettingsProfile = useMutation(api.finance.deleteSettingsProfile)
+  const restoreFinancePreferenceSnapshot = useMutation(api.finance.restoreFinancePreferenceSnapshot)
 
   const generateUserExport = useAction(api.privacy.generateUserExport)
   const requestDeletion = useAction(api.privacy.requestDeletion)
   const applyRetentionForUser = useAction(api.ops.applyRetentionForUser)
 
-  const { getToken, sessionId } = useAuth()
   const clerk = useClerk()
   const { user, isLoaded: isUserLoaded } = useUser()
   const { isLoaded: isSessionListLoaded, sessions: clientDeviceSessions } = useSessionList()
@@ -183,6 +252,12 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [isApplyingRetention, setIsApplyingRetention] = useState(false)
   const [isSavingPreferences, setIsSavingPreferences] = useState(false)
+  const [isSavingSettingsProfile, setIsSavingSettingsProfile] = useState(false)
+  const [settingsProfileName, setSettingsProfileName] = useState('')
+  const [settingsProfileDescription, setSettingsProfileDescription] = useState('')
+  const [applyingSettingsProfileId, setApplyingSettingsProfileId] = useState<string | null>(null)
+  const [deletingSettingsProfileId, setDeletingSettingsProfileId] = useState<string | null>(null)
+  const [restoringSettingsHistoryId, setRestoringSettingsHistoryId] = useState<string | null>(null)
   const [securitySessions, setSecuritySessions] = useState<SecuritySessionActivity[]>([])
   const [isLoadingSecuritySessions, setIsLoadingSecuritySessions] = useState(false)
   const [isRefreshingSecuritySessions, setIsRefreshingSecuritySessions] = useState(false)
@@ -270,6 +345,8 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
   const retentionPolicies = retentionData?.policies ?? []
   const exportHistory = privacyData?.exportHistory ?? []
   const exportDownloadLogs = privacyData?.exportDownloadLogs ?? []
+  const settingsProfiles = settingsPowerData?.profiles ?? []
+  const settingsPreferenceHistory = settingsPowerData?.history ?? []
 
   const localeOptions = useMemo(() => {
     const fromNavigator = typeof navigator !== 'undefined' ? navigator.languages : []
@@ -317,41 +394,139 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
     }
   }
 
+  const parseIntegerField = (value: string, label: string, min: number, max: number) => {
+    const parsed = Number.parseInt(value.trim(), 10)
+    if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+      throw new Error(`${label} must be an integer between ${min} and ${max}.`)
+    }
+    return parsed
+  }
+
+  const buildPreferenceMutationPayload = () => {
+    const dueReminderDays = parseIntegerField(preferenceDraft.dueReminderDays, 'Due reminder lead days', 0, 60)
+    const monthlyAutomationRunDay = parseIntegerField(preferenceDraft.monthlyAutomationRunDay, 'Auto-run day', 1, 31)
+    const monthlyAutomationRunHour = parseIntegerField(preferenceDraft.monthlyAutomationRunHour, 'Auto-run hour', 0, 23)
+    const monthlyAutomationRunMinute = parseIntegerField(preferenceDraft.monthlyAutomationRunMinute, 'Auto-run minute', 0, 59)
+    const monthlyAutomationMaxRetries = parseIntegerField(
+      preferenceDraft.monthlyAutomationMaxRetries,
+      'Auto-run max retries',
+      0,
+      10,
+    )
+    const alertEscalationFailureStreakThreshold = parseIntegerField(
+      preferenceDraft.alertEscalationFailureStreakThreshold,
+      'Alert escalation failure streak threshold',
+      1,
+      12,
+    )
+    const alertEscalationFailedStepsThreshold = parseIntegerField(
+      preferenceDraft.alertEscalationFailedStepsThreshold,
+      'Alert escalation failed steps threshold',
+      1,
+      20,
+    )
+
+    return {
+      currency: preferenceDraft.currency,
+      locale: preferenceDraft.locale,
+      displayName: preferenceDraft.displayName,
+      timezone: preferenceDraft.timezone,
+      weekStartDay: preferenceDraft.weekStartDay,
+      defaultMonthPreset: preferenceDraft.defaultMonthPreset,
+      dueRemindersEnabled: preferenceDraft.dueRemindersEnabled,
+      dueReminderDays,
+      monthlyCycleAlertsEnabled: preferenceDraft.monthlyCycleAlertsEnabled,
+      reconciliationRemindersEnabled: preferenceDraft.reconciliationRemindersEnabled,
+      goalAlertsEnabled: preferenceDraft.goalAlertsEnabled,
+      defaultBillCategory: preferenceDraft.defaultBillCategory,
+      defaultBillScope: preferenceDraft.defaultBillScope,
+      defaultPurchaseOwnership: preferenceDraft.defaultPurchaseOwnership,
+      defaultPurchaseCategory: preferenceDraft.defaultPurchaseCategory,
+      billNotesTemplate: preferenceDraft.billNotesTemplate,
+      purchaseNotesTemplate: preferenceDraft.purchaseNotesTemplate,
+      uiDensity: preferenceDraft.uiDensity,
+      defaultLandingTab: preferenceDraft.defaultLandingTab,
+      dashboardCardOrder: normalizedDraftOrder,
+      monthlyAutomationEnabled: preferenceDraft.monthlyAutomationEnabled,
+      monthlyAutomationRunDay,
+      monthlyAutomationRunHour,
+      monthlyAutomationRunMinute,
+      monthlyAutomationRetryStrategy: preferenceDraft.monthlyAutomationRetryStrategy,
+      monthlyAutomationMaxRetries,
+      alertEscalationFailureStreakThreshold,
+      alertEscalationFailedStepsThreshold,
+      planningDefaultVersionKey: preferenceDraft.planningDefaultVersionKey,
+      planningAutoApplyMode: preferenceDraft.planningAutoApplyMode,
+      planningNegativeForecastFallback: preferenceDraft.planningNegativeForecastFallback,
+    }
+  }
+
   const onSavePreferences = async () => {
     clearError()
     setIsSavingPreferences(true)
     try {
-      const dueReminderDays = Number.parseInt(preferenceDraft.dueReminderDays.trim(), 10)
-      if (!Number.isInteger(dueReminderDays) || dueReminderDays < 0 || dueReminderDays > 60) {
-        throw new Error('Due reminder lead days must be an integer between 0 and 60.')
-      }
-
-      await upsertFinancePreference({
-        currency: preferenceDraft.currency,
-        locale: preferenceDraft.locale,
-        displayName: preferenceDraft.displayName,
-        timezone: preferenceDraft.timezone,
-        weekStartDay: preferenceDraft.weekStartDay,
-        defaultMonthPreset: preferenceDraft.defaultMonthPreset,
-        dueRemindersEnabled: preferenceDraft.dueRemindersEnabled,
-        dueReminderDays,
-        monthlyCycleAlertsEnabled: preferenceDraft.monthlyCycleAlertsEnabled,
-        reconciliationRemindersEnabled: preferenceDraft.reconciliationRemindersEnabled,
-        goalAlertsEnabled: preferenceDraft.goalAlertsEnabled,
-        defaultBillCategory: preferenceDraft.defaultBillCategory,
-        defaultBillScope: preferenceDraft.defaultBillScope,
-        defaultPurchaseOwnership: preferenceDraft.defaultPurchaseOwnership,
-        defaultPurchaseCategory: preferenceDraft.defaultPurchaseCategory,
-        billNotesTemplate: preferenceDraft.billNotesTemplate,
-        purchaseNotesTemplate: preferenceDraft.purchaseNotesTemplate,
-        uiDensity: preferenceDraft.uiDensity,
-        defaultLandingTab: preferenceDraft.defaultLandingTab,
-        dashboardCardOrder: normalizedDraftOrder,
-      })
+      await upsertFinancePreference(buildPreferenceMutationPayload())
     } catch (error) {
       handleMutationError(error)
     } finally {
       setIsSavingPreferences(false)
+    }
+  }
+
+  const onSaveSettingsProfile = async () => {
+    clearError()
+    setIsSavingSettingsProfile(true)
+    try {
+      const payload = buildPreferenceMutationPayload()
+      await saveSettingsProfile({
+        name: settingsProfileName,
+        description: settingsProfileDescription,
+        preferenceJson: JSON.stringify(payload),
+      })
+      if (settingsProfileName.trim()) {
+        setSettingsProfileName('')
+        setSettingsProfileDescription('')
+      }
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setIsSavingSettingsProfile(false)
+    }
+  }
+
+  const onApplySettingsProfile = async (profileId: string) => {
+    clearError()
+    setApplyingSettingsProfileId(profileId)
+    try {
+      await applySettingsProfile({ profileId: profileId as Id<'settingsProfiles'> })
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setApplyingSettingsProfileId(null)
+    }
+  }
+
+  const onDeleteSettingsProfile = async (profileId: string) => {
+    clearError()
+    setDeletingSettingsProfileId(profileId)
+    try {
+      await deleteSettingsProfile({ profileId: profileId as Id<'settingsProfiles'> })
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setDeletingSettingsProfileId(null)
+    }
+  }
+
+  const onRestoreSettingsHistory = async (auditEventId: string, target: 'before' | 'after') => {
+    clearError()
+    setRestoringSettingsHistoryId(auditEventId)
+    try {
+      await restoreFinancePreferenceSnapshot({ auditEventId: auditEventId as Id<'financeAuditEvents'>, target })
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setRestoringSettingsHistoryId(null)
     }
   }
 
@@ -526,6 +701,8 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
     retentionPolicies,
     exportHistory,
     exportDownloadLogs,
+    settingsProfiles,
+    settingsPreferenceHistory,
     isExporting,
     onGenerateExport,
     onDownloadExportById,
@@ -548,6 +725,18 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
     onRefreshSecuritySessions: refreshSecuritySessions,
     onRevokeSecuritySession,
     onSignOutAllSessions,
+    settingsProfileName,
+    setSettingsProfileName,
+    settingsProfileDescription,
+    setSettingsProfileDescription,
+    isSavingSettingsProfile,
+    applyingSettingsProfileId,
+    deletingSettingsProfileId,
+    restoringSettingsHistoryId,
+    onSaveSettingsProfile,
+    onApplySettingsProfile,
+    onDeleteSettingsProfile,
+    onRestoreSettingsHistory,
     preferenceDraft,
     setPreferenceDraft,
     isSavingPreferences,
@@ -561,6 +750,10 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
     weekStartDayOptions,
     defaultMonthPresetOptions,
     uiDensityOptions,
+    monthlyAutomationRetryStrategyOptions,
+    planningDefaultVersionOptions,
+    planningAutoApplyModeOptions,
+    planningNegativeForecastFallbackOptions,
     defaultLandingTabOptions,
     dashboardCardOrderOptions,
   }

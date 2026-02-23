@@ -49,6 +49,7 @@ type DeletionTable =
   | 'goals'
   | 'goalEvents'
   | 'financePreferences'
+  | 'settingsProfiles'
   | 'userExportDownloads'
   | 'consentLogs'
   | 'consentSettings'
@@ -89,6 +90,7 @@ const deletionTableValidator = v.union(
   v.literal('goals'),
   v.literal('goalEvents'),
   v.literal('financePreferences'),
+  v.literal('settingsProfiles'),
   v.literal('userExportDownloads'),
   v.literal('consentLogs'),
   v.literal('consentSettings'),
@@ -838,6 +840,7 @@ export const requestDeletion = action({
       'goals',
       'goalEvents',
       'financePreferences',
+      'settingsProfiles',
       'userExportDownloads',
       'consentLogs',
       'consentSettings',
@@ -1003,6 +1006,7 @@ export const _collectExportData = internalQuery({
       userExportDownloads,
       retentionPolicies,
       clientOpsMetrics,
+      settingsProfiles,
     ] = await Promise.all([
       ctx.db.query('incomes').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('incomePaymentChecks').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -1042,6 +1046,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('userExportDownloads').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('retentionPolicies').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('clientOpsMetrics').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('settingsProfiles').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
     ])
 
     return {
@@ -1083,6 +1088,7 @@ export const _collectExportData = internalQuery({
       userExportDownloads: docsToPortableRows(userExportDownloads),
       retentionPolicies: docsToPortableRows(retentionPolicies),
       clientOpsMetrics: docsToPortableRows(clientOpsMetrics),
+      settingsProfiles: docsToPortableRows(settingsProfiles),
     }
   },
 })

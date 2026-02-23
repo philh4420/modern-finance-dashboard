@@ -55,6 +55,7 @@ const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('p
 const cardMinimumPaymentTypeValidator = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
 const loanMinimumPaymentTypeValidator = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
 const incomePaymentStatusValidator = v.union(v.literal('on_time'), v.literal('late'), v.literal('missed'))
+const planningVersionKey = v.union(v.literal('base'), v.literal('conservative'), v.literal('aggressive'))
 const billOverlapResolutionValidator = v.union(
   v.literal('merge'),
   v.literal('archive_duplicate'),
@@ -90,6 +91,22 @@ const defaultMonthPresetValidator = v.union(
   v.literal('previous'),
   v.literal('next'),
   v.literal('last_used'),
+)
+const monthlyAutomationRetryStrategyValidator = v.union(
+  v.literal('none'),
+  v.literal('same_day_backoff'),
+  v.literal('next_day_retry'),
+)
+const planningAutoApplyModeValidator = v.union(
+  v.literal('manual_only'),
+  v.literal('month_start'),
+  v.literal('after_cycle'),
+)
+const planningNegativeForecastFallbackValidator = v.union(
+  v.literal('warn_only'),
+  v.literal('reduce_variable_spend'),
+  v.literal('pause_goals'),
+  v.literal('debt_minimums_only'),
 )
 const appTabKeyValidator = v.union(
   v.literal('dashboard'),
@@ -169,6 +186,14 @@ type PurchaseOwnership = 'shared' | 'personal'
 type WeekStartDay = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
 type UiDensity = 'comfortable' | 'compact'
 type DefaultMonthPreset = 'current' | 'previous' | 'next' | 'last_used'
+type PlanningVersionKey = 'base' | 'conservative' | 'aggressive'
+type MonthlyAutomationRetryStrategy = 'none' | 'same_day_backoff' | 'next_day_retry'
+type PlanningAutoApplyMode = 'manual_only' | 'month_start' | 'after_cycle'
+type PlanningNegativeForecastFallback =
+  | 'warn_only'
+  | 'reduce_variable_spend'
+  | 'pause_goals'
+  | 'debt_minimums_only'
 type AppTabKey =
   | 'dashboard'
   | 'income'
@@ -239,9 +264,43 @@ const dashboardCardIds = [
 ] as const
 type DashboardCardId = (typeof dashboardCardIds)[number]
 
+type FinancePreferenceSnapshot = {
+  currency: string
+  locale: string
+  displayName: string
+  timezone: string
+  weekStartDay: WeekStartDay
+  defaultMonthPreset: DefaultMonthPreset
+  dueRemindersEnabled: boolean
+  dueReminderDays: number
+  monthlyCycleAlertsEnabled: boolean
+  reconciliationRemindersEnabled: boolean
+  goalAlertsEnabled: boolean
+  defaultBillCategory: BillCategory
+  defaultBillScope: BillScope
+  defaultPurchaseOwnership: PurchaseOwnership
+  defaultPurchaseCategory: string
+  billNotesTemplate: string
+  purchaseNotesTemplate: string
+  uiDensity: UiDensity
+  defaultLandingTab: AppTabKey
+  dashboardCardOrder: DashboardCardId[]
+  monthlyAutomationEnabled: boolean
+  monthlyAutomationRunDay: number
+  monthlyAutomationRunHour: number
+  monthlyAutomationRunMinute: number
+  monthlyAutomationRetryStrategy: MonthlyAutomationRetryStrategy
+  monthlyAutomationMaxRetries: number
+  alertEscalationFailureStreakThreshold: number
+  alertEscalationFailedStepsThreshold: number
+  planningDefaultVersionKey: PlanningVersionKey
+  planningAutoApplyMode: PlanningAutoApplyMode
+  planningNegativeForecastFallback: PlanningNegativeForecastFallback
+}
+
 const defaultDashboardCardOrder: DashboardCardId[] = [...dashboardCardIds]
 
-const defaultPreference = {
+const defaultPreference: FinancePreferenceSnapshot = {
   currency: 'USD',
   locale: 'en-US',
   displayName: '',
@@ -262,6 +321,17 @@ const defaultPreference = {
   uiDensity: 'comfortable' as UiDensity,
   defaultLandingTab: 'dashboard' as AppTabKey,
   dashboardCardOrder: defaultDashboardCardOrder,
+  monthlyAutomationEnabled: false,
+  monthlyAutomationRunDay: 1,
+  monthlyAutomationRunHour: 9,
+  monthlyAutomationRunMinute: 0,
+  monthlyAutomationRetryStrategy: 'same_day_backoff' as MonthlyAutomationRetryStrategy,
+  monthlyAutomationMaxRetries: 2,
+  alertEscalationFailureStreakThreshold: 2,
+  alertEscalationFailedStepsThreshold: 1,
+  planningDefaultVersionKey: 'base' as const,
+  planningAutoApplyMode: 'manual_only' as PlanningAutoApplyMode,
+  planningNegativeForecastFallback: 'warn_only' as PlanningNegativeForecastFallback,
 }
 
 const defaultSummary = {
@@ -994,6 +1064,21 @@ const isUiDensity = (value: unknown): value is UiDensity => value === 'comfortab
 const isDefaultMonthPreset = (value: unknown): value is DefaultMonthPreset =>
   value === 'current' || value === 'previous' || value === 'next' || value === 'last_used'
 
+const isPlanningVersionKey = (value: unknown): value is PlanningVersionKey =>
+  value === 'base' || value === 'conservative' || value === 'aggressive'
+
+const isMonthlyAutomationRetryStrategy = (value: unknown): value is MonthlyAutomationRetryStrategy =>
+  value === 'none' || value === 'same_day_backoff' || value === 'next_day_retry'
+
+const isPlanningAutoApplyMode = (value: unknown): value is PlanningAutoApplyMode =>
+  value === 'manual_only' || value === 'month_start' || value === 'after_cycle'
+
+const isPlanningNegativeForecastFallback = (value: unknown): value is PlanningNegativeForecastFallback =>
+  value === 'warn_only' ||
+  value === 'reduce_variable_spend' ||
+  value === 'pause_goals' ||
+  value === 'debt_minimums_only'
+
 const isAppTabKey = (value: unknown): value is AppTabKey =>
   value === 'dashboard' ||
   value === 'income' ||
@@ -1009,6 +1094,23 @@ const isAppTabKey = (value: unknown): value is AppTabKey =>
 
 const isDashboardCardId = (value: unknown): value is DashboardCardId =>
   typeof value === 'string' && (dashboardCardIds as readonly string[]).includes(value)
+
+const isBillCategory = (value: unknown): value is BillCategory =>
+  value === 'housing' ||
+  value === 'utilities' ||
+  value === 'council_tax' ||
+  value === 'insurance' ||
+  value === 'transport' ||
+  value === 'health' ||
+  value === 'debt' ||
+  value === 'subscriptions' ||
+  value === 'education' ||
+  value === 'childcare' ||
+  value === 'other'
+
+const isBillScope = (value: unknown): value is BillScope => value === 'shared' || value === 'personal'
+
+const isPurchaseOwnership = (value: unknown): value is PurchaseOwnership => value === 'shared' || value === 'personal'
 
 const normalizeDashboardCardOrder = (value: string[] | undefined) => {
   if (value === undefined) {
@@ -2149,7 +2251,190 @@ const buildInsights = (args: {
   return insights.slice(0, 6)
 }
 
-const getUserPreference = async (ctx: QueryCtx, userId: string) => {
+const normalizeFinancePreferenceSnapshot = (input: Partial<FinancePreferenceSnapshot> & { currency: string; locale: string }) => {
+  const currency = String(input.currency ?? defaultPreference.currency).trim().toUpperCase()
+  const locale = String(input.locale ?? defaultPreference.locale).trim()
+  const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : defaultPreference.displayName
+  const timezone = typeof input.timezone === 'string' ? input.timezone.trim() : defaultPreference.timezone
+  const defaultPurchaseCategory =
+    typeof input.defaultPurchaseCategory === 'string' ? input.defaultPurchaseCategory.trim() : defaultPreference.defaultPurchaseCategory
+  const billNotesTemplate =
+    typeof input.billNotesTemplate === 'string' ? input.billNotesTemplate.trim() : defaultPreference.billNotesTemplate
+  const purchaseNotesTemplate =
+    typeof input.purchaseNotesTemplate === 'string'
+      ? input.purchaseNotesTemplate.trim()
+      : defaultPreference.purchaseNotesTemplate
+
+  if (!validateCurrencyCode(currency)) {
+    throw new Error('Currency must be a valid ISO 4217 code supported by the runtime.')
+  }
+  if (!validateLocale(locale)) {
+    throw new Error('Locale is not valid.')
+  }
+  if (timezone && !validateTimeZone(timezone)) {
+    throw new Error('Timezone is not valid.')
+  }
+
+  validateOptionalText(displayName, 'Display name', 120)
+  validateOptionalText(defaultPurchaseCategory, 'Default purchase category', 80)
+  validateOptionalText(billNotesTemplate, 'Bill notes template', 2000)
+  validateOptionalText(purchaseNotesTemplate, 'Purchase notes template', 2000)
+
+  const dueReminderDays =
+    typeof input.dueReminderDays === 'number' && Number.isInteger(input.dueReminderDays)
+      ? input.dueReminderDays
+      : defaultPreference.dueReminderDays
+  if (dueReminderDays < 0 || dueReminderDays > 60) {
+    throw new Error('Due reminder days must be an integer between 0 and 60.')
+  }
+
+  const monthlyAutomationRunDay =
+    typeof input.monthlyAutomationRunDay === 'number' && Number.isInteger(input.monthlyAutomationRunDay)
+      ? input.monthlyAutomationRunDay
+      : defaultPreference.monthlyAutomationRunDay
+  const monthlyAutomationRunHour =
+    typeof input.monthlyAutomationRunHour === 'number' && Number.isInteger(input.monthlyAutomationRunHour)
+      ? input.monthlyAutomationRunHour
+      : defaultPreference.monthlyAutomationRunHour
+  const monthlyAutomationRunMinute =
+    typeof input.monthlyAutomationRunMinute === 'number' && Number.isInteger(input.monthlyAutomationRunMinute)
+      ? input.monthlyAutomationRunMinute
+      : defaultPreference.monthlyAutomationRunMinute
+  const monthlyAutomationMaxRetries =
+    typeof input.monthlyAutomationMaxRetries === 'number' && Number.isInteger(input.monthlyAutomationMaxRetries)
+      ? input.monthlyAutomationMaxRetries
+      : defaultPreference.monthlyAutomationMaxRetries
+  const alertEscalationFailureStreakThreshold =
+    typeof input.alertEscalationFailureStreakThreshold === 'number' &&
+    Number.isInteger(input.alertEscalationFailureStreakThreshold)
+      ? input.alertEscalationFailureStreakThreshold
+      : defaultPreference.alertEscalationFailureStreakThreshold
+  const alertEscalationFailedStepsThreshold =
+    typeof input.alertEscalationFailedStepsThreshold === 'number' &&
+    Number.isInteger(input.alertEscalationFailedStepsThreshold)
+      ? input.alertEscalationFailedStepsThreshold
+      : defaultPreference.alertEscalationFailedStepsThreshold
+
+  validateDayOfMonth(monthlyAutomationRunDay, 'Monthly automation run day')
+  if (monthlyAutomationRunHour < 0 || monthlyAutomationRunHour > 23) {
+    throw new Error('Monthly automation run hour must be between 0 and 23.')
+  }
+  if (monthlyAutomationRunMinute < 0 || monthlyAutomationRunMinute > 59) {
+    throw new Error('Monthly automation run minute must be between 0 and 59.')
+  }
+  if (monthlyAutomationMaxRetries < 0 || monthlyAutomationMaxRetries > 10) {
+    throw new Error('Monthly automation max retries must be between 0 and 10.')
+  }
+  if (alertEscalationFailureStreakThreshold < 1 || alertEscalationFailureStreakThreshold > 12) {
+    throw new Error('Alert escalation failure streak threshold must be between 1 and 12.')
+  }
+  if (alertEscalationFailedStepsThreshold < 1 || alertEscalationFailedStepsThreshold > 20) {
+    throw new Error('Alert escalation failed steps threshold must be between 1 and 20.')
+  }
+
+  const dashboardCardOrder = (() => {
+    try {
+      return normalizeDashboardCardOrder(
+        Array.isArray(input.dashboardCardOrder) ? input.dashboardCardOrder.map((entry) => String(entry)) : undefined,
+      ) ?? [...defaultPreference.dashboardCardOrder]
+    } catch {
+      return [...defaultPreference.dashboardCardOrder]
+    }
+  })()
+
+  return {
+    currency,
+    locale,
+    displayName,
+    timezone: validateTimeZone(timezone) ? timezone : defaultPreference.timezone,
+    weekStartDay: isWeekStartDay(input.weekStartDay) ? input.weekStartDay : defaultPreference.weekStartDay,
+    defaultMonthPreset: isDefaultMonthPreset(input.defaultMonthPreset)
+      ? input.defaultMonthPreset
+      : defaultPreference.defaultMonthPreset,
+    dueRemindersEnabled:
+      typeof input.dueRemindersEnabled === 'boolean' ? input.dueRemindersEnabled : defaultPreference.dueRemindersEnabled,
+    dueReminderDays,
+    monthlyCycleAlertsEnabled:
+      typeof input.monthlyCycleAlertsEnabled === 'boolean'
+        ? input.monthlyCycleAlertsEnabled
+        : defaultPreference.monthlyCycleAlertsEnabled,
+    reconciliationRemindersEnabled:
+      typeof input.reconciliationRemindersEnabled === 'boolean'
+        ? input.reconciliationRemindersEnabled
+        : defaultPreference.reconciliationRemindersEnabled,
+    goalAlertsEnabled: typeof input.goalAlertsEnabled === 'boolean' ? input.goalAlertsEnabled : defaultPreference.goalAlertsEnabled,
+    defaultBillCategory: isBillCategory(input.defaultBillCategory) ? input.defaultBillCategory : defaultPreference.defaultBillCategory,
+    defaultBillScope: isBillScope(input.defaultBillScope) ? input.defaultBillScope : defaultPreference.defaultBillScope,
+    defaultPurchaseOwnership: isPurchaseOwnership(input.defaultPurchaseOwnership)
+      ? input.defaultPurchaseOwnership
+      : defaultPreference.defaultPurchaseOwnership,
+    defaultPurchaseCategory,
+    billNotesTemplate,
+    purchaseNotesTemplate,
+    uiDensity: isUiDensity(input.uiDensity) ? input.uiDensity : defaultPreference.uiDensity,
+    defaultLandingTab: isAppTabKey(input.defaultLandingTab) ? input.defaultLandingTab : defaultPreference.defaultLandingTab,
+    dashboardCardOrder,
+    monthlyAutomationEnabled:
+      typeof input.monthlyAutomationEnabled === 'boolean'
+        ? input.monthlyAutomationEnabled
+        : defaultPreference.monthlyAutomationEnabled,
+    monthlyAutomationRunDay,
+    monthlyAutomationRunHour,
+    monthlyAutomationRunMinute,
+    monthlyAutomationRetryStrategy: isMonthlyAutomationRetryStrategy(input.monthlyAutomationRetryStrategy)
+      ? input.monthlyAutomationRetryStrategy
+      : defaultPreference.monthlyAutomationRetryStrategy,
+    monthlyAutomationMaxRetries,
+    alertEscalationFailureStreakThreshold,
+    alertEscalationFailedStepsThreshold,
+    planningDefaultVersionKey: isPlanningVersionKey(input.planningDefaultVersionKey)
+      ? input.planningDefaultVersionKey
+      : defaultPreference.planningDefaultVersionKey,
+    planningAutoApplyMode: isPlanningAutoApplyMode(input.planningAutoApplyMode)
+      ? input.planningAutoApplyMode
+      : defaultPreference.planningAutoApplyMode,
+    planningNegativeForecastFallback: isPlanningNegativeForecastFallback(input.planningNegativeForecastFallback)
+      ? input.planningNegativeForecastFallback
+      : defaultPreference.planningNegativeForecastFallback,
+  } satisfies FinancePreferenceSnapshot
+}
+
+const financePreferenceSnapshotToDbPatch = (snapshot: FinancePreferenceSnapshot, now: number) => ({
+  currency: snapshot.currency,
+  locale: snapshot.locale,
+  displayName: snapshot.displayName || undefined,
+  timezone: snapshot.timezone || undefined,
+  weekStartDay: snapshot.weekStartDay,
+  defaultMonthPreset: snapshot.defaultMonthPreset,
+  dueRemindersEnabled: snapshot.dueRemindersEnabled,
+  dueReminderDays: snapshot.dueReminderDays,
+  monthlyCycleAlertsEnabled: snapshot.monthlyCycleAlertsEnabled,
+  reconciliationRemindersEnabled: snapshot.reconciliationRemindersEnabled,
+  goalAlertsEnabled: snapshot.goalAlertsEnabled,
+  defaultBillCategory: snapshot.defaultBillCategory,
+  defaultBillScope: snapshot.defaultBillScope,
+  defaultPurchaseOwnership: snapshot.defaultPurchaseOwnership,
+  defaultPurchaseCategory: snapshot.defaultPurchaseCategory || undefined,
+  billNotesTemplate: snapshot.billNotesTemplate || undefined,
+  purchaseNotesTemplate: snapshot.purchaseNotesTemplate || undefined,
+  uiDensity: snapshot.uiDensity,
+  defaultLandingTab: snapshot.defaultLandingTab,
+  dashboardCardOrder: [...snapshot.dashboardCardOrder],
+  monthlyAutomationEnabled: snapshot.monthlyAutomationEnabled,
+  monthlyAutomationRunDay: snapshot.monthlyAutomationRunDay,
+  monthlyAutomationRunHour: snapshot.monthlyAutomationRunHour,
+  monthlyAutomationRunMinute: snapshot.monthlyAutomationRunMinute,
+  monthlyAutomationRetryStrategy: snapshot.monthlyAutomationRetryStrategy,
+  monthlyAutomationMaxRetries: snapshot.monthlyAutomationMaxRetries,
+  alertEscalationFailureStreakThreshold: snapshot.alertEscalationFailureStreakThreshold,
+  alertEscalationFailedStepsThreshold: snapshot.alertEscalationFailedStepsThreshold,
+  planningDefaultVersionKey: snapshot.planningDefaultVersionKey,
+  planningAutoApplyMode: snapshot.planningAutoApplyMode,
+  planningNegativeForecastFallback: snapshot.planningNegativeForecastFallback,
+  updatedAt: now,
+})
+
+const getUserPreference = async (ctx: QueryCtx | MutationCtx, userId: string) => {
   const existing = await ctx.db
     .query('financePreferences')
     .withIndex('by_userId', (q) => q.eq('userId', userId))
@@ -2162,63 +2447,78 @@ const getUserPreference = async (ctx: QueryCtx, userId: string) => {
     }
   }
 
-  const currency = existing.currency.toUpperCase()
-  const locale = existing.locale
-  const timezone = existing.timezone?.trim() || defaultPreference.timezone
-  const dashboardCardOrder = (() => {
-    try {
-      return normalizeDashboardCardOrder(existing.dashboardCardOrder) ?? [...defaultPreference.dashboardCardOrder]
-    } catch {
-      return [...defaultPreference.dashboardCardOrder]
-    }
-  })()
+  return normalizeFinancePreferenceSnapshot({
+    ...defaultPreference,
+    ...existing,
+    dashboardCardOrder: (existing.dashboardCardOrder as DashboardCardId[] | undefined) ?? defaultPreference.dashboardCardOrder,
+  })
+}
 
-  return {
-    currency: validateCurrencyCode(currency) ? currency : defaultPreference.currency,
-    locale: validateLocale(locale) ? locale : defaultPreference.locale,
-    displayName: existing.displayName?.trim() || defaultPreference.displayName,
-    timezone: validateTimeZone(timezone) ? timezone : defaultPreference.timezone,
-    weekStartDay: isWeekStartDay(existing.weekStartDay) ? existing.weekStartDay : defaultPreference.weekStartDay,
-    defaultMonthPreset: isDefaultMonthPreset(existing.defaultMonthPreset)
-      ? existing.defaultMonthPreset
-      : defaultPreference.defaultMonthPreset,
-    dueRemindersEnabled:
-      typeof existing.dueRemindersEnabled === 'boolean'
-        ? existing.dueRemindersEnabled
-        : defaultPreference.dueRemindersEnabled,
-    dueReminderDays:
-      typeof existing.dueReminderDays === 'number' && Number.isInteger(existing.dueReminderDays) && existing.dueReminderDays >= 0
-        ? existing.dueReminderDays
-        : defaultPreference.dueReminderDays,
-    monthlyCycleAlertsEnabled:
-      typeof existing.monthlyCycleAlertsEnabled === 'boolean'
-        ? existing.monthlyCycleAlertsEnabled
-        : defaultPreference.monthlyCycleAlertsEnabled,
-    reconciliationRemindersEnabled:
-      typeof existing.reconciliationRemindersEnabled === 'boolean'
-        ? existing.reconciliationRemindersEnabled
-        : defaultPreference.reconciliationRemindersEnabled,
-    goalAlertsEnabled:
-      typeof existing.goalAlertsEnabled === 'boolean' ? existing.goalAlertsEnabled : defaultPreference.goalAlertsEnabled,
-    defaultBillCategory:
-      existing.defaultBillCategory === undefined
-        ? defaultPreference.defaultBillCategory
-        : (existing.defaultBillCategory as BillCategory),
-    defaultBillScope:
-      existing.defaultBillScope === 'personal' || existing.defaultBillScope === 'shared'
-        ? existing.defaultBillScope
-        : defaultPreference.defaultBillScope,
-    defaultPurchaseOwnership:
-      existing.defaultPurchaseOwnership === 'personal' || existing.defaultPurchaseOwnership === 'shared'
-        ? existing.defaultPurchaseOwnership
-        : defaultPreference.defaultPurchaseOwnership,
-    defaultPurchaseCategory: existing.defaultPurchaseCategory?.trim() || defaultPreference.defaultPurchaseCategory,
-    billNotesTemplate: existing.billNotesTemplate ?? defaultPreference.billNotesTemplate,
-    purchaseNotesTemplate: existing.purchaseNotesTemplate ?? defaultPreference.purchaseNotesTemplate,
-    uiDensity: isUiDensity(existing.uiDensity) ? existing.uiDensity : defaultPreference.uiDensity,
-    defaultLandingTab: isAppTabKey(existing.defaultLandingTab) ? existing.defaultLandingTab : defaultPreference.defaultLandingTab,
-    dashboardCardOrder,
+const writeFinancePreferenceSnapshotForUser = async (
+  ctx: MutationCtx,
+  userId: string,
+  snapshot: FinancePreferenceSnapshot,
+) => {
+  const existing = await ctx.db
+    .query('financePreferences')
+    .withIndex('by_userId', (q) => q.eq('userId', userId))
+    .first()
+
+  const now = Date.now()
+  const patch = financePreferenceSnapshotToDbPatch(snapshot, now)
+
+  if (existing) {
+    await ctx.db.patch(existing._id, patch)
+    return existing._id
   }
+
+  return await ctx.db.insert('financePreferences', {
+    userId,
+    ...patch,
+  })
+}
+
+const parseFinancePreferenceSnapshotJson = (json: string, sourceLabel: string): FinancePreferenceSnapshot => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    throw new Error(`Invalid settings snapshot JSON (${sourceLabel}).`)
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Settings snapshot must be an object (${sourceLabel}).`)
+  }
+
+  const candidate = parsed as Record<string, unknown>
+  return normalizeFinancePreferenceSnapshot({
+    ...(defaultPreference as FinancePreferenceSnapshot),
+    ...(candidate as Partial<FinancePreferenceSnapshot>),
+    currency: typeof candidate.currency === 'string' ? candidate.currency : defaultPreference.currency,
+    locale: typeof candidate.locale === 'string' ? candidate.locale : defaultPreference.locale,
+  })
+}
+
+const settingsProfileNameNormalized = (name: string) => name.trim().toLowerCase()
+
+const summarizePreferenceDiffFields = (beforeValue: unknown, afterValue: unknown) => {
+  if (!beforeValue || typeof beforeValue !== 'object' || Array.isArray(beforeValue)) {
+    return []
+  }
+  if (!afterValue || typeof afterValue !== 'object' || Array.isArray(afterValue)) {
+    return []
+  }
+
+  const before = beforeValue as Record<string, unknown>
+  const after = afterValue as Record<string, unknown>
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+  const changed: string[] = []
+  for (const key of keys) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      changed.push(key)
+    }
+  }
+  return changed.sort((left, right) => left.localeCompare(right))
 }
 
 function ensureOwned<T extends { userId: string }>(
@@ -3448,105 +3748,288 @@ export const upsertFinancePreference = mutation({
     uiDensity: v.optional(uiDensityValidator),
     defaultLandingTab: v.optional(appTabKeyValidator),
     dashboardCardOrder: v.optional(v.array(v.string())),
+    monthlyAutomationEnabled: v.optional(v.boolean()),
+    monthlyAutomationRunDay: v.optional(v.number()),
+    monthlyAutomationRunHour: v.optional(v.number()),
+    monthlyAutomationRunMinute: v.optional(v.number()),
+    monthlyAutomationRetryStrategy: v.optional(monthlyAutomationRetryStrategyValidator),
+    monthlyAutomationMaxRetries: v.optional(v.number()),
+    alertEscalationFailureStreakThreshold: v.optional(v.number()),
+    alertEscalationFailedStepsThreshold: v.optional(v.number()),
+    planningDefaultVersionKey: v.optional(planningVersionKey),
+    planningAutoApplyMode: v.optional(planningAutoApplyModeValidator),
+    planningNegativeForecastFallback: v.optional(planningNegativeForecastFallbackValidator),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
+    const before = await getUserPreference(ctx, identity.subject)
+    const nextSnapshot = normalizeFinancePreferenceSnapshot({
+      ...before,
+      ...args,
+      dashboardCardOrder: (args.dashboardCardOrder as DashboardCardId[] | undefined) ?? before.dashboardCardOrder,
+    })
 
-    const currency = args.currency.trim().toUpperCase()
-    const locale = args.locale.trim()
-    const normalizedDisplayName = args.displayName?.trim() || undefined
-    const normalizedTimezone = args.timezone?.trim() || undefined
-    const normalizedDefaultPurchaseCategory = args.defaultPurchaseCategory?.trim() || undefined
-    const normalizedBillNotesTemplate = args.billNotesTemplate?.trim() || undefined
-    const normalizedPurchaseNotesTemplate = args.purchaseNotesTemplate?.trim() || undefined
-    const normalizedDashboardCardOrder = normalizeDashboardCardOrder(args.dashboardCardOrder)
+    await writeFinancePreferenceSnapshotForUser(ctx, identity.subject, nextSnapshot)
 
-    if (!validateCurrencyCode(currency)) {
-      throw new Error('Currency must be a valid ISO 4217 code supported by the runtime.')
-    }
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'finance_preferences',
+      entityId: identity.subject,
+      action: 'settings_preferences_upsert',
+      before,
+      after: nextSnapshot,
+      metadata: {
+        source: 'settings_tab',
+        phase: 'phase3',
+      },
+    })
+  },
+})
 
-    if (!validateLocale(locale)) {
-      throw new Error('Locale is not valid.')
-    }
-
-    validateOptionalText(normalizedDisplayName, 'Display name', 120)
-    validateOptionalText(normalizedDefaultPurchaseCategory, 'Default purchase category', 80)
-    validateOptionalText(normalizedBillNotesTemplate, 'Bill notes template', 2000)
-    validateOptionalText(normalizedPurchaseNotesTemplate, 'Purchase notes template', 2000)
-
-    if (normalizedTimezone && !validateTimeZone(normalizedTimezone)) {
-      throw new Error('Timezone is not valid.')
-    }
-
-    if (args.dueReminderDays !== undefined) {
-      if (!Number.isInteger(args.dueReminderDays) || args.dueReminderDays < 0 || args.dueReminderDays > 60) {
-        throw new Error('Due reminder days must be an integer between 0 and 60.')
+export const getSettingsPowerData = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity()
+    if (!identity) {
+      return {
+        profiles: [],
+        history: [],
       }
     }
+    const [profiles, history] = await Promise.all([
+      ctx.db
+        .query('settingsProfiles')
+        .withIndex('by_userId_updatedAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(50),
+      ctx.db
+        .query('financeAuditEvents')
+        .withIndex('by_userId_entityType_createdAt', (q) => q.eq('userId', identity.subject).eq('entityType', 'finance_preferences'))
+        .order('desc')
+        .take(60),
+    ])
 
-    const existing = await ctx.db
-      .query('financePreferences')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
-      .first()
+    return {
+      profiles: profiles.map((profile) => ({
+        _id: profile._id,
+        name: profile.name,
+        description: profile.description ?? '',
+        preferenceJson: profile.preferenceJson,
+        lastAppliedAt: profile.lastAppliedAt ?? null,
+        createdAt: profile.createdAt,
+        updatedAt: profile.updatedAt,
+      })),
+      history: history.map((event) => {
+        let before: unknown = null
+        let after: unknown = null
+        try {
+          before = event.beforeJson ? JSON.parse(event.beforeJson) : null
+        } catch {
+          before = null
+        }
+        try {
+          after = event.afterJson ? JSON.parse(event.afterJson) : null
+        } catch {
+          after = null
+        }
 
+        let source: string | null = null
+        try {
+          const metadata = event.metadataJson ? (JSON.parse(event.metadataJson) as Record<string, unknown>) : null
+          source = typeof metadata?.source === 'string' ? metadata.source : null
+        } catch {
+          source = null
+        }
+
+        const changedFields = summarizePreferenceDiffFields(before, after)
+        return {
+          _id: event._id,
+          action: event.action,
+          source,
+          beforeJson: event.beforeJson ?? null,
+          afterJson: event.afterJson ?? null,
+          changedFields,
+          createdAt: event.createdAt,
+        }
+      }),
+    }
+  },
+})
+
+export const saveSettingsProfile = mutation({
+  args: {
+    name: v.string(),
+    description: v.optional(v.string()),
+    preferenceJson: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const name = args.name.trim()
+    const description = args.description?.trim() || undefined
+    validateRequiredText(name, 'Profile name')
+    validateOptionalText(description, 'Profile description', 240)
+
+    const normalizedName = settingsProfileNameNormalized(name)
+    if (normalizedName.length < 2) {
+      throw new Error('Profile name must be at least 2 characters.')
+    }
+
+    const snapshot = parseFinancePreferenceSnapshotJson(args.preferenceJson, 'settings profile')
+    const preferenceJson = stringifyForAudit(snapshot) ?? JSON.stringify(snapshot)
     const now = Date.now()
 
+    const existing = await ctx.db
+      .query('settingsProfiles')
+      .withIndex('by_userId_nameNormalized', (q) => q.eq('userId', identity.subject).eq('nameNormalized', normalizedName))
+      .first()
+
     if (existing) {
-      const patch: Partial<Doc<'financePreferences'>> = {
-        currency,
-        locale,
+      await ctx.db.patch(existing._id, {
+        name,
+        nameNormalized: normalizedName,
+        description,
+        preferenceJson,
         updatedAt: now,
-      }
-
-      if (args.displayName !== undefined) patch.displayName = normalizedDisplayName
-      if (args.timezone !== undefined) patch.timezone = normalizedTimezone
-      if (args.weekStartDay !== undefined) patch.weekStartDay = args.weekStartDay
-      if (args.defaultMonthPreset !== undefined) patch.defaultMonthPreset = args.defaultMonthPreset
-      if (args.dueRemindersEnabled !== undefined) patch.dueRemindersEnabled = args.dueRemindersEnabled
-      if (args.dueReminderDays !== undefined) patch.dueReminderDays = args.dueReminderDays
-      if (args.monthlyCycleAlertsEnabled !== undefined) patch.monthlyCycleAlertsEnabled = args.monthlyCycleAlertsEnabled
-      if (args.reconciliationRemindersEnabled !== undefined)
-        patch.reconciliationRemindersEnabled = args.reconciliationRemindersEnabled
-      if (args.goalAlertsEnabled !== undefined) patch.goalAlertsEnabled = args.goalAlertsEnabled
-      if (args.defaultBillCategory !== undefined) patch.defaultBillCategory = args.defaultBillCategory
-      if (args.defaultBillScope !== undefined) patch.defaultBillScope = args.defaultBillScope
-      if (args.defaultPurchaseOwnership !== undefined) patch.defaultPurchaseOwnership = args.defaultPurchaseOwnership
-      if (args.defaultPurchaseCategory !== undefined) patch.defaultPurchaseCategory = normalizedDefaultPurchaseCategory
-      if (args.billNotesTemplate !== undefined) patch.billNotesTemplate = normalizedBillNotesTemplate
-      if (args.purchaseNotesTemplate !== undefined) patch.purchaseNotesTemplate = normalizedPurchaseNotesTemplate
-      if (args.uiDensity !== undefined) patch.uiDensity = args.uiDensity
-      if (args.defaultLandingTab !== undefined) patch.defaultLandingTab = args.defaultLandingTab
-      if (args.dashboardCardOrder !== undefined) patch.dashboardCardOrder = normalizedDashboardCardOrder
-
-      await ctx.db.patch(existing._id, patch)
-      return
+      })
+      await recordFinanceAuditEvent(ctx, {
+        userId: identity.subject,
+        entityType: 'settings_profile',
+        entityId: String(existing._id),
+        action: 'settings_profile_saved',
+        before: {
+          name: existing.name,
+          description: existing.description ?? '',
+          preferenceJson: existing.preferenceJson,
+        },
+        after: {
+          name,
+          description: description ?? '',
+          preferenceJson,
+        },
+        metadata: { source: 'settings_tab', mode: 'update' },
+      })
+      return { profileId: existing._id, mode: 'updated' as const }
     }
 
-    await ctx.db.insert('financePreferences', {
+    const profileId = await ctx.db.insert('settingsProfiles', {
       userId: identity.subject,
-      currency,
-      locale,
-      displayName: normalizedDisplayName ?? (defaultPreference.displayName || undefined),
-      timezone: normalizedTimezone ?? defaultPreference.timezone,
-      weekStartDay: args.weekStartDay ?? defaultPreference.weekStartDay,
-      defaultMonthPreset: args.defaultMonthPreset ?? defaultPreference.defaultMonthPreset,
-      dueRemindersEnabled: args.dueRemindersEnabled ?? defaultPreference.dueRemindersEnabled,
-      dueReminderDays: args.dueReminderDays ?? defaultPreference.dueReminderDays,
-      monthlyCycleAlertsEnabled: args.monthlyCycleAlertsEnabled ?? defaultPreference.monthlyCycleAlertsEnabled,
-      reconciliationRemindersEnabled:
-        args.reconciliationRemindersEnabled ?? defaultPreference.reconciliationRemindersEnabled,
-      goalAlertsEnabled: args.goalAlertsEnabled ?? defaultPreference.goalAlertsEnabled,
-      defaultBillCategory: args.defaultBillCategory ?? defaultPreference.defaultBillCategory,
-      defaultBillScope: args.defaultBillScope ?? defaultPreference.defaultBillScope,
-      defaultPurchaseOwnership: args.defaultPurchaseOwnership ?? defaultPreference.defaultPurchaseOwnership,
-      defaultPurchaseCategory: normalizedDefaultPurchaseCategory ?? (defaultPreference.defaultPurchaseCategory || undefined),
-      billNotesTemplate: normalizedBillNotesTemplate ?? (defaultPreference.billNotesTemplate || undefined),
-      purchaseNotesTemplate: normalizedPurchaseNotesTemplate ?? (defaultPreference.purchaseNotesTemplate || undefined),
-      uiDensity: args.uiDensity ?? defaultPreference.uiDensity,
-      defaultLandingTab: args.defaultLandingTab ?? defaultPreference.defaultLandingTab,
-      dashboardCardOrder: normalizedDashboardCardOrder ?? [...defaultPreference.dashboardCardOrder],
+      name,
+      nameNormalized: normalizedName,
+      description,
+      preferenceJson,
+      createdAt: now,
       updatedAt: now,
     })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'settings_profile',
+      entityId: String(profileId),
+      action: 'settings_profile_saved',
+      after: {
+        name,
+        description: description ?? '',
+        preferenceJson,
+      },
+      metadata: { source: 'settings_tab', mode: 'create' },
+    })
+
+    return { profileId, mode: 'created' as const }
+  },
+})
+
+export const applySettingsProfile = mutation({
+  args: { profileId: v.id('settingsProfiles') },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const profile = await ctx.db.get(args.profileId)
+    ensureOwned(profile, identity.subject, 'Settings profile not found.')
+
+    const before = await getUserPreference(ctx, identity.subject)
+    const nextSnapshot = parseFinancePreferenceSnapshotJson(profile.preferenceJson, `profile ${profile.name}`)
+    await writeFinancePreferenceSnapshotForUser(ctx, identity.subject, nextSnapshot)
+    const now = Date.now()
+    await ctx.db.patch(profile._id, { lastAppliedAt: now, updatedAt: now })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'finance_preferences',
+      entityId: identity.subject,
+      action: 'settings_profile_applied',
+      before,
+      after: nextSnapshot,
+      metadata: {
+        source: 'settings_tab',
+        profileId: String(profile._id),
+        profileName: profile.name,
+      },
+    })
+
+    return { ok: true }
+  },
+})
+
+export const deleteSettingsProfile = mutation({
+  args: { profileId: v.id('settingsProfiles') },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const profile = await ctx.db.get(args.profileId)
+    ensureOwned(profile, identity.subject, 'Settings profile not found.')
+
+    await ctx.db.delete(profile._id)
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'settings_profile',
+      entityId: String(profile._id),
+      action: 'settings_profile_deleted',
+      before: {
+        name: profile.name,
+        description: profile.description ?? '',
+      },
+      metadata: { source: 'settings_tab' },
+    })
+
+    return { ok: true }
+  },
+})
+
+export const restoreFinancePreferenceSnapshot = mutation({
+  args: {
+    auditEventId: v.id('financeAuditEvents'),
+    target: v.union(v.literal('before'), v.literal('after')),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const event = await ctx.db.get(args.auditEventId)
+    ensureOwned(event, identity.subject, 'Settings restore point not found.')
+    if (event.entityType !== 'finance_preferences') {
+      throw new Error('Selected audit event is not a finance preferences restore point.')
+    }
+
+    const snapshotJson = args.target === 'before' ? event.beforeJson : event.afterJson
+    if (!snapshotJson) {
+      throw new Error(`No ${args.target} snapshot is available for this event.`)
+    }
+
+    const before = await getUserPreference(ctx, identity.subject)
+    const nextSnapshot = parseFinancePreferenceSnapshotJson(snapshotJson, `audit event ${String(event._id)}`)
+    await writeFinancePreferenceSnapshotForUser(ctx, identity.subject, nextSnapshot)
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'finance_preferences',
+      entityId: identity.subject,
+      action: 'settings_preferences_restored',
+      before,
+      after: nextSnapshot,
+      metadata: {
+        source: 'settings_tab',
+        restoreFromAuditEventId: String(event._id),
+        restoreTarget: args.target,
+      },
+    })
+
+    return { ok: true }
   },
 })
 

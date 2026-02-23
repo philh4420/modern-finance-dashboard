@@ -61,6 +61,13 @@ export type PurchaseFundingSourceType = 'unassigned' | 'account' | 'card'
 export type WeekStartDay = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
 export type UiDensity = 'comfortable' | 'compact'
 export type DefaultMonthPreset = 'current' | 'previous' | 'next' | 'last_used'
+export type MonthlyAutomationRetryStrategy = 'none' | 'same_day_backoff' | 'next_day_retry'
+export type PlanningAutoApplyMode = 'manual_only' | 'month_start' | 'after_cycle'
+export type PlanningNegativeForecastFallback =
+  | 'warn_only'
+  | 'reduce_variable_spend'
+  | 'pause_goals'
+  | 'debt_minimums_only'
 export type DashboardCardId =
   | 'health-score'
   | 'monthly-income'
@@ -91,6 +98,17 @@ export type FinancePreference = {
   uiDensity: UiDensity
   defaultLandingTab: TabKey
   dashboardCardOrder: DashboardCardId[]
+  monthlyAutomationEnabled: boolean
+  monthlyAutomationRunDay: number
+  monthlyAutomationRunHour: number
+  monthlyAutomationRunMinute: number
+  monthlyAutomationRetryStrategy: MonthlyAutomationRetryStrategy
+  monthlyAutomationMaxRetries: number
+  alertEscalationFailureStreakThreshold: number
+  alertEscalationFailedStepsThreshold: number
+  planningDefaultVersionKey: PlanningVersionKey
+  planningAutoApplyMode: PlanningAutoApplyMode
+  planningNegativeForecastFallback: PlanningNegativeForecastFallback
 }
 
 export type Summary = {
@@ -214,6 +232,31 @@ export type KpiSnapshot = {
     anomalies: number
     splitMismatches: number
   }
+}
+
+export type SettingsProfileEntry = {
+  _id: string
+  name: string
+  description: string
+  preferenceJson: string
+  lastAppliedAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type SettingsPreferenceHistoryEntry = {
+  _id: string
+  action: string
+  source: string | null
+  beforeJson: string | null
+  afterJson: string | null
+  changedFields: string[]
+  createdAt: number
+}
+
+export type SettingsPowerData = {
+  profiles: SettingsProfileEntry[]
+  history: SettingsPreferenceHistoryEntry[]
 }
 
 export type RetentionPolicyRow = {

@@ -4454,6 +4454,115 @@ tbody .inline-cadence-controls {
   flex: 0 0 auto;
 }
 
+.settings-inline-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.settings-health-list {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.settings-health-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border-radius: 0.95rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 86%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.7rem 0.8rem;
+}
+
+.settings-health-row strong,
+.settings-health-row small {
+  display: block;
+}
+
+.settings-health-row small {
+  margin-top: 0.2rem;
+  color: var(--text-muted);
+}
+
+.settings-health-row--warning {
+  border-color: color-mix(in oklab, #d89a00 32%, var(--stroke));
+}
+
+.settings-health-row--critical {
+  border-color: color-mix(in oklab, #d94141 34%, var(--stroke));
+  background: color-mix(in oklab, #fff4f4 45%, var(--surface-card));
+}
+
+.settings-profile-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.settings-profile-row {
+  display: grid;
+  gap: 0.7rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 86%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.75rem;
+}
+
+.settings-profile-row__meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+}
+
+.settings-profile-row__meta strong,
+.settings-profile-row__meta small {
+  display: block;
+}
+
+.settings-profile-row__meta small {
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.settings-profile-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.settings-diff-panel {
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 82%, transparent);
+  background: color-mix(in oklab, var(--surface) 94%, white 6%);
+  padding: 0.75rem;
+}
+
+.settings-diff-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.settings-diff-panel__header h3 {
+  margin: 0.15rem 0 0;
+  font-size: 1.02rem;
+}
+
+@media (max-width: 860px) {
+  .settings-inline-split {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-profile-row__meta {
+    grid-template-columns: 1fr;
+  }
+}
+
 input[type='checkbox'] {
   accent-color: var(--tone-finance);
 }

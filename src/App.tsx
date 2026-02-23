@@ -1123,8 +1123,26 @@ function App() {
             weekStartDayOptions={settingsSection.weekStartDayOptions}
             defaultMonthPresetOptions={settingsSection.defaultMonthPresetOptions}
             uiDensityOptions={settingsSection.uiDensityOptions}
+            monthlyAutomationRetryStrategyOptions={settingsSection.monthlyAutomationRetryStrategyOptions}
+            planningDefaultVersionOptions={settingsSection.planningDefaultVersionOptions}
+            planningAutoApplyModeOptions={settingsSection.planningAutoApplyModeOptions}
+            planningNegativeForecastFallbackOptions={settingsSection.planningNegativeForecastFallbackOptions}
             defaultLandingTabOptions={settingsSection.defaultLandingTabOptions}
             dashboardCardOrderOptions={settingsSection.dashboardCardOrderOptions}
+            settingsProfiles={settingsSection.settingsProfiles}
+            settingsPreferenceHistory={settingsSection.settingsPreferenceHistory}
+            settingsProfileName={settingsSection.settingsProfileName}
+            setSettingsProfileName={settingsSection.setSettingsProfileName}
+            settingsProfileDescription={settingsSection.settingsProfileDescription}
+            setSettingsProfileDescription={settingsSection.setSettingsProfileDescription}
+            isSavingSettingsProfile={settingsSection.isSavingSettingsProfile}
+            applyingSettingsProfileId={settingsSection.applyingSettingsProfileId}
+            deletingSettingsProfileId={settingsSection.deletingSettingsProfileId}
+            restoringSettingsHistoryId={settingsSection.restoringSettingsHistoryId}
+            onSaveSettingsProfile={settingsSection.onSaveSettingsProfile}
+            onApplySettingsProfile={settingsSection.onApplySettingsProfile}
+            onDeleteSettingsProfile={settingsSection.onDeleteSettingsProfile}
+            onRestoreSettingsHistory={settingsSection.onRestoreSettingsHistory}
             consentSettings={
               settingsSection.privacyData?.consentSettings ?? {
                 diagnosticsEnabled: false,

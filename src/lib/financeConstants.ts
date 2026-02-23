@@ -131,6 +131,17 @@ export const defaultPreference: FinancePreference = {
     'net-worth',
     'runway',
   ] as DashboardCardId[],
+  monthlyAutomationEnabled: false,
+  monthlyAutomationRunDay: 1,
+  monthlyAutomationRunHour: 9,
+  monthlyAutomationRunMinute: 0,
+  monthlyAutomationRetryStrategy: 'same_day_backoff',
+  monthlyAutomationMaxRetries: 2,
+  alertEscalationFailureStreakThreshold: 2,
+  alertEscalationFailedStepsThreshold: 1,
+  planningDefaultVersionKey: 'base',
+  planningAutoApplyMode: 'manual_only',
+  planningNegativeForecastFallback: 'warn_only',
 }
 
 export const dashboardCardOrderOptions: Array<{ id: DashboardCardId; label: string }> = [

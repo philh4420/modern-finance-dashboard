@@ -8,8 +8,14 @@ import type {
   DeletionJobEntry,
   DefaultMonthPreset,
   FinancePreference,
+  MonthlyAutomationRetryStrategy,
+  PlanningAutoApplyMode,
+  PlanningNegativeForecastFallback,
+  PlanningVersionKey,
   RetentionPolicyRow,
   SecuritySessionActivity,
+  SettingsPreferenceHistoryEntry,
+  SettingsProfileEntry,
   UiDensity,
   UserExportDownloadEntry,
   UserExportEntry,
@@ -38,6 +44,17 @@ type SettingsTabProps = {
     uiDensity: UiDensity
     defaultLandingTab: FinancePreference['defaultLandingTab']
     dashboardCardOrder: DashboardCardId[]
+    monthlyAutomationEnabled: boolean
+    monthlyAutomationRunDay: string
+    monthlyAutomationRunHour: string
+    monthlyAutomationRunMinute: string
+    monthlyAutomationRetryStrategy: MonthlyAutomationRetryStrategy
+    monthlyAutomationMaxRetries: string
+    alertEscalationFailureStreakThreshold: string
+    alertEscalationFailedStepsThreshold: string
+    planningDefaultVersionKey: PlanningVersionKey
+    planningAutoApplyMode: PlanningAutoApplyMode
+    planningNegativeForecastFallback: PlanningNegativeForecastFallback
   }
   setPreferenceDraft: Dispatch<
     SetStateAction<{
@@ -61,6 +78,17 @@ type SettingsTabProps = {
       uiDensity: UiDensity
       defaultLandingTab: FinancePreference['defaultLandingTab']
       dashboardCardOrder: DashboardCardId[]
+      monthlyAutomationEnabled: boolean
+      monthlyAutomationRunDay: string
+      monthlyAutomationRunHour: string
+      monthlyAutomationRunMinute: string
+      monthlyAutomationRetryStrategy: MonthlyAutomationRetryStrategy
+      monthlyAutomationMaxRetries: string
+      alertEscalationFailureStreakThreshold: string
+      alertEscalationFailedStepsThreshold: string
+      planningDefaultVersionKey: PlanningVersionKey
+      planningAutoApplyMode: PlanningAutoApplyMode
+      planningNegativeForecastFallback: PlanningNegativeForecastFallback
     }>
   >
   isSavingPreferences: boolean
@@ -74,8 +102,26 @@ type SettingsTabProps = {
   weekStartDayOptions: Array<{ value: WeekStartDay; label: string }>
   defaultMonthPresetOptions: Array<{ value: DefaultMonthPreset; label: string }>
   uiDensityOptions: Array<{ value: UiDensity; label: string }>
+  monthlyAutomationRetryStrategyOptions: Array<{ value: MonthlyAutomationRetryStrategy; label: string }>
+  planningDefaultVersionOptions: Array<{ value: PlanningVersionKey; label: string }>
+  planningAutoApplyModeOptions: Array<{ value: PlanningAutoApplyMode; label: string }>
+  planningNegativeForecastFallbackOptions: Array<{ value: PlanningNegativeForecastFallback; label: string }>
   defaultLandingTabOptions: Array<{ value: FinancePreference['defaultLandingTab']; label: string }>
   dashboardCardOrderOptions: Array<{ id: DashboardCardId; label: string }>
+  settingsProfiles: SettingsProfileEntry[]
+  settingsPreferenceHistory: SettingsPreferenceHistoryEntry[]
+  settingsProfileName: string
+  setSettingsProfileName: Dispatch<SetStateAction<string>>
+  settingsProfileDescription: string
+  setSettingsProfileDescription: Dispatch<SetStateAction<string>>
+  isSavingSettingsProfile: boolean
+  applyingSettingsProfileId: string | null
+  deletingSettingsProfileId: string | null
+  restoringSettingsHistoryId: string | null
+  onSaveSettingsProfile: () => Promise<void>
+  onApplySettingsProfile: (profileId: string) => Promise<void>
+  onDeleteSettingsProfile: (profileId: string) => Promise<void>
+  onRestoreSettingsHistory: (auditEventId: string, target: 'before' | 'after') => Promise<void>
   consentSettings: ConsentSettingsView
   consentLogs: ConsentLogEntry[]
   latestExport: UserExportEntry | null
@@ -185,6 +231,46 @@ const parseDeletionProgress = (progressJson: string | undefined) => {
   }
 }
 
+const parsePreferenceJson = (value: string | null | undefined) => {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+const computePreferenceDiffRows = (
+  leftValue: Record<string, unknown> | null,
+  rightValue: Record<string, unknown> | null,
+  labels: Map<string, string>,
+) => {
+  if (!leftValue || !rightValue) return []
+  const keys = new Set([...Object.keys(leftValue), ...Object.keys(rightValue)])
+  const rows: Array<{ key: string; label: string; before: string; after: string }> = []
+  for (const key of keys) {
+    const left = leftValue[key]
+    const right = rightValue[key]
+    if (JSON.stringify(left) === JSON.stringify(right)) continue
+    rows.push({
+      key,
+      label: labels.get(key) ?? key,
+      before: left === undefined ? '—' : typeof left === 'string' ? left : JSON.stringify(left),
+      after: right === undefined ? '—' : typeof right === 'string' ? right : JSON.stringify(right),
+    })
+  }
+  return rows.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+}
+
+const formatClockTime = (hourText: string, minuteText: string) => {
+  const hour = Number.parseInt(hourText, 10)
+  const minute = Number.parseInt(minuteText, 10)
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return 'Invalid time'
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
 export function SettingsTab({
   preferenceDraft,
   setPreferenceDraft,
@@ -199,8 +285,26 @@ export function SettingsTab({
   weekStartDayOptions,
   defaultMonthPresetOptions,
   uiDensityOptions,
+  monthlyAutomationRetryStrategyOptions,
+  planningDefaultVersionOptions,
+  planningAutoApplyModeOptions,
+  planningNegativeForecastFallbackOptions,
   defaultLandingTabOptions,
   dashboardCardOrderOptions,
+  settingsProfiles,
+  settingsPreferenceHistory,
+  settingsProfileName,
+  setSettingsProfileName,
+  settingsProfileDescription,
+  setSettingsProfileDescription,
+  isSavingSettingsProfile,
+  applyingSettingsProfileId,
+  deletingSettingsProfileId,
+  restoringSettingsHistoryId,
+  onSaveSettingsProfile,
+  onApplySettingsProfile,
+  onDeleteSettingsProfile,
+  onRestoreSettingsHistory,
   consentSettings,
   consentLogs,
   latestExport,
@@ -238,6 +342,8 @@ export function SettingsTab({
 
   const [retentionSort, setRetentionSort] = useState<RetentionSortKey>('policy_asc')
   const [retentionSearch, setRetentionSearch] = useState('')
+  const [selectedProfileCompareId, setSelectedProfileCompareId] = useState<string | null>(null)
+  const [selectedHistoryCompareId, setSelectedHistoryCompareId] = useState<string | null>(null)
 
   const visibleConsentLogs = useMemo(() => {
     const query = consentSearch.trim().toLowerCase()
@@ -306,6 +412,159 @@ export function SettingsTab({
 
   const hasExportHistory = exportHistory.length > 0
   const hasExportDownloadAudit = exportDownloadLogs.length > 0
+
+  const preferenceFieldLabels = useMemo(
+    () =>
+      new Map<string, string>([
+        ['displayName', 'Display name'],
+        ['currency', 'Currency'],
+        ['locale', 'Locale'],
+        ['timezone', 'Timezone'],
+        ['weekStartDay', 'Week start day'],
+        ['defaultMonthPreset', 'Default month preset'],
+        ['dueRemindersEnabled', 'Due reminders enabled'],
+        ['dueReminderDays', 'Due reminder lead days'],
+        ['monthlyCycleAlertsEnabled', 'Monthly cycle alerts'],
+        ['reconciliationRemindersEnabled', 'Reconciliation reminders'],
+        ['goalAlertsEnabled', 'Goal alerts'],
+        ['defaultBillCategory', 'Default bill category'],
+        ['defaultBillScope', 'Default bill ownership'],
+        ['defaultPurchaseOwnership', 'Default purchase ownership'],
+        ['defaultPurchaseCategory', 'Default purchase category'],
+        ['billNotesTemplate', 'Bill notes template'],
+        ['purchaseNotesTemplate', 'Purchase notes template'],
+        ['uiDensity', 'UI density'],
+        ['defaultLandingTab', 'Default landing tab'],
+        ['dashboardCardOrder', 'Dashboard card order'],
+        ['monthlyAutomationEnabled', 'Monthly automation enabled'],
+        ['monthlyAutomationRunDay', 'Monthly automation day'],
+        ['monthlyAutomationRunHour', 'Monthly automation hour'],
+        ['monthlyAutomationRunMinute', 'Monthly automation minute'],
+        ['monthlyAutomationRetryStrategy', 'Monthly automation retry strategy'],
+        ['monthlyAutomationMaxRetries', 'Monthly automation max retries'],
+        ['alertEscalationFailureStreakThreshold', 'Alert escalation failure streak threshold'],
+        ['alertEscalationFailedStepsThreshold', 'Alert escalation failed steps threshold'],
+        ['planningDefaultVersionKey', 'Planning default version'],
+        ['planningAutoApplyMode', 'Planning auto-apply mode'],
+        ['planningNegativeForecastFallback', 'Planning negative forecast fallback'],
+      ]),
+    [],
+  )
+
+  const currentPreferenceComparable = useMemo(
+    () => ({
+      ...preferenceDraft,
+      dashboardCardOrder: [...preferenceDraft.dashboardCardOrder],
+      dueReminderDays: Number(preferenceDraft.dueReminderDays),
+      monthlyAutomationRunDay: Number(preferenceDraft.monthlyAutomationRunDay),
+      monthlyAutomationRunHour: Number(preferenceDraft.monthlyAutomationRunHour),
+      monthlyAutomationRunMinute: Number(preferenceDraft.monthlyAutomationRunMinute),
+      monthlyAutomationMaxRetries: Number(preferenceDraft.monthlyAutomationMaxRetries),
+      alertEscalationFailureStreakThreshold: Number(preferenceDraft.alertEscalationFailureStreakThreshold),
+      alertEscalationFailedStepsThreshold: Number(preferenceDraft.alertEscalationFailedStepsThreshold),
+    }),
+    [preferenceDraft],
+  )
+
+  const selectedProfile = settingsProfiles.find((profile) => profile._id === selectedProfileCompareId) ?? null
+  const selectedProfileDiffRows = useMemo(
+    () => computePreferenceDiffRows(parsePreferenceJson(selectedProfile?.preferenceJson), currentPreferenceComparable, preferenceFieldLabels),
+    [currentPreferenceComparable, preferenceFieldLabels, selectedProfile?.preferenceJson],
+  )
+
+  const selectedHistory = settingsPreferenceHistory.find((entry) => entry._id === selectedHistoryCompareId) ?? null
+  const selectedHistoryDiffRows = useMemo(
+    () =>
+      computePreferenceDiffRows(
+        parsePreferenceJson(selectedHistory?.beforeJson),
+        parsePreferenceJson(selectedHistory?.afterJson),
+        preferenceFieldLabels,
+      ),
+    [preferenceFieldLabels, selectedHistory?.afterJson, selectedHistory?.beforeJson],
+  )
+
+  const settingsHealthChecks = useMemo(() => {
+    const checks: Array<{ id: string; label: string; detail: string; severity: 'good' | 'warning' | 'critical' }> = []
+    if (!preferenceDraft.monthlyAutomationEnabled) {
+      checks.push({
+        id: 'automation-disabled',
+        label: 'Monthly automation is off',
+        detail: 'Cycle auto-run preferences are configured but automatic monthly execution is disabled.',
+        severity: 'warning',
+      })
+    } else {
+      checks.push({
+        id: 'automation-enabled',
+        label: 'Monthly automation enabled',
+        detail: `Auto-run scheduled for day ${preferenceDraft.monthlyAutomationRunDay} at ${formatClockTime(
+          preferenceDraft.monthlyAutomationRunHour,
+          preferenceDraft.monthlyAutomationRunMinute,
+        )}.`,
+        severity: 'good',
+      })
+    }
+
+    if (preferenceDraft.planningAutoApplyMode !== 'manual_only' && preferenceDraft.planningNegativeForecastFallback === 'warn_only') {
+      checks.push({
+        id: 'planning-fallback-warn-only',
+        label: 'Planning auto-apply fallback is warn-only',
+        detail: 'Auto-apply is enabled but negative forecasts will only warn and not automatically rebalance.',
+        severity: 'warning',
+      })
+    } else {
+      checks.push({
+        id: 'planning-fallback-covered',
+        label: 'Planning fallback configured',
+        detail: `Negative forecast behavior: ${preferenceDraft.planningNegativeForecastFallback.replaceAll('_', ' ')}.`,
+        severity: 'good',
+      })
+    }
+
+    if (!preferenceDraft.dueRemindersEnabled && !preferenceDraft.monthlyCycleAlertsEnabled && !preferenceDraft.reconciliationRemindersEnabled) {
+      checks.push({
+        id: 'alerts-mostly-off',
+        label: 'Most reminders are disabled',
+        detail: 'Due, cycle, and reconciliation reminders are all off. You may miss monthly maintenance steps.',
+        severity: 'critical',
+      })
+    } else {
+      checks.push({
+        id: 'alerts-on',
+        label: 'Operational reminders active',
+        detail: 'At least one key reminder channel is enabled for regular finance maintenance.',
+        severity: 'good',
+      })
+    }
+
+    const exportsPolicy = retentionPolicies.find((policy) => policy.policyKey === 'exports')
+    if (!exportsPolicy || !exportsPolicy.enabled) {
+      checks.push({
+        id: 'retention-exports-disabled',
+        label: 'Export retention disabled',
+        detail: 'Export ZIPs and download logs may remain longer than intended unless retention is enabled.',
+        severity: 'warning',
+      })
+    } else {
+      checks.push({
+        id: 'retention-exports-enabled',
+        label: 'Export retention enabled',
+        detail: exportsPolicy.retentionDays === 0 ? 'Exports retention is set to forever.' : `Exports retained for ${exportsPolicy.retentionDays} days.`,
+        severity: exportsPolicy.retentionDays === 0 ? 'warning' : 'good',
+      })
+    }
+
+    const score = Math.max(
+      0,
+      Math.min(
+        100,
+        100 -
+          checks.filter((check) => check.severity === 'critical').length * 25 -
+          checks.filter((check) => check.severity === 'warning').length * 10,
+      ),
+    )
+
+    return { checks, score }
+  }, [preferenceDraft, retentionPolicies])
 
   return (
     <section className="content-grid" aria-label="Settings and trust controls">
@@ -670,6 +929,529 @@ export function SettingsTab({
             Bill and Purchase add forms will use these defaults for faster manual entry after you save.
           </p>
         </div>
+      </article>
+
+      <article className="panel panel-form">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 3</p>
+            <h2>Automation + planning defaults</h2>
+            <p className="panel-value">Monthly cycle auto-run preferences and planning fallback behavior</p>
+          </div>
+        </header>
+
+        <div className="entry-form entry-form--grid">
+          <div className="form-grid">
+            <div className="form-field form-field--span2">
+              <label className="checkbox-row" htmlFor="settings-monthly-automation-enabled">
+                <input
+                  id="settings-monthly-automation-enabled"
+                  type="checkbox"
+                  checked={preferenceDraft.monthlyAutomationEnabled}
+                  onChange={(event) =>
+                    setPreferenceDraft((prev) => ({ ...prev, monthlyAutomationEnabled: event.target.checked }))
+                  }
+                />
+                Enable monthly automation preferences
+              </label>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-monthly-automation-day">Auto-run day (1-31)</label>
+              <input
+                id="settings-monthly-automation-day"
+                type="number"
+                min="1"
+                max="31"
+                step="1"
+                value={preferenceDraft.monthlyAutomationRunDay}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({ ...prev, monthlyAutomationRunDay: event.target.value }))
+                }
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-monthly-automation-time">Auto-run time (HH:MM)</label>
+              <div className="settings-inline-split">
+                <input
+                  id="settings-monthly-automation-time"
+                  type="number"
+                  min="0"
+                  max="23"
+                  step="1"
+                  value={preferenceDraft.monthlyAutomationRunHour}
+                  onChange={(event) =>
+                    setPreferenceDraft((prev) => ({ ...prev, monthlyAutomationRunHour: event.target.value }))
+                  }
+                />
+                <input
+                  aria-label="Auto-run minute"
+                  type="number"
+                  min="0"
+                  max="59"
+                  step="1"
+                  value={preferenceDraft.monthlyAutomationRunMinute}
+                  onChange={(event) =>
+                    setPreferenceDraft((prev) => ({ ...prev, monthlyAutomationRunMinute: event.target.value }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-monthly-automation-retry">Retry behavior</label>
+              <select
+                id="settings-monthly-automation-retry"
+                value={preferenceDraft.monthlyAutomationRetryStrategy}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({
+                    ...prev,
+                    monthlyAutomationRetryStrategy: event.target.value as MonthlyAutomationRetryStrategy,
+                  }))
+                }
+              >
+                {monthlyAutomationRetryStrategyOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-monthly-automation-max-retries">Max retries</label>
+              <input
+                id="settings-monthly-automation-max-retries"
+                type="number"
+                min="0"
+                max="10"
+                step="1"
+                value={preferenceDraft.monthlyAutomationMaxRetries}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({ ...prev, monthlyAutomationMaxRetries: event.target.value }))
+                }
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-alert-failure-streak-threshold">Escalate after failure streak</label>
+              <input
+                id="settings-alert-failure-streak-threshold"
+                type="number"
+                min="1"
+                max="12"
+                step="1"
+                value={preferenceDraft.alertEscalationFailureStreakThreshold}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({
+                    ...prev,
+                    alertEscalationFailureStreakThreshold: event.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-alert-failed-steps-threshold">Escalate after failed steps</label>
+              <input
+                id="settings-alert-failed-steps-threshold"
+                type="number"
+                min="1"
+                max="20"
+                step="1"
+                value={preferenceDraft.alertEscalationFailedStepsThreshold}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({
+                    ...prev,
+                    alertEscalationFailedStepsThreshold: event.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-planning-default-version">Planning default version</label>
+              <select
+                id="settings-planning-default-version"
+                value={preferenceDraft.planningDefaultVersionKey}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({
+                    ...prev,
+                    planningDefaultVersionKey: event.target.value as PlanningVersionKey,
+                  }))
+                }
+              >
+                {planningDefaultVersionOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="settings-planning-auto-apply-mode">Planning auto-apply mode</label>
+              <select
+                id="settings-planning-auto-apply-mode"
+                value={preferenceDraft.planningAutoApplyMode}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({
+                    ...prev,
+                    planningAutoApplyMode: event.target.value as PlanningAutoApplyMode,
+                  }))
+                }
+              >
+                {planningAutoApplyModeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field form-field--span2">
+              <label htmlFor="settings-planning-negative-fallback">Negative forecast fallback behavior</label>
+              <select
+                id="settings-planning-negative-fallback"
+                value={preferenceDraft.planningNegativeForecastFallback}
+                onChange={(event) =>
+                  setPreferenceDraft((prev) => ({
+                    ...prev,
+                    planningNegativeForecastFallback: event.target.value as PlanningNegativeForecastFallback,
+                  }))
+                }
+              >
+                {planningNegativeForecastFallbackOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="bulk-summary" aria-label="Automation and planning defaults summary">
+            <div>
+              <p>Cycle automation</p>
+              <strong>{preferenceDraft.monthlyAutomationEnabled ? 'Enabled' : 'Disabled'}</strong>
+              <small>
+                Day {preferenceDraft.monthlyAutomationRunDay} at{' '}
+                {formatClockTime(preferenceDraft.monthlyAutomationRunHour, preferenceDraft.monthlyAutomationRunMinute)}
+              </small>
+            </div>
+            <div>
+              <p>Retry behavior</p>
+              <strong>{preferenceDraft.monthlyAutomationRetryStrategy.replaceAll('_', ' ')}</strong>
+              <small>Max retries {preferenceDraft.monthlyAutomationMaxRetries}</small>
+            </div>
+            <div>
+              <p>Planning defaults</p>
+              <strong>{preferenceDraft.planningDefaultVersionKey}</strong>
+              <small>
+                {preferenceDraft.planningAutoApplyMode.replaceAll('_', ' ')} • {preferenceDraft.planningNegativeForecastFallback.replaceAll('_', ' ')}
+              </small>
+            </div>
+          </div>
+
+          <p className="form-hint">
+            These are power-user defaults for monthly operations and planning behavior. Save settings to persist them.
+          </p>
+        </div>
+      </article>
+
+      <article className="panel panel-trust-kpis">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 3</p>
+            <h2>Settings health panel</h2>
+            <p className="panel-value">Misconfiguration checks and operational readiness signals</p>
+          </div>
+        </header>
+
+        <div className="trust-kpi-grid" aria-label="Settings health score and checks">
+          <div className="trust-kpi-tile">
+            <p>Health score</p>
+            <strong>{settingsHealthChecks.score}/100</strong>
+            <small>Warnings and critical checks reduce score</small>
+          </div>
+          <div className="trust-kpi-tile">
+            <p>Critical checks</p>
+            <strong>{settingsHealthChecks.checks.filter((check) => check.severity === 'critical').length}</strong>
+            <small>Require action before relying on automation</small>
+          </div>
+          <div className="trust-kpi-tile">
+            <p>Warnings</p>
+            <strong>{settingsHealthChecks.checks.filter((check) => check.severity === 'warning').length}</strong>
+            <small>Recommended improvements</small>
+          </div>
+          <div className="trust-kpi-tile">
+            <p>Automation window</p>
+            <strong>
+              Day {preferenceDraft.monthlyAutomationRunDay} {formatClockTime(preferenceDraft.monthlyAutomationRunHour, preferenceDraft.monthlyAutomationRunMinute)}
+            </strong>
+            <small>{preferenceDraft.monthlyAutomationEnabled ? 'Enabled' : 'Disabled'}</small>
+          </div>
+        </div>
+
+        <div className="settings-health-list" role="list" aria-label="Settings health checks">
+          {settingsHealthChecks.checks.map((check) => (
+            <div key={check.id} className={`settings-health-row settings-health-row--${check.severity}`} role="listitem">
+              <div>
+                <strong>{check.label}</strong>
+                <small>{check.detail}</small>
+              </div>
+              <span className={check.severity === 'critical' ? 'pill pill--critical' : check.severity === 'warning' ? 'pill pill--warning' : 'pill pill--good'}>
+                {check.severity}
+              </span>
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article className="panel panel-list">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 3</p>
+            <h2>Settings profile templates</h2>
+            <p className="panel-value">
+              {settingsProfiles.length} reusable profile{settingsProfiles.length === 1 ? '' : 's'}
+            </p>
+          </div>
+        </header>
+
+        <div className="entry-form entry-form--grid">
+          <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="settings-profile-name">Profile name</label>
+              <input
+                id="settings-profile-name"
+                placeholder="Debt focus month"
+                value={settingsProfileName}
+                onChange={(event) => setSettingsProfileName(event.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="settings-profile-description">Description</label>
+              <input
+                id="settings-profile-description"
+                placeholder="Optional notes"
+                value={settingsProfileDescription}
+                onChange={(event) => setSettingsProfileDescription(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="row-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void onSaveSettingsProfile()}
+              disabled={isSavingSettingsProfile || settingsProfileName.trim().length < 2}
+            >
+              {isSavingSettingsProfile ? 'Saving profile...' : 'Save current settings as profile'}
+            </button>
+          </div>
+
+          {!settingsProfiles.length ? (
+            <p className="empty-state">No settings profiles yet. Save your current setup as a reusable template.</p>
+          ) : (
+            <div className="settings-profile-list" role="list" aria-label="Saved settings profiles">
+              {settingsProfiles.map((profile) => {
+                const diffCount = computePreferenceDiffRows(
+                  parsePreferenceJson(profile.preferenceJson),
+                  currentPreferenceComparable,
+                  preferenceFieldLabels,
+                ).length
+                return (
+                  <div key={profile._id} className="settings-profile-row" role="listitem">
+                    <div className="settings-profile-row__meta">
+                      <div>
+                        <strong>{profile.name}</strong>
+                        <small>{profile.description || 'No description'}</small>
+                      </div>
+                      <div>
+                        <small>Updated {cycleDateLabel.format(new Date(profile.updatedAt))}</small>
+                        <small>{profile.lastAppliedAt ? `Applied ${cycleDateLabel.format(new Date(profile.lastAppliedAt))}` : 'Not applied yet'}</small>
+                      </div>
+                    </div>
+                    <div className="settings-profile-row__actions">
+                      <span className="pill pill--neutral">{diffCount} changes vs current</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn--sm"
+                        onClick={() => setSelectedProfileCompareId((prev) => (prev === profile._id ? null : profile._id))}
+                      >
+                        {selectedProfileCompareId === profile._id ? 'Hide diff' : 'Compare'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn--sm"
+                        onClick={() => void onApplySettingsProfile(profile._id)}
+                        disabled={applyingSettingsProfileId === profile._id}
+                      >
+                        {applyingSettingsProfileId === profile._id ? 'Applying...' : 'Apply'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-danger btn--sm"
+                        onClick={() => void onDeleteSettingsProfile(profile._id)}
+                        disabled={deletingSettingsProfileId === profile._id}
+                      >
+                        {deletingSettingsProfileId === profile._id ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {selectedProfile ? (
+            <div className="settings-diff-panel" aria-label="Selected profile diff">
+              <div className="settings-diff-panel__header">
+                <div>
+                  <p className="panel-kicker">Compare</p>
+                  <h3>{selectedProfile.name} vs current draft</h3>
+                </div>
+                <span className="pill pill--neutral">{selectedProfileDiffRows.length} changed fields</span>
+              </div>
+              {selectedProfileDiffRows.length === 0 ? (
+                <p className="empty-state">This profile matches the current draft.</p>
+              ) : (
+                <div className="table-wrap table-wrap--card">
+                  <table className="data-table data-table--wide">
+                    <thead>
+                      <tr>
+                        <th scope="col">Field</th>
+                        <th scope="col">Profile</th>
+                        <th scope="col">Current draft</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedProfileDiffRows.slice(0, 20).map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.label}</td>
+                          <td>{row.before}</td>
+                          <td>{row.after}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </article>
+
+      <article className="panel panel-list">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 3</p>
+            <h2>Settings change history + restore points</h2>
+            <p className="panel-value">
+              {settingsPreferenceHistory.length} preference change event{settingsPreferenceHistory.length === 1 ? '' : 's'}
+            </p>
+          </div>
+        </header>
+
+        {!settingsPreferenceHistory.length ? (
+          <p className="empty-state">No settings preference changes have been recorded yet.</p>
+        ) : (
+          <>
+            <div className="table-wrap table-wrap--card">
+              <table className="data-table data-table--wide" data-testid="settings-history-table">
+                <caption className="sr-only">Settings preference history and restore points</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">When</th>
+                    <th scope="col">Action</th>
+                    <th scope="col">Source</th>
+                    <th scope="col">Changed fields</th>
+                    <th scope="col">Restore</th>
+                    <th scope="col">Compare</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {settingsPreferenceHistory.map((entry) => (
+                    <tr key={entry._id}>
+                      <td>{cycleDateLabel.format(new Date(entry.createdAt))}</td>
+                      <td>{entry.action.replaceAll('_', ' ')}</td>
+                      <td>{entry.source ?? 'unknown'}</td>
+                      <td>{entry.changedFields.length ? entry.changedFields.slice(0, 4).join(', ') : 'n/a'}</td>
+                      <td>
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn--sm"
+                            onClick={() => void onRestoreSettingsHistory(entry._id, 'before')}
+                            disabled={!entry.beforeJson || restoringSettingsHistoryId === entry._id}
+                          >
+                            Restore before
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn--sm"
+                            onClick={() => void onRestoreSettingsHistory(entry._id, 'after')}
+                            disabled={!entry.afterJson || restoringSettingsHistoryId === entry._id}
+                          >
+                            {restoringSettingsHistoryId === entry._id ? 'Restoring...' : 'Restore after'}
+                          </button>
+                        </div>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn--sm"
+                          onClick={() => setSelectedHistoryCompareId((prev) => (prev === entry._id ? null : entry._id))}
+                        >
+                          {selectedHistoryCompareId === entry._id ? 'Hide diff' : 'Compare'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {selectedHistory ? (
+              <div className="settings-diff-panel" aria-label="Selected history diff">
+                <div className="settings-diff-panel__header">
+                  <div>
+                    <p className="panel-kicker">Restore point compare</p>
+                    <h3>{selectedHistory.action.replaceAll('_', ' ')}</h3>
+                  </div>
+                  <span className="pill pill--neutral">{selectedHistoryDiffRows.length} changed fields</span>
+                </div>
+                {selectedHistoryDiffRows.length === 0 ? (
+                  <p className="empty-state">No before/after diff is available for this event.</p>
+                ) : (
+                  <div className="table-wrap table-wrap--card">
+                    <table className="data-table data-table--wide">
+                      <thead>
+                        <tr>
+                          <th scope="col">Field</th>
+                          <th scope="col">Before</th>
+                          <th scope="col">After</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedHistoryDiffRows.slice(0, 24).map((row) => (
+                          <tr key={row.key}>
+                            <td>{row.label}</td>
+                            <td>{row.before}</td>
+                            <td>{row.after}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </>
+        )}
       </article>
 
       <article className="panel panel-list">

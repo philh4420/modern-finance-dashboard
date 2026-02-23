@@ -249,6 +249,18 @@ const incomeAllocationSuggestionStatus = v.union(
   v.literal('dismissed'),
 )
 const planningVersionKey = v.union(v.literal('base'), v.literal('conservative'), v.literal('aggressive'))
+const monthlyAutomationRetryStrategy = v.union(
+  v.literal('none'),
+  v.literal('same_day_backoff'),
+  v.literal('next_day_retry'),
+)
+const planningAutoApplyMode = v.union(v.literal('manual_only'), v.literal('month_start'), v.literal('after_cycle'))
+const planningNegativeForecastFallback = v.union(
+  v.literal('warn_only'),
+  v.literal('reduce_variable_spend'),
+  v.literal('pause_goals'),
+  v.literal('debt_minimums_only'),
+)
 const planningActionTaskStatus = v.union(
   v.literal('suggested'),
   v.literal('in_progress'),
@@ -857,8 +869,32 @@ export default defineSchema({
     uiDensity: v.optional(uiDensity),
     defaultLandingTab: v.optional(appTabKey),
     dashboardCardOrder: v.optional(v.array(v.string())),
+    monthlyAutomationEnabled: v.optional(v.boolean()),
+    monthlyAutomationRunDay: v.optional(v.number()),
+    monthlyAutomationRunHour: v.optional(v.number()),
+    monthlyAutomationRunMinute: v.optional(v.number()),
+    monthlyAutomationRetryStrategy: v.optional(monthlyAutomationRetryStrategy),
+    monthlyAutomationMaxRetries: v.optional(v.number()),
+    alertEscalationFailureStreakThreshold: v.optional(v.number()),
+    alertEscalationFailedStepsThreshold: v.optional(v.number()),
+    planningDefaultVersionKey: v.optional(planningVersionKey),
+    planningAutoApplyMode: v.optional(planningAutoApplyMode),
+    planningNegativeForecastFallback: v.optional(planningNegativeForecastFallback),
     updatedAt: v.number(),
   }).index('by_userId', ['userId']),
+  settingsProfiles: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    nameNormalized: v.string(),
+    description: v.optional(v.string()),
+    preferenceJson: v.string(),
+    lastAppliedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_updatedAt', ['userId', 'updatedAt'])
+    .index('by_userId_nameNormalized', ['userId', 'nameNormalized']),
   consentSettings: defineTable({
     userId: v.string(),
     diagnosticsEnabled: v.boolean(),
