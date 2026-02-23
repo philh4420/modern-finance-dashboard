@@ -46,7 +46,9 @@ import {
   dateLabel,
   defaultPreference,
   emptySummary,
+  goalFundingSourceTypeOptions,
   goalPriorityOptions,
+  goalTypeOptions,
   tabs,
 } from './lib/financeConstants'
 import { initDiagnostics, setDiagnosticsConsent } from './lib/diagnostics'
@@ -54,6 +56,7 @@ import {
   accountPurposeLabel,
   accountTypeLabel,
   cadenceLabel,
+  goalTypeLabel,
   isCustomCadence,
   priorityLabel,
   severityLabel,
@@ -1011,8 +1014,17 @@ function App() {
             onDeleteGoal={goalsSection.onDeleteGoal}
             saveGoalEdit={goalsSection.saveGoalEdit}
             startGoalEdit={goalsSection.startGoalEdit}
+            incomes={incomes}
+            accounts={accounts}
+            cards={cards}
+            cadenceOptions={cadenceOptions}
+            customCadenceUnitOptions={customCadenceUnitOptions}
             goalPriorityOptions={goalPriorityOptions}
+            goalTypeOptions={goalTypeOptions}
+            goalFundingSourceTypeOptions={goalFundingSourceTypeOptions}
             priorityLabel={priorityLabel}
+            goalTypeLabel={goalTypeLabel}
+            cadenceLabel={cadenceLabel}
             formatMoney={formatSection.formatMoney}
             formatPercent={formatSection.formatPercent}
             dateLabel={dateLabel}

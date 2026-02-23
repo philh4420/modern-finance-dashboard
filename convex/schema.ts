@@ -117,6 +117,18 @@ const accountPurpose = v.union(
 )
 
 const goalPriority = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
+const goalType = v.union(
+  v.literal('emergency_fund'),
+  v.literal('sinking_fund'),
+  v.literal('debt_payoff'),
+  v.literal('big_purchase'),
+)
+const goalFundingSourceType = v.union(v.literal('account'), v.literal('card'), v.literal('income'))
+const goalFundingSourceMapItem = v.object({
+  sourceType: goalFundingSourceType,
+  sourceId: v.string(),
+  allocationPercent: v.optional(v.number()),
+})
 const cycleRunSource = v.union(v.literal('manual'), v.literal('automatic'))
 const cycleRunStatus = v.union(v.literal('completed'), v.literal('failed'))
 const reconciliationStatus = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
@@ -600,6 +612,12 @@ export default defineSchema({
     currentAmount: v.number(),
     targetDate: v.string(),
     priority: goalPriority,
+    goalType: v.optional(goalType),
+    contributionAmount: v.optional(v.number()),
+    cadence: v.optional(cadence),
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnit),
+    fundingSources: v.optional(v.array(goalFundingSourceMapItem)),
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])

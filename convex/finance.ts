@@ -37,6 +37,18 @@ const accountPurposeValidator = v.union(
 )
 
 const goalPriorityValidator = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
+const goalTypeValidator = v.union(
+  v.literal('emergency_fund'),
+  v.literal('sinking_fund'),
+  v.literal('debt_payoff'),
+  v.literal('big_purchase'),
+)
+const goalFundingSourceTypeValidator = v.union(v.literal('account'), v.literal('card'), v.literal('income'))
+const goalFundingSourceMapItemValidator = v.object({
+  sourceType: goalFundingSourceTypeValidator,
+  sourceId: v.string(),
+  allocationPercent: v.optional(v.number()),
+})
 const cycleRunSourceValidator = v.union(v.literal('manual'), v.literal('automatic'))
 const reconciliationStatusValidator = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
 const cardMinimumPaymentTypeValidator = v.union(v.literal('fixed'), v.literal('percent_plus_interest'))
@@ -97,6 +109,8 @@ type IncomePaymentStatus = 'on_time' | 'late' | 'missed'
 type IncomeChangeDirection = 'increase' | 'decrease' | 'no_change'
 type AccountType = 'checking' | 'savings' | 'investment' | 'cash' | 'debt'
 type AccountPurpose = 'bills' | 'emergency' | 'spending' | 'goals' | 'debt'
+type GoalType = 'emergency_fund' | 'sinking_fund' | 'debt_payoff' | 'big_purchase'
+type GoalFundingSourceType = 'account' | 'card' | 'income'
 type BillCategory =
   | 'housing'
   | 'utilities'
@@ -151,6 +165,11 @@ type IncomeDoc = Doc<'incomes'>
 type BillDoc = Doc<'bills'>
 type CardDoc = Doc<'cards'>
 type LoanDoc = Doc<'loans'>
+type GoalFundingSourceMapItem = {
+  sourceType: GoalFundingSourceType
+  sourceId: string
+  allocationPercent?: number
+}
 
 const defaultPreference = {
   currency: 'USD',
@@ -2001,6 +2020,120 @@ function ensureOwned<T extends { userId: string }>(
   if (!record || record.userId !== expectedUserId) {
     throw new Error(missingError)
   }
+}
+
+const normalizeGoalType = (value: GoalType | undefined | null): GoalType => {
+  if (value === 'emergency_fund' || value === 'debt_payoff' || value === 'big_purchase') {
+    return value
+  }
+  return 'sinking_fund'
+}
+
+const normalizeGoalCadenceConfig = (args: {
+  cadence?: Cadence
+  customInterval?: number
+  customUnit?: CustomCadenceUnit
+}) => {
+  const cadence = args.cadence ?? 'monthly'
+
+  if (cadence === 'custom') {
+    if (args.customInterval === undefined) {
+      throw new Error('Goal custom interval is required when cadence is Custom.')
+    }
+    validatePositiveInteger(args.customInterval, 'Goal custom interval', 1200)
+    if (args.customUnit === undefined) {
+      throw new Error('Goal custom unit is required when cadence is Custom.')
+    }
+
+    return {
+      cadence,
+      customInterval: args.customInterval,
+      customUnit: args.customUnit,
+    }
+  }
+
+  return {
+    cadence,
+    customInterval: undefined,
+    customUnit: undefined,
+  }
+}
+
+const normalizeGoalContributionAmount = (value: number | undefined | null) => {
+  const safe = roundCurrency(Math.max(finiteOrZero(value), 0))
+  validateNonNegative(safe, 'Goal planned contribution')
+  return safe
+}
+
+const normalizeGoalFundingSourceId = (value: string) => {
+  const trimmed = value.trim()
+  if (trimmed.length === 0) {
+    throw new Error('Goal funding source is required.')
+  }
+  if (trimmed.length > 200) {
+    throw new Error('Goal funding source id is too long.')
+  }
+  return trimmed
+}
+
+const normalizeGoalFundingSources = async (
+  ctx: MutationCtx,
+  userId: string,
+  input: GoalFundingSourceMapItem[] | undefined,
+) => {
+  if (!input || input.length === 0) {
+    return [] as GoalFundingSourceMapItem[]
+  }
+
+  if (input.length > 8) {
+    throw new Error('Goals can have up to 8 funding sources.')
+  }
+
+  const normalized: GoalFundingSourceMapItem[] = []
+  const seen = new Set<string>()
+  let allocationPercentTotal = 0
+
+  for (const entry of input) {
+    const sourceId = normalizeGoalFundingSourceId(entry.sourceId)
+    const key = `${entry.sourceType}:${sourceId}`
+    if (seen.has(key)) {
+      throw new Error('Duplicate goal funding source entries are not allowed.')
+    }
+    seen.add(key)
+
+    let allocationPercent: number | undefined
+    if (entry.allocationPercent !== undefined) {
+      validateFinite(entry.allocationPercent, 'Goal funding allocation %')
+      if (entry.allocationPercent < 0 || entry.allocationPercent > 100) {
+        throw new Error('Goal funding allocation % must be between 0 and 100.')
+      }
+      allocationPercent = roundCurrency(entry.allocationPercent)
+      allocationPercentTotal += allocationPercent
+    }
+
+    if (entry.sourceType === 'account') {
+      const account = await ctx.db.get(sourceId as Id<'accounts'>)
+      ensureOwned(account, userId, 'Goal funding account not found.')
+    } else if (entry.sourceType === 'card') {
+      const card = await ctx.db.get(sourceId as Id<'cards'>)
+      ensureOwned(card, userId, 'Goal funding card not found.')
+    } else {
+      const income = await ctx.db.get(sourceId as Id<'incomes'>)
+      ensureOwned(income, userId, 'Goal funding income source not found.')
+    }
+
+    normalized.push({
+      sourceType: entry.sourceType,
+      sourceId,
+      allocationPercent,
+    })
+  }
+
+  if (allocationPercentTotal > 100.000001) {
+    throw new Error('Goal funding source allocation % total cannot exceed 100%.')
+  }
+
+  return normalized
 }
 
 const monthKeyFromPurchase = (purchase: Doc<'purchases'>) => {
@@ -7358,6 +7491,12 @@ export const addGoal = mutation({
     currentAmount: v.number(),
     targetDate: v.string(),
     priority: goalPriorityValidator,
+    goalType: v.optional(goalTypeValidator),
+    contributionAmount: v.optional(v.number()),
+    cadence: v.optional(cadenceValidator),
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnitValidator),
+    fundingSources: v.optional(v.array(goalFundingSourceMapItemValidator)),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -7366,6 +7505,14 @@ export const addGoal = mutation({
     validatePositive(args.targetAmount, 'Target amount')
     validateNonNegative(args.currentAmount, 'Current amount')
     validateIsoDate(args.targetDate, 'Target date')
+    const goalType = normalizeGoalType(args.goalType)
+    const contributionAmount = normalizeGoalContributionAmount(args.contributionAmount)
+    const cadenceConfig = normalizeGoalCadenceConfig({
+      cadence: args.cadence,
+      customInterval: args.customInterval,
+      customUnit: args.customUnit,
+    })
+    const fundingSources = await normalizeGoalFundingSources(ctx, identity.subject, args.fundingSources)
 
     const createdGoalId = await ctx.db.insert('goals', {
       userId: identity.subject,
@@ -7374,6 +7521,12 @@ export const addGoal = mutation({
       currentAmount: args.currentAmount,
       targetDate: args.targetDate,
       priority: args.priority,
+      goalType,
+      contributionAmount,
+      cadence: cadenceConfig.cadence,
+      customInterval: cadenceConfig.customInterval,
+      customUnit: cadenceConfig.customUnit,
+      fundingSources,
       createdAt: Date.now(),
     })
 
@@ -7388,6 +7541,12 @@ export const addGoal = mutation({
         currentAmount: args.currentAmount,
         targetDate: args.targetDate,
         priority: args.priority,
+        goalType,
+        contributionAmount,
+        cadence: cadenceConfig.cadence,
+        customInterval: cadenceConfig.customInterval ?? null,
+        customUnit: cadenceConfig.customUnit ?? null,
+        fundingSources,
       },
     })
   },
@@ -7401,6 +7560,12 @@ export const updateGoal = mutation({
     currentAmount: v.number(),
     targetDate: v.string(),
     priority: goalPriorityValidator,
+    goalType: v.optional(goalTypeValidator),
+    contributionAmount: v.optional(v.number()),
+    cadence: v.optional(cadenceValidator),
+    customInterval: v.optional(v.number()),
+    customUnit: v.optional(customCadenceUnitValidator),
+    fundingSources: v.optional(v.array(goalFundingSourceMapItemValidator)),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
@@ -7409,9 +7574,17 @@ export const updateGoal = mutation({
     validatePositive(args.targetAmount, 'Target amount')
     validateNonNegative(args.currentAmount, 'Current amount')
     validateIsoDate(args.targetDate, 'Target date')
+    const goalType = normalizeGoalType(args.goalType)
+    const contributionAmount = normalizeGoalContributionAmount(args.contributionAmount)
+    const cadenceConfig = normalizeGoalCadenceConfig({
+      cadence: args.cadence,
+      customInterval: args.customInterval,
+      customUnit: args.customUnit,
+    })
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Goal record not found.')
+    const fundingSources = await normalizeGoalFundingSources(ctx, identity.subject, args.fundingSources)
 
     await ctx.db.patch(args.id, {
       title: args.title.trim(),
@@ -7419,6 +7592,12 @@ export const updateGoal = mutation({
       currentAmount: args.currentAmount,
       targetDate: args.targetDate,
       priority: args.priority,
+      goalType,
+      contributionAmount,
+      cadence: cadenceConfig.cadence,
+      customInterval: cadenceConfig.customInterval,
+      customUnit: cadenceConfig.customUnit,
+      fundingSources,
     })
 
     await recordFinanceAuditEvent(ctx, {
@@ -7432,6 +7611,12 @@ export const updateGoal = mutation({
         currentAmount: existing.currentAmount,
         targetDate: existing.targetDate,
         priority: existing.priority,
+        goalType: normalizeGoalType(existing.goalType),
+        contributionAmount: roundCurrency(Math.max(finiteOrZero(existing.contributionAmount), 0)),
+        cadence: existing.cadence ?? 'monthly',
+        customInterval: existing.customInterval ?? null,
+        customUnit: existing.customUnit ?? null,
+        fundingSources: existing.fundingSources ?? [],
       },
       after: {
         title: args.title.trim(),
@@ -7439,6 +7624,12 @@ export const updateGoal = mutation({
         currentAmount: args.currentAmount,
         targetDate: args.targetDate,
         priority: args.priority,
+        goalType,
+        contributionAmount,
+        cadence: cadenceConfig.cadence,
+        customInterval: cadenceConfig.customInterval ?? null,
+        customUnit: cadenceConfig.customUnit ?? null,
+        fundingSources,
       },
     })
   },
@@ -7499,6 +7690,12 @@ export const removeGoal = mutation({
         currentAmount: existing.currentAmount,
         targetDate: existing.targetDate,
         priority: existing.priority,
+        goalType: normalizeGoalType(existing.goalType),
+        contributionAmount: roundCurrency(Math.max(finiteOrZero(existing.contributionAmount), 0)),
+        cadence: existing.cadence ?? 'monthly',
+        customInterval: existing.customInterval ?? null,
+        customUnit: existing.customUnit ?? null,
+        fundingSources: existing.fundingSources ?? [],
       },
     })
   },

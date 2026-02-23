@@ -4,7 +4,9 @@ import {
   billCategoryOptions,
   billScopeOptions,
   cadenceOptions,
+  goalFundingSourceTypeOptions,
   goalPriorityOptions,
+  goalTypeOptions,
 } from './financeConstants'
 import type {
   AccountPurpose,
@@ -13,7 +15,9 @@ import type {
   BillScope,
   Cadence,
   CustomCadenceUnit,
+  GoalFundingSourceType,
   GoalPriority,
+  GoalType,
   InsightSeverity,
 } from '../components/financeTypes'
 
@@ -78,6 +82,12 @@ export const accountPurposeLabel = (value: AccountPurpose) =>
 
 export const priorityLabel = (priority: GoalPriority) =>
   goalPriorityOptions.find((option) => option.value === priority)?.label ?? priority
+
+export const goalTypeLabel = (goalType: GoalType) =>
+  goalTypeOptions.find((option) => option.value === goalType)?.label ?? goalType
+
+export const goalFundingSourceTypeLabel = (value: GoalFundingSourceType) =>
+  goalFundingSourceTypeOptions.find((option) => option.value === value)?.label ?? value
 
 export const billCategoryLabel = (category: BillCategory) =>
   billCategoryOptions.find((option) => option.value === category)?.label ?? category

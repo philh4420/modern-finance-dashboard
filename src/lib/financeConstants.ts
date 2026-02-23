@@ -5,7 +5,9 @@ import type {
   BillScopeOption,
   CadenceOption,
   CustomCadenceUnitOption,
+  GoalFundingSourceType,
   GoalPriorityOption,
+  GoalTypeOption,
   Summary,
   TabKey,
 } from '../components/financeTypes'
@@ -61,6 +63,19 @@ export const goalPriorityOptions: GoalPriorityOption[] = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
+]
+
+export const goalTypeOptions: GoalTypeOption[] = [
+  { value: 'emergency_fund', label: 'Emergency fund' },
+  { value: 'sinking_fund', label: 'Sinking fund' },
+  { value: 'debt_payoff', label: 'Debt payoff' },
+  { value: 'big_purchase', label: 'Big purchase' },
+]
+
+export const goalFundingSourceTypeOptions: Array<{ value: GoalFundingSourceType; label: string }> = [
+  { value: 'account', label: 'Account' },
+  { value: 'card', label: 'Card' },
+  { value: 'income', label: 'Income source' },
 ]
 
 export const billCategoryOptions: BillCategoryOption[] = [

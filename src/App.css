@@ -5393,6 +5393,73 @@ tbody td {
   gap: 0.45rem;
 }
 
+.goal-inline-editor {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 12rem;
+}
+
+.goal-milestone-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.goal-milestone-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--stroke) 74%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  color: var(--text-muted);
+  padding: 0.18rem 0.45rem;
+  font-size: 0.7rem;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.goal-milestone-pill--done {
+  border-color: color-mix(in oklab, var(--tone-positive) 34%, var(--stroke));
+  background: color-mix(in oklab, var(--tone-positive) 14%, white 86%);
+  color: color-mix(in oklab, var(--tone-positive) 70%, black 30%);
+}
+
+.goal-funding-map-editor,
+.goal-funding-cell-editor {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.goal-funding-map-editor__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.goal-funding-map-editor__head span {
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--text-main);
+}
+
+.goal-funding-map-editor__rows {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.goal-funding-map-row {
+  display: grid;
+  grid-template-columns: minmax(0, 8.5rem) minmax(0, 1fr) minmax(0, 7rem) auto;
+  gap: 0.38rem;
+  align-items: center;
+}
+
+.goal-funding-map-row .btn {
+  justify-self: end;
+}
+
 .purchases-tab-shell {
   align-items: stretch;
   gap: clamp(1rem, 1vw, 1.34rem);

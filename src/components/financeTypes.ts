@@ -18,6 +18,8 @@ export type CustomCadenceUnit = 'days' | 'weeks' | 'months' | 'years'
 export type AccountType = 'checking' | 'savings' | 'investment' | 'cash' | 'debt'
 export type AccountPurpose = 'bills' | 'emergency' | 'spending' | 'goals' | 'debt'
 export type GoalPriority = 'low' | 'medium' | 'high'
+export type GoalType = 'emergency_fund' | 'sinking_fund' | 'debt_payoff' | 'big_purchase'
+export type GoalFundingSourceType = 'account' | 'card' | 'income'
 export type InsightSeverity = 'good' | 'warning' | 'critical'
 export type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 export type RuleMatchType = 'contains' | 'exact' | 'starts_with'
@@ -351,6 +353,24 @@ export type GoalForm = {
   currentAmount: string
   targetDate: string
   priority: GoalPriority
+  goalType: GoalType
+  contributionAmount: string
+  cadence: Cadence
+  customInterval: string
+  customUnit: CustomCadenceUnit
+  fundingSources: GoalFundingSourceFormRow[]
+}
+
+export type GoalFundingSourceFormRow = {
+  sourceType: GoalFundingSourceType
+  sourceId: string
+  allocationPercent: string
+}
+
+export type GoalFundingSourceMapEntry = {
+  sourceType: GoalFundingSourceType
+  sourceId: string
+  allocationPercent?: number
 }
 
 export type IncomeEditDraft = IncomeForm
@@ -399,6 +419,22 @@ export type GoalWithMetrics = GoalEntry & {
   progressPercent: number
   remaining: number
   daysLeft: number
+  goalTypeValue: GoalType
+  contributionAmountValue: number
+  cadenceValue: Cadence
+  customIntervalValue?: number
+  customUnitValue?: CustomCadenceUnit
+  fundingSourcesValue: GoalFundingSourceMapEntry[]
+  plannedMonthlyContribution: number
+  requiredMonthlyContribution: number
+  milestones: GoalMilestone[]
+}
+
+export type GoalMilestone = {
+  percent: 25 | 50 | 75 | 100
+  label: string
+  targetDate: string
+  achieved: boolean
 }
 
 export type RecurringCandidate = {
@@ -630,6 +666,11 @@ export type AccountPurposeOption = {
 
 export type GoalPriorityOption = {
   value: GoalPriority
+  label: string
+}
+
+export type GoalTypeOption = {
+  value: GoalType
   label: string
 }
 
