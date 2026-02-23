@@ -887,6 +887,18 @@ export default defineSchema({
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt'])
     .index('by_userId_status', ['userId', 'status']),
+  userExportDownloads: defineTable({
+    userId: v.string(),
+    exportId: v.id('userExports'),
+    filename: v.string(),
+    byteSize: v.optional(v.number()),
+    userAgent: v.optional(v.string()),
+    source: v.optional(v.string()),
+    downloadedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_downloadedAt', ['userId', 'downloadedAt'])
+    .index('by_userId_exportId_downloadedAt', ['userId', 'exportId', 'downloadedAt']),
   deletionJobs: defineTable({
     userId: v.string(),
     status: deletionJobStatus,

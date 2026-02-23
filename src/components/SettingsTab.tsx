@@ -9,7 +9,9 @@ import type {
   DefaultMonthPreset,
   FinancePreference,
   RetentionPolicyRow,
+  SecuritySessionActivity,
   UiDensity,
+  UserExportDownloadEntry,
   UserExportEntry,
   WeekStartDay,
 } from './financeTypes'
@@ -77,10 +79,13 @@ type SettingsTabProps = {
   consentSettings: ConsentSettingsView
   consentLogs: ConsentLogEntry[]
   latestExport: UserExportEntry | null
+  exportHistory: UserExportEntry[]
+  exportDownloadLogs: UserExportDownloadEntry[]
   latestDeletionJob: DeletionJobEntry | null
   retentionPolicies: RetentionPolicyRow[]
   isExporting: boolean
   onGenerateExport: () => Promise<void>
+  onDownloadExportById: (exportId: string) => Promise<void>
   onDownloadLatestExport: () => Promise<void>
   deleteConfirmText: string
   setDeleteConfirmText: Dispatch<SetStateAction<string>>
@@ -90,6 +95,16 @@ type SettingsTabProps = {
   onRunRetentionNow: () => Promise<void>
   onToggleConsent: (type: 'diagnostics' | 'analytics', enabled: boolean) => Promise<void>
   onUpsertRetention: (policyKey: RetentionPolicyRow['policyKey'], retentionDays: number, enabled: boolean) => Promise<void>
+  securitySessions: SecuritySessionActivity[]
+  isLoadingSecuritySessions: boolean
+  isRefreshingSecuritySessions: boolean
+  hasLoadedSecuritySessions: boolean
+  isRevokingAllSessions: boolean
+  revokingSecuritySessionId: string | null
+  clientDeviceSessionCount: number | null
+  onRefreshSecuritySessions: () => Promise<void>
+  onRevokeSecuritySession: (sessionId: string) => Promise<void>
+  onSignOutAllSessions: () => Promise<void>
   cycleDateLabel: Intl.DateTimeFormat
 }
 
@@ -133,6 +148,12 @@ const deletionStatusPill = (status: DeletionJobEntry['status']) => {
   if (status === 'completed') return 'pill pill--good'
   if (status === 'running') return 'pill pill--warning'
   return 'pill pill--critical'
+}
+
+const sessionStatusPill = (status: string) => {
+  if (status === 'active') return 'pill pill--good'
+  if (status === 'pending') return 'pill pill--warning'
+  return 'pill pill--neutral'
 }
 
 const consentTypePill = (type: ConsentLogEntry['consentType']) =>
@@ -183,10 +204,13 @@ export function SettingsTab({
   consentSettings,
   consentLogs,
   latestExport,
+  exportHistory,
+  exportDownloadLogs,
   latestDeletionJob,
   retentionPolicies,
   isExporting,
   onGenerateExport,
+  onDownloadExportById,
   onDownloadLatestExport,
   deleteConfirmText,
   setDeleteConfirmText,
@@ -196,6 +220,16 @@ export function SettingsTab({
   onRunRetentionNow,
   onToggleConsent,
   onUpsertRetention,
+  securitySessions,
+  isLoadingSecuritySessions,
+  isRefreshingSecuritySessions,
+  hasLoadedSecuritySessions,
+  isRevokingAllSessions,
+  revokingSecuritySessionId,
+  clientDeviceSessionCount,
+  onRefreshSecuritySessions,
+  onRevokeSecuritySession,
+  onSignOutAllSessions,
   cycleDateLabel,
 }: SettingsTabProps) {
   const [consentFilter, setConsentFilter] = useState<ConsentFilter>('all')
@@ -252,6 +286,11 @@ export function SettingsTab({
   const retentionEnabledCount = retentionPolicies.filter((policy) => policy.enabled).length
   const retentionForeverCount = retentionPolicies.filter((policy) => policy.enabled && policy.retentionDays === 0).length
   const deletionProgress = parseDeletionProgress(latestDeletionJob?.progressJson)
+  const securityActiveCount = securitySessions.filter((session) => session.status === 'active').length
+  const securityThisDeviceCount = securitySessions.filter((session) => session.onThisDevice).length
+  const recentSecurityActivity = [...securitySessions]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 8)
 
   const deleteReady = deleteConfirmText.trim().toUpperCase() === 'DELETE'
   const dashboardCardLabelMap = new Map(dashboardCardOrderOptions.map((option) => [option.id, option.label] as const))
@@ -264,6 +303,9 @@ export function SettingsTab({
     preferenceDraft.reconciliationRemindersEnabled,
     preferenceDraft.goalAlertsEnabled,
   ].filter(Boolean).length
+
+  const hasExportHistory = exportHistory.length > 0
+  const hasExportDownloadAudit = exportDownloadLogs.length > 0
 
   return (
     <section className="content-grid" aria-label="Settings and trust controls">
@@ -733,6 +775,122 @@ export function SettingsTab({
         </div>
       </article>
 
+      <article className="panel panel-list">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Phase 2</p>
+            <h2>Security center</h2>
+            <p className="panel-value">
+              {securityActiveCount} active session{securityActiveCount === 1 ? '' : 's'} •{' '}
+              {clientDeviceSessionCount ?? securityThisDeviceCount} on this device
+            </p>
+          </div>
+          <div className="panel-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn--sm"
+              onClick={() => void onRefreshSecuritySessions()}
+              disabled={isLoadingSecuritySessions || isRefreshingSecuritySessions || isRevokingAllSessions}
+            >
+              {isLoadingSecuritySessions || isRefreshingSecuritySessions ? 'Refreshing...' : 'Refresh sessions'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger btn--sm"
+              onClick={() => void onSignOutAllSessions()}
+              disabled={isRevokingAllSessions || (hasLoadedSecuritySessions && securitySessions.length === 0)}
+            >
+              {isRevokingAllSessions ? 'Signing out...' : 'Sign out all sessions'}
+            </button>
+          </div>
+        </header>
+
+        <p className="subnote">
+          Uses Clerk session activity to show devices, browsers, and recent sign-in history. Revoking a session will end
+          it across devices.
+        </p>
+
+        {!hasLoadedSecuritySessions && isLoadingSecuritySessions ? (
+          <p className="empty-state">Loading session activity...</p>
+        ) : securitySessions.length === 0 ? (
+          <p className="empty-state">No active session activity found for this user.</p>
+        ) : (
+          <>
+            <div className="table-wrap table-wrap--card">
+              <table className="data-table data-table--wide" data-testid="settings-security-sessions-table">
+                <caption className="sr-only">Active sessions and devices</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Device</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Last active</th>
+                    <th scope="col">Signed in</th>
+                    <th scope="col">Location</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {securitySessions.map((session) => (
+                    <tr key={session.sessionId}>
+                      <td>
+                        <strong>{session.deviceLabel}</strong>
+                        <small className="subnote">
+                          {session.browserLabel}
+                          {session.current ? ' • current' : session.onThisDevice ? ' • this device' : ''}
+                        </small>
+                      </td>
+                      <td>
+                        <span className={sessionStatusPill(session.status)}>{session.status}</span>
+                      </td>
+                      <td>{session.lastActiveAt > 0 ? cycleDateLabel.format(new Date(session.lastActiveAt)) : 'n/a'}</td>
+                      <td>{session.createdAt > 0 ? cycleDateLabel.format(new Date(session.createdAt)) : 'n/a'}</td>
+                      <td>
+                        <strong>{session.locationLabel}</strong>
+                        <small className="subnote">{session.ipAddress ?? 'No IP metadata'}</small>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn--sm"
+                          onClick={() => void onRevokeSecuritySession(session.sessionId)}
+                          disabled={isRevokingAllSessions || revokingSecuritySessionId === session.sessionId}
+                        >
+                          {revokingSecuritySessionId === session.sessionId ? 'Revoking...' : 'Revoke'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bulk-summary" aria-label="Recent sign-in activity">
+              <div>
+                <p>Recent sign-ins</p>
+                <strong>{recentSecurityActivity.length}</strong>
+                <small>Latest session creations</small>
+              </div>
+              <div>
+                <p>Newest sign-in</p>
+                <strong>
+                  {recentSecurityActivity[0]?.createdAt
+                    ? cycleDateLabel.format(new Date(recentSecurityActivity[0].createdAt))
+                    : 'n/a'}
+                </strong>
+                <small>{recentSecurityActivity[0]?.browserLabel ?? 'No session activity'}</small>
+              </div>
+              <div>
+                <p>Most recent activity</p>
+                <strong>
+                  {securitySessions[0]?.lastActiveAt ? cycleDateLabel.format(new Date(securitySessions[0].lastActiveAt)) : 'n/a'}
+                </strong>
+                <small>{securitySessions[0]?.deviceLabel ?? 'No active sessions'}</small>
+              </div>
+            </div>
+          </>
+        )}
+      </article>
+
       <article className="panel panel-trust-kpis">
         <header className="panel-header">
           <div>
@@ -840,6 +998,105 @@ export function SettingsTab({
         </div>
       </article>
 
+      <article className="panel panel-list">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Data portability</p>
+            <h2>Export history</h2>
+            <p className="panel-value">
+              {exportHistory.length} export job{exportHistory.length === 1 ? '' : 's'} tracked
+            </p>
+          </div>
+        </header>
+
+        {!hasExportHistory ? (
+          <p className="empty-state">No export jobs yet. Generate a ZIP export to create your first record.</p>
+        ) : (
+          <div className="table-wrap table-wrap--card">
+            <table className="data-table data-table--wide" data-testid="settings-export-history-table">
+              <caption className="sr-only">Export history</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Created</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Format</th>
+                  <th scope="col">Size</th>
+                  <th scope="col">Expires</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exportHistory.map((entry) => (
+                  <tr key={entry._id}>
+                    <td>{cycleDateLabel.format(new Date(entry.createdAt))}</td>
+                    <td>
+                      <span className={exportStatusPill(entry.status)}>{entry.status}</span>
+                    </td>
+                    <td>{entry.formatVersion}</td>
+                    <td>{entry.byteSize ? `${Math.max(1, Math.round(entry.byteSize / 1024))} KB` : 'n/a'}</td>
+                    <td>{cycleDateLabel.format(new Date(entry.expiresAt))}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn--sm"
+                        onClick={() => void onDownloadExportById(String(entry._id))}
+                        disabled={entry.status !== 'ready'}
+                      >
+                        Download
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </article>
+
+      <article className="panel panel-list">
+        <header className="panel-header">
+          <div>
+            <p className="panel-kicker">Data portability</p>
+            <h2>Download audit trail</h2>
+            <p className="panel-value">
+              {exportDownloadLogs.length} download event{exportDownloadLogs.length === 1 ? '' : 's'} recorded
+            </p>
+          </div>
+        </header>
+
+        {!hasExportDownloadAudit ? (
+          <p className="empty-state">No export downloads recorded yet.</p>
+        ) : (
+          <div className="table-wrap table-wrap--card">
+            <table className="data-table data-table--wide" data-testid="settings-export-download-audit-table">
+              <caption className="sr-only">Export download audit trail</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Downloaded</th>
+                  <th scope="col">Export ID</th>
+                  <th scope="col">File</th>
+                  <th scope="col">Size</th>
+                  <th scope="col">Source</th>
+                  <th scope="col">User agent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exportDownloadLogs.map((entry) => (
+                  <tr key={entry._id}>
+                    <td>{cycleDateLabel.format(new Date(entry.downloadedAt))}</td>
+                    <td><code>{String(entry.exportId)}</code></td>
+                    <td>{entry.filename}</td>
+                    <td>{entry.byteSize ? `${Math.max(1, Math.round(entry.byteSize / 1024))} KB` : 'n/a'}</td>
+                    <td>{entry.source ?? 'http_download'}</td>
+                    <td>{entry.userAgent ?? 'n/a'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </article>
+
       <article className="panel panel-form">
         <header className="panel-header">
           <div>
@@ -879,6 +1136,24 @@ export function SettingsTab({
           <p className="form-hint">
             Changes are persisted and written to <strong>consent logs</strong> for audit history.
           </p>
+
+          <div className="bulk-summary" aria-label="Data use explanations">
+            <div>
+              <p>Diagnostics (Sentry)</p>
+              <strong>{consentSettings.diagnosticsEnabled ? 'Enabled' : 'Disabled'}</strong>
+              <small>Error diagnostics only when you opt in. Finance records are not intentionally sent.</small>
+            </div>
+            <div>
+              <p>Product analytics</p>
+              <strong>{consentSettings.analyticsEnabled ? 'Enabled' : 'Disabled'}</strong>
+              <small>Placeholder toggle for future analytics integration. No analytics SDK required in this phase.</small>
+            </div>
+            <div>
+              <p>Data portability</p>
+              <strong>ZIP export</strong>
+              <small>JSON + CSV export files expire based on retention settings and downloads are audit logged.</small>
+            </div>
+          </div>
         </div>
       </article>
 

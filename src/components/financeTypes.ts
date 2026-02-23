@@ -157,6 +157,7 @@ export type PurchaseSplitEntry = Doc<'purchaseSplits'>
 export type PurchaseSplitTemplateEntry = Doc<'purchaseSplitTemplates'>
 export type ConsentLogEntry = Doc<'consentLogs'>
 export type UserExportEntry = Doc<'userExports'>
+export type UserExportDownloadEntry = Doc<'userExportDownloads'>
 export type DeletionJobEntry = Doc<'deletionJobs'>
 export type RetentionPolicyEntry = Doc<'retentionPolicies'>
 export type ClientOpsMetricEntry = Doc<'clientOpsMetrics'>
@@ -179,7 +180,23 @@ export type PrivacyData = {
   consentLogs: ConsentLogEntry[]
   retentionPolicies: RetentionPolicyEntry[]
   latestExport: UserExportEntry | null
+  exportHistory: UserExportEntry[]
+  exportDownloadLogs: UserExportDownloadEntry[]
   latestDeletionJob: DeletionJobEntry | null
+}
+
+export type SecuritySessionActivity = {
+  sessionId: string
+  status: string
+  createdAt: number
+  lastActiveAt: number
+  expiresAt: number
+  deviceLabel: string
+  browserLabel: string
+  locationLabel: string
+  ipAddress: string | null
+  current: boolean
+  onThisDevice: boolean
 }
 
 export type KpiSnapshot = {

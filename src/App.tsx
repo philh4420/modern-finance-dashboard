@@ -1134,10 +1134,13 @@ function App() {
             }
             consentLogs={settingsSection.privacyData?.consentLogs ?? []}
             latestExport={settingsSection.privacyData?.latestExport ?? null}
+            exportHistory={settingsSection.exportHistory}
+            exportDownloadLogs={settingsSection.exportDownloadLogs}
             latestDeletionJob={settingsSection.privacyData?.latestDeletionJob ?? null}
             retentionPolicies={settingsSection.retentionPolicies}
             isExporting={settingsSection.isExporting}
             onGenerateExport={settingsSection.onGenerateExport}
+            onDownloadExportById={settingsSection.onDownloadExportById}
             onDownloadLatestExport={settingsSection.onDownloadLatestExport}
             deleteConfirmText={settingsSection.deleteConfirmText}
             setDeleteConfirmText={settingsSection.setDeleteConfirmText}
@@ -1147,6 +1150,16 @@ function App() {
             onRunRetentionNow={settingsSection.onRunRetentionNow}
             onToggleConsent={settingsSection.onToggleConsent}
             onUpsertRetention={settingsSection.onUpsertRetention}
+            securitySessions={settingsSection.securitySessions}
+            isLoadingSecuritySessions={settingsSection.isLoadingSecuritySessions}
+            isRefreshingSecuritySessions={settingsSection.isRefreshingSecuritySessions}
+            hasLoadedSecuritySessions={settingsSection.hasLoadedSecuritySessions}
+            isRevokingAllSessions={settingsSection.isRevokingAllSessions}
+            revokingSecuritySessionId={settingsSection.revokingSecuritySessionId}
+            clientDeviceSessionCount={settingsSection.clientDeviceSessionCount}
+            onRefreshSecuritySessions={settingsSection.onRefreshSecuritySessions}
+            onRevokeSecuritySession={settingsSection.onRevokeSecuritySession}
+            onSignOutAllSessions={settingsSection.onSignOutAllSessions}
             cycleDateLabel={cycleDateLabel}
           />
         ) : null}

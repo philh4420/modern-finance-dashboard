@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAction, useMutation, useQuery } from 'convex/react'
-import { useAuth } from '@clerk/clerk-react'
+import { useAuth, useClerk, useSessionList, useUser } from '@clerk/clerk-react'
 import { api } from '../../convex/_generated/api'
 import type {
   BillCategory,
@@ -11,6 +11,7 @@ import type {
   PrivacyData,
   PurchaseOwnership,
   RetentionPolicyRow,
+  SecuritySessionActivity,
   UiDensity,
   WeekStartDay,
 } from '../components/financeTypes'
@@ -107,6 +108,12 @@ const downloadBlob = (blob: Blob, filename: string) => {
   URL.revokeObjectURL(url)
 }
 
+const toEpoch = (value: Date | null | undefined) => {
+  if (!value) return 0
+  const time = value.getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
 const buildPreferenceDraft = (preference: FinancePreference): SettingsPreferenceDraft => ({
   displayName: preference.displayName ?? defaultPreference.displayName,
   currency: preference.currency ?? defaultPreference.currency,
@@ -166,13 +173,22 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
   const requestDeletion = useAction(api.privacy.requestDeletion)
   const applyRetentionForUser = useAction(api.ops.applyRetentionForUser)
 
-  const { getToken } = useAuth()
+  const { getToken, sessionId } = useAuth()
+  const clerk = useClerk()
+  const { user, isLoaded: isUserLoaded } = useUser()
+  const { isLoaded: isSessionListLoaded, sessions: clientDeviceSessions } = useSessionList()
 
   const [isExporting, setIsExporting] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [isApplyingRetention, setIsApplyingRetention] = useState(false)
   const [isSavingPreferences, setIsSavingPreferences] = useState(false)
+  const [securitySessions, setSecuritySessions] = useState<SecuritySessionActivity[]>([])
+  const [isLoadingSecuritySessions, setIsLoadingSecuritySessions] = useState(false)
+  const [isRefreshingSecuritySessions, setIsRefreshingSecuritySessions] = useState(false)
+  const [hasLoadedSecuritySessions, setHasLoadedSecuritySessions] = useState(false)
+  const [revokingSecuritySessionId, setRevokingSecuritySessionId] = useState<string | null>(null)
+  const [isRevokingAllSessions, setIsRevokingAllSessions] = useState(false)
   const [preferenceDraft, setPreferenceDraft] = useState<SettingsPreferenceDraft>(() => buildPreferenceDraft(preference))
   const latestPreferenceRef = useRef(preference)
   latestPreferenceRef.current = preference
@@ -183,7 +199,77 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
     setPreferenceDraft(buildPreferenceDraft(latestPreferenceRef.current))
   }, [preferenceSignature])
 
+  const clientDeviceSessionIdSet = useMemo(
+    () => new Set((clientDeviceSessions ?? []).map((session) => session.id)),
+    [clientDeviceSessions],
+  )
+  const clientDeviceSessionSignature = useMemo(
+    () => (clientDeviceSessions ?? []).map((session) => session.id).sort().join('|'),
+    [clientDeviceSessions],
+  )
+
+  const refreshSecuritySessions = async () => {
+    if (!isUserLoaded || !user) {
+      setSecuritySessions([])
+      setHasLoadedSecuritySessions(true)
+      return
+    }
+
+    const setLoadingState = hasLoadedSecuritySessions ? setIsRefreshingSecuritySessions : setIsLoadingSecuritySessions
+    setLoadingState(true)
+    clearError()
+
+    try {
+      const sessions = await user.getSessions()
+      const rows = sessions
+        .map<SecuritySessionActivity>((session) => {
+          const latestActivity = session.latestActivity
+          const sessionWithMaybeCreatedAt = session as unknown as { createdAt?: Date | null }
+          const browserLabel = [latestActivity?.browserName, latestActivity?.browserVersion].filter(Boolean).join(' ') || 'Unknown browser'
+          const deviceLabel = latestActivity?.deviceType || (latestActivity?.isMobile ? 'mobile' : 'device')
+          const locationLabel =
+            [latestActivity?.city, latestActivity?.country].filter(Boolean).join(', ') ||
+            (latestActivity?.ipAddress ? 'IP only' : 'Unknown location')
+
+          return {
+            sessionId: session.id,
+            status: session.status,
+            createdAt: toEpoch(sessionWithMaybeCreatedAt.createdAt) || toEpoch(session.lastActiveAt),
+            lastActiveAt: toEpoch(session.lastActiveAt),
+            expiresAt: toEpoch(session.expireAt),
+            deviceLabel,
+            browserLabel,
+            locationLabel,
+            ipAddress: latestActivity?.ipAddress ?? null,
+            current: session.id === sessionId,
+            onThisDevice: clientDeviceSessionIdSet.has(session.id),
+          }
+        })
+        .sort((left, right) => {
+          if (right.lastActiveAt !== left.lastActiveAt) return right.lastActiveAt - left.lastActiveAt
+          return right.createdAt - left.createdAt
+        })
+
+      setSecuritySessions(rows)
+      setHasLoadedSecuritySessions(true)
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setIsLoadingSecuritySessions(false)
+      setIsRefreshingSecuritySessions(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!isUserLoaded) return
+    void refreshSecuritySessions()
+    // Intentionally driven by user/session identity and local client session list changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUserLoaded, user?.id, sessionId, isSessionListLoaded, clientDeviceSessionSignature])
+
   const retentionPolicies = retentionData?.policies ?? []
+  const exportHistory = privacyData?.exportHistory ?? []
+  const exportDownloadLogs = privacyData?.exportDownloadLogs ?? []
 
   const localeOptions = useMemo(() => {
     const fromNavigator = typeof navigator !== 'undefined' ? navigator.languages : []
@@ -306,12 +392,12 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
     }
   }
 
-  const onDownloadLatestExport = async () => {
+  const onDownloadExportById = async (exportId: string) => {
     clearError()
     try {
-      const latest = privacyData?.latestExport
-      if (!latest) {
-        throw new Error('No export is available yet.')
+      const exportDoc = exportHistory.find((entry) => String(entry._id) === exportId) ?? privacyData?.latestExport ?? null
+      if (!exportDoc) {
+        throw new Error('Export record not found.')
       }
       const convexSiteUrl = resolveConvexSiteUrl()
       if (!convexSiteUrl) {
@@ -323,7 +409,7 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
         throw new Error('Unable to fetch an auth token for downloads.')
       }
 
-      const response = await fetch(`${convexSiteUrl}/exports/download?exportId=${latest._id}`, {
+      const response = await fetch(`${convexSiteUrl}/exports/download?exportId=${exportDoc._id}`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -336,10 +422,69 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
       }
 
       const blob = await response.blob()
-      const filename = `finance-export-${new Date(latest.createdAt).toISOString().slice(0, 10)}.zip`
+      const filename = `finance-export-${new Date(exportDoc.createdAt).toISOString().slice(0, 10)}.zip`
       downloadBlob(blob, filename)
     } catch (error) {
       handleMutationError(error)
+    }
+  }
+
+  const onDownloadLatestExport = async () => {
+    const latest = privacyData?.latestExport
+    if (!latest) {
+      handleMutationError(new Error('No export is available yet.'))
+      return
+    }
+    await onDownloadExportById(String(latest._id))
+  }
+
+  const onRevokeSecuritySession = async (targetSessionId: string) => {
+    if (!isUserLoaded || !user) {
+      handleMutationError(new Error('User sessions are not loaded yet.'))
+      return
+    }
+
+    clearError()
+    setRevokingSecuritySessionId(targetSessionId)
+    try {
+      const sessions = await user.getSessions()
+      const target = sessions.find((session) => session.id === targetSessionId)
+      if (!target) {
+        throw new Error('Session not found.')
+      }
+      await target.revoke()
+      await refreshSecuritySessions()
+      if (targetSessionId === sessionId) {
+        await clerk.signOut()
+      }
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setRevokingSecuritySessionId(null)
+    }
+  }
+
+  const onSignOutAllSessions = async () => {
+    if (!isUserLoaded || !user) {
+      handleMutationError(new Error('User sessions are not loaded yet.'))
+      return
+    }
+
+    clearError()
+    setIsRevokingAllSessions(true)
+    try {
+      const sessions = await user.getSessions()
+      await Promise.all(
+        sessions
+          .filter((session) => session.status === 'active' || session.status === 'pending')
+          .map((session) => session.revoke()),
+      )
+      await refreshSecuritySessions()
+      await clerk.signOut()
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setIsRevokingAllSessions(false)
     }
   }
 
@@ -379,8 +524,11 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
   return {
     privacyData,
     retentionPolicies,
+    exportHistory,
+    exportDownloadLogs,
     isExporting,
     onGenerateExport,
+    onDownloadExportById,
     onDownloadLatestExport,
     deleteConfirmText,
     setDeleteConfirmText,
@@ -390,6 +538,16 @@ export const useSettingsSection = ({ preference, clearError, handleMutationError
     onRunRetentionNow,
     onToggleConsent,
     onUpsertRetention,
+    securitySessions,
+    isLoadingSecuritySessions,
+    isRefreshingSecuritySessions,
+    hasLoadedSecuritySessions,
+    isRevokingAllSessions,
+    revokingSecuritySessionId,
+    clientDeviceSessionCount: isSessionListLoaded ? clientDeviceSessions?.length ?? 0 : null,
+    onRefreshSecuritySessions: refreshSecuritySessions,
+    onRevokeSecuritySession,
+    onSignOutAllSessions,
     preferenceDraft,
     setPreferenceDraft,
     isSavingPreferences,

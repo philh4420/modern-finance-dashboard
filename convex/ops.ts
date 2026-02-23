@@ -336,6 +336,18 @@ export const _applyRetentionPolicyInternal = internalMutation({
         deleted += batch.length
       }
 
+      for (;;) {
+        const downloadBatch = await ctx.db
+          .query('userExportDownloads')
+          .withIndex('by_userId_downloadedAt', (q) => q.eq('userId', userId).lt('downloadedAt', cutoff))
+          .take(limit)
+
+        if (downloadBatch.length === 0) break
+
+        await Promise.all(downloadBatch.map((doc) => ctx.db.delete(doc._id)))
+        deleted += downloadBatch.length
+      }
+
       return { deleted, storageIds }
     }
 

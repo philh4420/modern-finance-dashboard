@@ -49,6 +49,7 @@ type DeletionTable =
   | 'goals'
   | 'goalEvents'
   | 'financePreferences'
+  | 'userExportDownloads'
   | 'consentLogs'
   | 'consentSettings'
   | 'retentionPolicies'
@@ -88,6 +89,7 @@ const deletionTableValidator = v.union(
   v.literal('goals'),
   v.literal('goalEvents'),
   v.literal('financePreferences'),
+  v.literal('userExportDownloads'),
   v.literal('consentLogs'),
   v.literal('consentSettings'),
   v.literal('retentionPolicies'),
@@ -585,11 +587,13 @@ export const getPrivacyData = query({
         consentLogs: [],
         retentionPolicies: [],
         latestExport: null,
+        exportHistory: [],
+        exportDownloadLogs: [],
         latestDeletionJob: null,
       }
     }
 
-    const [consentSettings, consentLogs, retentionPolicies, latestExport, latestDeletionJob] = await Promise.all([
+    const [consentSettings, consentLogs, retentionPolicies, latestExport, exportHistory, exportDownloadLogs, latestDeletionJob] = await Promise.all([
       ctx.db
         .query('consentSettings')
         .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
@@ -609,6 +613,16 @@ export const getPrivacyData = query({
         .order('desc')
         .first(),
       ctx.db
+        .query('userExports')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(20),
+      ctx.db
+        .query('userExportDownloads')
+        .withIndex('by_userId_downloadedAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(30),
+      ctx.db
         .query('deletionJobs')
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
@@ -624,6 +638,8 @@ export const getPrivacyData = query({
       consentLogs,
       retentionPolicies,
       latestExport: latestExport ?? null,
+      exportHistory,
+      exportDownloadLogs,
       latestDeletionJob: latestDeletionJob ?? null,
     }
   },
@@ -822,6 +838,7 @@ export const requestDeletion = action({
       'goals',
       'goalEvents',
       'financePreferences',
+      'userExportDownloads',
       'consentLogs',
       'consentSettings',
       'retentionPolicies',
@@ -982,6 +999,8 @@ export const _collectExportData = internalQuery({
       ledgerLines,
       consentSettings,
       consentLogs,
+      userExports,
+      userExportDownloads,
       retentionPolicies,
       clientOpsMetrics,
     ] = await Promise.all([
@@ -1019,6 +1038,8 @@ export const _collectExportData = internalQuery({
       ctx.db.query('ledgerLines').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('consentSettings').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('consentLogs').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('userExports').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('userExportDownloads').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('retentionPolicies').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('clientOpsMetrics').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
     ])
@@ -1058,6 +1079,8 @@ export const _collectExportData = internalQuery({
       ledgerLines: docsToPortableRows(ledgerLines),
       consentSettings: docsToPortableRows(consentSettings),
       consentLogs: docsToPortableRows(consentLogs),
+      userExports: docsToPortableRows(userExports),
+      userExportDownloads: docsToPortableRows(userExportDownloads),
       retentionPolicies: docsToPortableRows(retentionPolicies),
       clientOpsMetrics: docsToPortableRows(clientOpsMetrics),
     }
@@ -1190,5 +1213,34 @@ export const _getUserExportById = internalQuery({
       return null
     }
     return doc
+  },
+})
+
+export const _logUserExportDownload = internalMutation({
+  args: {
+    exportId: v.id('userExports'),
+    filename: v.string(),
+    byteSize: v.optional(v.number()),
+    userAgent: v.optional(v.string()),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    const exportDoc = await ctx.db.get(args.exportId)
+    if (!exportDoc || exportDoc.userId !== identity.subject) {
+      return { logged: false as const }
+    }
+
+    await ctx.db.insert('userExportDownloads', {
+      userId: identity.subject,
+      exportId: args.exportId,
+      filename: args.filename,
+      byteSize: args.byteSize,
+      userAgent: args.userAgent,
+      source: args.source,
+      downloadedAt: Date.now(),
+    })
+
+    return { logged: true as const }
   },
 })

@@ -54,6 +54,7 @@ http.route({
       userId: string
       status: 'processing' | 'ready' | 'failed' | 'expired'
       storageId?: Id<'_storage'> | null
+      byteSize?: number | null
       createdAt: number
       expiresAt: number
     } | null
@@ -77,6 +78,14 @@ http.route({
 
     const filename = `finance-export-${new Date(exportDoc.createdAt).toISOString().slice(0, 10)}.zip`
 
+    await ctx.runMutation(internal.privacy._logUserExportDownload, {
+      exportId: exportDoc._id,
+      filename,
+      byteSize: exportDoc.byteSize ?? undefined,
+      userAgent: request.headers.get('user-agent') ?? undefined,
+      source: 'http_download',
+    })
+
     return new Response(blob, {
       status: 200,
       headers: {
@@ -89,4 +98,3 @@ http.route({
 })
 
 export default http
-
