@@ -6,8 +6,10 @@ import type {
   CustomCadenceUnit,
   GoalEditDraft,
   GoalEntry,
+  GoalEventEntry,
   GoalForm,
   GoalFundingSourceFormRow,
+  GoalFundingSourceType,
   GoalId,
   GoalMilestone,
   GoalType,
@@ -18,6 +20,7 @@ import type { MutationHandlers } from './useMutationFeedback'
 
 type UseGoalsSectionArgs = {
   goals: GoalEntry[]
+  goalEvents: GoalEventEntry[]
 } & MutationHandlers
 
 const DEFAULT_GOAL_TYPE: GoalType = 'sinking_fund'
@@ -59,6 +62,9 @@ const initialGoalEditDraft: GoalEditDraft = {
 }
 
 const roundCurrency = (value: number) => Math.round(value * 100) / 100
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const MS_PER_DAY = 86400000
+const AVG_DAYS_PER_MONTH = 30.4375
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
@@ -158,6 +164,17 @@ const parseIsoDate = (value: string) => {
 
 const formatIsoDate = (value: number) => new Date(value).toISOString().slice(0, 10)
 
+const startOfLocalDayMs = (value: number) => {
+  const date = new Date(value)
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+}
+
+const addDaysIso = (baseIsoDate: string, dayDelta: number) => {
+  const base = parseIsoDate(baseIsoDate)
+  if (!base) return undefined
+  return formatIsoDate(base.getTime() + dayDelta * MS_PER_DAY)
+}
+
 const buildGoalMilestones = (goal: GoalEntry, progressPercent: number): GoalMilestone[] => {
   const targetDate = parseIsoDate(goal.targetDate)
   const createdDate = new Date(goal.createdAt)
@@ -199,14 +216,18 @@ const normalizeFundingSourcesForView = (goal: GoalEntry) =>
         }))
     : []
 
-export const useGoalsSection = ({ goals, clearError, handleMutationError }: UseGoalsSectionArgs) => {
+export const useGoalsSection = ({ goals, goalEvents, clearError, handleMutationError }: UseGoalsSectionArgs) => {
   const addGoal = useMutation(api.finance.addGoal)
   const updateGoal = useMutation(api.finance.updateGoal)
   const removeGoal = useMutation(api.finance.removeGoal)
+  const recordGoalContribution = useMutation(api.finance.recordGoalContribution)
+  const setGoalPaused = useMutation(api.finance.setGoalPaused)
 
   const [goalForm, setGoalForm] = useState<GoalForm>(initialGoalForm)
   const [goalEditId, setGoalEditId] = useState<GoalId | null>(null)
   const [goalEditDraft, setGoalEditDraft] = useState<GoalEditDraft>(initialGoalEditDraft)
+  const [busyGoalContributionId, setBusyGoalContributionId] = useState<GoalId | null>(null)
+  const [busyGoalPauseId, setBusyGoalPauseId] = useState<GoalId | null>(null)
 
   const goalsWithMetrics = useMemo<GoalWithMetrics[]>(() => {
     return goals.map((goal) => {
@@ -223,6 +244,9 @@ export const useGoalsSection = ({ goals, clearError, handleMutationError }: UseG
           : undefined
       const customUnitValue = cadenceValue === 'custom' ? goal.customUnit ?? DEFAULT_GOAL_CUSTOM_UNIT : undefined
       const fundingSourcesValue = normalizeFundingSourcesForView(goal)
+      const pausedValue = goal.paused === true
+      const pausedAtValue = typeof goal.pausedAt === 'number' ? goal.pausedAt : undefined
+      const pauseReasonValue = goal.pauseReason?.trim() || undefined
       const plannedMonthlyContribution = roundCurrency(
         toMonthlyAmount(contributionAmountValue, cadenceValue, customIntervalValue, customUnitValue),
       )
@@ -232,7 +256,94 @@ export const useGoalsSection = ({ goals, clearError, handleMutationError }: UseG
           ? 0
           : daysLeft <= 0
             ? roundCurrency(remaining)
-            : roundCurrency(remaining / Math.max(daysLeft / 30.4375, 1 / 30.4375))
+            : roundCurrency(remaining / Math.max(daysLeft / AVG_DAYS_PER_MONTH, 1 / AVG_DAYS_PER_MONTH))
+
+      const targetDate = parseIsoDate(goal.targetDate)
+      const createdMs = startOfLocalDayMs(goal.createdAt)
+      const targetMs = targetDate ? startOfLocalDayMs(targetDate.getTime()) : undefined
+      const totalTimelineDays = targetMs !== undefined ? Math.max(Math.round((targetMs - createdMs) / MS_PER_DAY), 0) : undefined
+      const elapsedTimelineDays =
+        totalTimelineDays === undefined ? undefined : clamp(totalTimelineDays - Math.max(daysLeft, 0), 0, totalTimelineDays)
+
+      const expectedProgressPercentNow =
+        totalTimelineDays === undefined || totalTimelineDays <= 0
+          ? progressPercent
+          : clamp((elapsedTimelineDays! / Math.max(totalTimelineDays, 1)) * 100, 0, 100)
+
+      const paceCoverageRatio =
+        requiredMonthlyContribution <= 0
+          ? remaining <= 0
+            ? 1
+            : plannedMonthlyContribution > 0
+              ? 1
+              : 0
+          : clamp(plannedMonthlyContribution / requiredMonthlyContribution, 0, 10)
+
+      const behindPercent = Math.max(expectedProgressPercentNow - progressPercent, 0)
+      const contributionConsistencyScore = clamp(
+        Math.round(
+          100 -
+            behindPercent * 1.15 -
+            (plannedMonthlyContribution <= 0 && remaining > 0 ? 45 : 0) -
+            (fundingSourcesValue.length === 0 && remaining > 0 ? 10 : 0) -
+            (paceCoverageRatio < 1 ? (1 - paceCoverageRatio) * 28 : 0),
+        ),
+        0,
+        100,
+      )
+
+      const predictedMonthsToComplete =
+        remaining <= 0 ? 0 : plannedMonthlyContribution > 0 ? roundCurrency(remaining / plannedMonthlyContribution) : undefined
+
+      const projectedCompletionDeltaDays =
+        predictedMonthsToComplete === undefined
+          ? undefined
+          : Math.round(predictedMonthsToComplete * AVG_DAYS_PER_MONTH) - Math.max(daysLeft, 0)
+
+      const predictedCompletionDate =
+        projectedCompletionDeltaDays === undefined ? undefined : addDaysIso(goal.targetDate, projectedCompletionDeltaDays)
+
+      const predictedDaysDeltaToTarget =
+        predictedCompletionDate && targetMs !== undefined
+          ? Math.round((startOfLocalDayMs(new Date(`${predictedCompletionDate}T00:00:00`).getTime()) - targetMs) / MS_PER_DAY)
+          : undefined
+
+      const atRiskReasons: string[] = []
+      if (remaining > 0 && plannedMonthlyContribution <= 0) {
+        atRiskReasons.push('No planned contribution set')
+      }
+      if (remaining > 0 && paceCoverageRatio < 1 && daysLeft <= 365) {
+        atRiskReasons.push(`Pace shortfall (${Math.round(paceCoverageRatio * 100)}% of required)`)
+      }
+      if (remaining > 0 && behindPercent >= 10) {
+        atRiskReasons.push(`Behind schedule by ${behindPercent.toFixed(0)}%`)
+      }
+      if (remaining > 0 && contributionConsistencyScore < 60) {
+        atRiskReasons.push(`Low contribution consistency (${contributionConsistencyScore}/100)`)
+      }
+      if (predictedDaysDeltaToTarget !== undefined && predictedDaysDeltaToTarget > 0) {
+        atRiskReasons.push(`Predicted ${predictedDaysDeltaToTarget}d late at current pace`)
+      }
+
+      const paceScore = clamp(Math.min(paceCoverageRatio, 1) * 100, 0, 100)
+      const riskPenalty = Math.min(atRiskReasons.length * 8, 32)
+      const predictedLatePenalty =
+        predictedDaysDeltaToTarget !== undefined && predictedDaysDeltaToTarget > 0
+          ? Math.min(predictedDaysDeltaToTarget / 5, 22)
+          : 0
+      const pausedPenalty = pausedValue ? 8 : 0
+      const goalHealthScore = clamp(
+        Math.round(
+          paceScore * 0.45 +
+            contributionConsistencyScore * 0.35 +
+            (100 - Math.min(behindPercent, 100)) * 0.2 -
+            riskPenalty -
+            predictedLatePenalty -
+            pausedPenalty,
+        ),
+        0,
+        100,
+      )
 
       return {
         ...goal,
@@ -245,8 +356,19 @@ export const useGoalsSection = ({ goals, clearError, handleMutationError }: UseG
         customIntervalValue,
         customUnitValue,
         fundingSourcesValue,
+        pausedValue,
+        pausedAtValue,
+        pauseReasonValue,
         plannedMonthlyContribution,
         requiredMonthlyContribution,
+        expectedProgressPercentNow,
+        paceCoverageRatio,
+        contributionConsistencyScore,
+        goalHealthScore,
+        predictedCompletionDate,
+        predictedMonthsToComplete,
+        predictedDaysDeltaToTarget,
+        atRiskReasons,
         milestones: buildGoalMilestones(goal, progressPercent),
       }
     })
@@ -349,6 +471,48 @@ export const useGoalsSection = ({ goals, clearError, handleMutationError }: UseG
     }
   }
 
+  const onRecordGoalContribution = async (args: {
+    goalId: GoalId
+    amount: number
+    source?: 'manual' | 'quick_action' | 'system'
+    note?: string
+    fundingSourceType?: GoalFundingSourceType
+    fundingSourceId?: string
+  }) => {
+    clearError()
+    setBusyGoalContributionId(args.goalId)
+    try {
+      await recordGoalContribution({
+        goalId: args.goalId,
+        amount: args.amount,
+        source: args.source,
+        note: args.note,
+        fundingSourceType: args.fundingSourceType,
+        fundingSourceId: args.fundingSourceId,
+      })
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setBusyGoalContributionId(null)
+    }
+  }
+
+  const onSetGoalPaused = async (args: { goalId: GoalId; paused: boolean; reason?: string }) => {
+    clearError()
+    setBusyGoalPauseId(args.goalId)
+    try {
+      await setGoalPaused({
+        id: args.goalId,
+        paused: args.paused,
+        reason: args.reason,
+      })
+    } catch (error) {
+      handleMutationError(error)
+    } finally {
+      setBusyGoalPauseId(null)
+    }
+  }
+
   return {
     goalForm,
     setGoalForm,
@@ -357,10 +521,15 @@ export const useGoalsSection = ({ goals, clearError, handleMutationError }: UseG
     goalEditDraft,
     setGoalEditDraft,
     goalsWithMetrics,
+    goalEvents,
     onAddGoal,
     onDeleteGoal,
     startGoalEdit,
     saveGoalEdit,
+    onRecordGoalContribution,
+    onSetGoalPaused,
+    busyGoalContributionId,
+    busyGoalPauseId,
     goals,
   }
 }

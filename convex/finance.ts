@@ -44,6 +44,7 @@ const goalTypeValidator = v.union(
   v.literal('big_purchase'),
 )
 const goalFundingSourceTypeValidator = v.union(v.literal('account'), v.literal('card'), v.literal('income'))
+const goalEventSourceValidator = v.union(v.literal('manual'), v.literal('quick_action'), v.literal('system'))
 const goalFundingSourceMapItemValidator = v.object({
   sourceType: goalFundingSourceTypeValidator,
   sourceId: v.string(),
@@ -111,6 +112,17 @@ type AccountType = 'checking' | 'savings' | 'investment' | 'cash' | 'debt'
 type AccountPurpose = 'bills' | 'emergency' | 'spending' | 'goals' | 'debt'
 type GoalType = 'emergency_fund' | 'sinking_fund' | 'debt_payoff' | 'big_purchase'
 type GoalFundingSourceType = 'account' | 'card' | 'income'
+type GoalEventType =
+  | 'created'
+  | 'edited'
+  | 'target_changed'
+  | 'schedule_changed'
+  | 'contribution'
+  | 'progress_adjustment'
+  | 'paused'
+  | 'resumed'
+  | 'removed'
+type GoalEventSource = 'manual' | 'quick_action' | 'system'
 type BillCategory =
   | 'housing'
   | 'utilities'
@@ -165,6 +177,7 @@ type IncomeDoc = Doc<'incomes'>
 type BillDoc = Doc<'bills'>
 type CardDoc = Doc<'cards'>
 type LoanDoc = Doc<'loans'>
+type GoalDoc = Doc<'goals'>
 type GoalFundingSourceMapItem = {
   sourceType: GoalFundingSourceType
   sourceId: string
@@ -2136,6 +2149,75 @@ const normalizeGoalFundingSources = async (
   return normalized
 }
 
+const normalizeGoalPausedState = (goal: GoalDoc) => ({
+  paused: goal.paused === true,
+  pausedAt: typeof goal.pausedAt === 'number' ? goal.pausedAt : undefined,
+  pauseReason: goal.pauseReason?.trim() || undefined,
+})
+
+const buildGoalSnapshot = (goal: GoalDoc) => {
+  const cadence = goal.cadence ?? 'monthly'
+  return {
+    title: goal.title,
+    targetAmount: roundCurrency(goal.targetAmount),
+    currentAmount: roundCurrency(goal.currentAmount),
+    targetDate: goal.targetDate,
+    priority: goal.priority,
+    goalType: normalizeGoalType(goal.goalType),
+    contributionAmount: roundCurrency(Math.max(finiteOrZero(goal.contributionAmount), 0)),
+    cadence,
+    customInterval: cadence === 'custom' ? goal.customInterval ?? null : null,
+    customUnit: cadence === 'custom' ? goal.customUnit ?? null : null,
+    fundingSources: goal.fundingSources ?? [],
+    paused: goal.paused === true,
+    pausedAt: typeof goal.pausedAt === 'number' ? goal.pausedAt : null,
+    pauseReason: goal.pauseReason ?? null,
+  }
+}
+
+const insertGoalEvent = async (
+  ctx: MutationCtx,
+  args: {
+    userId: string
+    goalId: Id<'goals'>
+    eventType: GoalEventType
+    source?: GoalEventSource
+    amountDelta?: number
+    beforeCurrentAmount?: number
+    afterCurrentAmount?: number
+    beforeTargetAmount?: number
+    afterTargetAmount?: number
+    beforeTargetDate?: string
+    afterTargetDate?: string
+    pausedBefore?: boolean
+    pausedAfter?: boolean
+    metadata?: unknown
+    note?: string
+    occurredAt?: number
+  },
+) => {
+  const now = Date.now()
+  await ctx.db.insert('goalEvents', {
+    userId: args.userId,
+    goalId: args.goalId,
+    eventType: args.eventType,
+    source: args.source ?? 'manual',
+    amountDelta: args.amountDelta === undefined ? undefined : roundCurrency(args.amountDelta),
+    beforeCurrentAmount: args.beforeCurrentAmount === undefined ? undefined : roundCurrency(args.beforeCurrentAmount),
+    afterCurrentAmount: args.afterCurrentAmount === undefined ? undefined : roundCurrency(args.afterCurrentAmount),
+    beforeTargetAmount: args.beforeTargetAmount === undefined ? undefined : roundCurrency(args.beforeTargetAmount),
+    afterTargetAmount: args.afterTargetAmount === undefined ? undefined : roundCurrency(args.afterTargetAmount),
+    beforeTargetDate: args.beforeTargetDate,
+    afterTargetDate: args.afterTargetDate,
+    pausedBefore: args.pausedBefore,
+    pausedAfter: args.pausedAfter,
+    metadataJson: args.metadata === undefined ? undefined : stringifyForAudit(args.metadata),
+    note: args.note?.trim() || undefined,
+    occurredAt: args.occurredAt ?? now,
+    createdAt: now,
+  })
+}
+
 const monthKeyFromPurchase = (purchase: Doc<'purchases'>) => {
   if (purchase.statementMonth && /^\d{4}-\d{2}$/.test(purchase.statementMonth)) {
     return purchase.statementMonth
@@ -2648,6 +2730,7 @@ export const getFinanceData = query({
           accountTransfers: [],
           accountReconciliationChecks: [],
           goals: [],
+          goalEvents: [],
           envelopeBudgets: [],
           planningMonthVersions: [],
           planningActionTasks: [],
@@ -2683,6 +2766,7 @@ export const getFinanceData = query({
       accountTransfers,
       accountReconciliationChecks,
       goals,
+      goalEvents,
       envelopeBudgets,
       planningMonthVersions,
       planningActionTasks,
@@ -2770,6 +2854,11 @@ export const getFinanceData = query({
         .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
         .order('desc')
         .collect(),
+      ctx.db
+        .query('goalEvents')
+        .withIndex('by_userId_createdAt', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(600),
       ctx.db
         .query('envelopeBudgets')
         .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
@@ -2947,6 +3036,7 @@ export const getFinanceData = query({
       ...accountTransfers.map((entry) => entry.createdAt),
       ...accountReconciliationChecks.map((entry) => entry.updatedAt ?? entry.createdAt),
       ...goals.map((entry) => entry.createdAt),
+      ...goalEvents.map((entry) => entry.createdAt),
       ...envelopeBudgets.map((entry) => entry.createdAt),
       ...planningMonthVersions.map((entry) => entry.updatedAt ?? entry.createdAt),
       ...planningActionTasks.map((entry) => entry.updatedAt ?? entry.createdAt),
@@ -2981,6 +3071,7 @@ export const getFinanceData = query({
         accountTransfers,
         accountReconciliationChecks,
         goals,
+        goalEvents,
         envelopeBudgets,
         planningMonthVersions,
         planningActionTasks,
@@ -7513,6 +7604,7 @@ export const addGoal = mutation({
       customUnit: args.customUnit,
     })
     const fundingSources = await normalizeGoalFundingSources(ctx, identity.subject, args.fundingSources)
+    const now = Date.now()
 
     const createdGoalId = await ctx.db.insert('goals', {
       userId: identity.subject,
@@ -7527,7 +7619,32 @@ export const addGoal = mutation({
       customInterval: cadenceConfig.customInterval,
       customUnit: cadenceConfig.customUnit,
       fundingSources,
-      createdAt: Date.now(),
+      paused: false,
+      pausedAt: undefined,
+      pauseReason: undefined,
+      createdAt: now,
+    })
+
+    await insertGoalEvent(ctx, {
+      userId: identity.subject,
+      goalId: createdGoalId,
+      eventType: 'created',
+      source: 'manual',
+      afterCurrentAmount: args.currentAmount,
+      afterTargetAmount: args.targetAmount,
+      afterTargetDate: args.targetDate,
+      pausedAfter: false,
+      metadata: {
+        title: args.title.trim(),
+        priority: args.priority,
+        goalType,
+        contributionAmount,
+        cadence: cadenceConfig.cadence,
+        customInterval: cadenceConfig.customInterval ?? null,
+        customUnit: cadenceConfig.customUnit ?? null,
+        fundingSources,
+      },
+      occurredAt: now,
     })
 
     await recordFinanceAuditEvent(ctx, {
@@ -7547,6 +7664,9 @@ export const addGoal = mutation({
         customInterval: cadenceConfig.customInterval ?? null,
         customUnit: cadenceConfig.customUnit ?? null,
         fundingSources,
+        paused: false,
+        pausedAt: null,
+        pauseReason: null,
       },
     })
   },
@@ -7585,6 +7705,24 @@ export const updateGoal = mutation({
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Goal record not found.')
     const fundingSources = await normalizeGoalFundingSources(ctx, identity.subject, args.fundingSources)
+    const beforeSnapshot = buildGoalSnapshot(existing)
+    const afterSnapshot = {
+      title: args.title.trim(),
+      targetAmount: roundCurrency(args.targetAmount),
+      currentAmount: roundCurrency(args.currentAmount),
+      targetDate: args.targetDate,
+      priority: args.priority,
+      goalType,
+      contributionAmount,
+      cadence: cadenceConfig.cadence,
+      customInterval: cadenceConfig.cadence === 'custom' ? cadenceConfig.customInterval ?? null : null,
+      customUnit: cadenceConfig.cadence === 'custom' ? cadenceConfig.customUnit ?? null : null,
+      fundingSources,
+      paused: existing.paused === true,
+      pausedAt: typeof existing.pausedAt === 'number' ? existing.pausedAt : null,
+      pauseReason: existing.pauseReason ?? null,
+    }
+    const now = Date.now()
 
     await ctx.db.patch(args.id, {
       title: args.title.trim(),
@@ -7605,33 +7743,107 @@ export const updateGoal = mutation({
       entityType: 'goal',
       entityId: String(args.id),
       action: 'updated',
-      before: {
-        title: existing.title,
-        targetAmount: existing.targetAmount,
-        currentAmount: existing.currentAmount,
-        targetDate: existing.targetDate,
-        priority: existing.priority,
-        goalType: normalizeGoalType(existing.goalType),
-        contributionAmount: roundCurrency(Math.max(finiteOrZero(existing.contributionAmount), 0)),
-        cadence: existing.cadence ?? 'monthly',
-        customInterval: existing.customInterval ?? null,
-        customUnit: existing.customUnit ?? null,
-        fundingSources: existing.fundingSources ?? [],
-      },
-      after: {
-        title: args.title.trim(),
-        targetAmount: args.targetAmount,
-        currentAmount: args.currentAmount,
-        targetDate: args.targetDate,
-        priority: args.priority,
-        goalType,
-        contributionAmount,
-        cadence: cadenceConfig.cadence,
-        customInterval: cadenceConfig.customInterval ?? null,
-        customUnit: cadenceConfig.customUnit ?? null,
-        fundingSources,
-      },
+      before: beforeSnapshot,
+      after: afterSnapshot,
     })
+
+    const fundingSourcesChanged = stringifyForAudit(beforeSnapshot.fundingSources) !== stringifyForAudit(afterSnapshot.fundingSources)
+    const targetChanged =
+      beforeSnapshot.targetAmount !== afterSnapshot.targetAmount || beforeSnapshot.targetDate !== afterSnapshot.targetDate
+    const scheduleChanged =
+      beforeSnapshot.contributionAmount !== afterSnapshot.contributionAmount ||
+      beforeSnapshot.cadence !== afterSnapshot.cadence ||
+      beforeSnapshot.customInterval !== afterSnapshot.customInterval ||
+      beforeSnapshot.customUnit !== afterSnapshot.customUnit ||
+      fundingSourcesChanged
+    const progressChanged = beforeSnapshot.currentAmount !== afterSnapshot.currentAmount
+    const descriptorChanged =
+      beforeSnapshot.title !== afterSnapshot.title ||
+      beforeSnapshot.priority !== afterSnapshot.priority ||
+      beforeSnapshot.goalType !== afterSnapshot.goalType
+
+    if (progressChanged) {
+      await insertGoalEvent(ctx, {
+        userId: identity.subject,
+        goalId: args.id,
+        eventType: 'progress_adjustment',
+        source: 'manual',
+        amountDelta: roundCurrency(afterSnapshot.currentAmount - beforeSnapshot.currentAmount),
+        beforeCurrentAmount: beforeSnapshot.currentAmount,
+        afterCurrentAmount: afterSnapshot.currentAmount,
+        metadata: {
+          mode: 'edit_goal',
+          title: afterSnapshot.title,
+        },
+        occurredAt: now,
+      })
+    }
+
+    if (targetChanged) {
+      await insertGoalEvent(ctx, {
+        userId: identity.subject,
+        goalId: args.id,
+        eventType: 'target_changed',
+        source: 'manual',
+        beforeTargetAmount: beforeSnapshot.targetAmount,
+        afterTargetAmount: afterSnapshot.targetAmount,
+        beforeTargetDate: beforeSnapshot.targetDate,
+        afterTargetDate: afterSnapshot.targetDate,
+        metadata: {
+          title: afterSnapshot.title,
+        },
+        occurredAt: now,
+      })
+    }
+
+    if (scheduleChanged) {
+      await insertGoalEvent(ctx, {
+        userId: identity.subject,
+        goalId: args.id,
+        eventType: 'schedule_changed',
+        source: 'manual',
+        metadata: {
+          before: {
+            contributionAmount: beforeSnapshot.contributionAmount,
+            cadence: beforeSnapshot.cadence,
+            customInterval: beforeSnapshot.customInterval,
+            customUnit: beforeSnapshot.customUnit,
+            fundingSources: beforeSnapshot.fundingSources,
+          },
+          after: {
+            contributionAmount: afterSnapshot.contributionAmount,
+            cadence: afterSnapshot.cadence,
+            customInterval: afterSnapshot.customInterval,
+            customUnit: afterSnapshot.customUnit,
+            fundingSources: afterSnapshot.fundingSources,
+          },
+          title: afterSnapshot.title,
+        },
+        occurredAt: now,
+      })
+    }
+
+    if (descriptorChanged) {
+      await insertGoalEvent(ctx, {
+        userId: identity.subject,
+        goalId: args.id,
+        eventType: 'edited',
+        source: 'manual',
+        metadata: {
+          before: {
+            title: beforeSnapshot.title,
+            priority: beforeSnapshot.priority,
+            goalType: beforeSnapshot.goalType,
+          },
+          after: {
+            title: afterSnapshot.title,
+            priority: afterSnapshot.priority,
+            goalType: afterSnapshot.goalType,
+          },
+        },
+        occurredAt: now,
+      })
+    }
   },
 })
 
@@ -7639,18 +7851,38 @@ export const updateGoalProgress = mutation({
   args: {
     id: v.id('goals'),
     currentAmount: v.number(),
+    source: v.optional(goalEventSourceValidator),
+    note: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
     validateNonNegative(args.currentAmount, 'Current amount')
+    validateOptionalText(args.note, 'Goal progress note', 800)
 
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Goal record not found.')
 
     const beforeValue = existing.currentAmount
+    const now = Date.now()
 
     await ctx.db.patch(args.id, {
       currentAmount: args.currentAmount,
+    })
+
+    await insertGoalEvent(ctx, {
+      userId: identity.subject,
+      goalId: args.id,
+      eventType: 'progress_adjustment',
+      source: args.source ?? 'manual',
+      amountDelta: roundCurrency(args.currentAmount - beforeValue),
+      beforeCurrentAmount: beforeValue,
+      afterCurrentAmount: args.currentAmount,
+      note: args.note,
+      metadata: {
+        mode: 'absolute',
+        title: existing.title,
+      },
+      occurredAt: now,
     })
 
     await recordFinanceAuditEvent(ctx, {
@@ -7664,7 +7896,177 @@ export const updateGoalProgress = mutation({
       after: {
         currentAmount: args.currentAmount,
       },
+      metadata: {
+        source: args.source ?? 'manual',
+        note: args.note?.trim() || undefined,
+      },
     })
+  },
+})
+
+export const recordGoalContribution = mutation({
+  args: {
+    goalId: v.id('goals'),
+    amount: v.number(),
+    source: v.optional(goalEventSourceValidator),
+    note: v.optional(v.string()),
+    fundingSourceType: v.optional(goalFundingSourceTypeValidator),
+    fundingSourceId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validatePositive(args.amount, 'Goal contribution amount')
+    validateOptionalText(args.note, 'Goal contribution note', 800)
+    if (args.fundingSourceId !== undefined) {
+      validateOptionalText(args.fundingSourceId, 'Goal contribution funding source id', 200)
+    }
+    if ((args.fundingSourceType && !args.fundingSourceId) || (!args.fundingSourceType && args.fundingSourceId)) {
+      throw new Error('Goal contribution funding source type and id must be provided together.')
+    }
+
+    const goal = await ctx.db.get(args.goalId)
+    ensureOwned(goal, identity.subject, 'Goal record not found.')
+
+    let normalizedFundingSourceId: string | undefined
+    if (args.fundingSourceType && args.fundingSourceId) {
+      normalizedFundingSourceId = normalizeGoalFundingSourceId(args.fundingSourceId)
+      if (args.fundingSourceType === 'account') {
+        const account = await ctx.db.get(normalizedFundingSourceId as Id<'accounts'>)
+        ensureOwned(account, identity.subject, 'Goal contribution funding account not found.')
+      } else if (args.fundingSourceType === 'card') {
+        const card = await ctx.db.get(normalizedFundingSourceId as Id<'cards'>)
+        ensureOwned(card, identity.subject, 'Goal contribution funding card not found.')
+      } else {
+        const income = await ctx.db.get(normalizedFundingSourceId as Id<'incomes'>)
+        ensureOwned(income, identity.subject, 'Goal contribution funding income source not found.')
+      }
+    }
+
+    const normalizedAmount = roundCurrency(args.amount)
+    const beforeCurrentAmount = roundCurrency(goal.currentAmount)
+    const afterCurrentAmount = roundCurrency(beforeCurrentAmount + normalizedAmount)
+    const now = Date.now()
+
+    await ctx.db.patch(goal._id, {
+      currentAmount: afterCurrentAmount,
+    })
+
+    await insertGoalEvent(ctx, {
+      userId: identity.subject,
+      goalId: goal._id,
+      eventType: 'contribution',
+      source: args.source ?? 'quick_action',
+      amountDelta: normalizedAmount,
+      beforeCurrentAmount,
+      afterCurrentAmount,
+      note: args.note,
+      metadata: {
+        title: goal.title,
+        fundingSourceType: args.fundingSourceType ?? null,
+        fundingSourceId: normalizedFundingSourceId ?? null,
+      },
+      occurredAt: now,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'goal',
+      entityId: String(goal._id),
+      action: 'contribution_recorded',
+      before: {
+        currentAmount: beforeCurrentAmount,
+      },
+      after: {
+        currentAmount: afterCurrentAmount,
+      },
+      metadata: {
+        source: args.source ?? 'quick_action',
+        amount: normalizedAmount,
+        note: args.note?.trim() || undefined,
+        fundingSourceType: args.fundingSourceType ?? undefined,
+        fundingSourceId: normalizedFundingSourceId ?? undefined,
+      },
+    })
+
+    return {
+      goalId: goal._id,
+      previousAmount: beforeCurrentAmount,
+      currentAmount: afterCurrentAmount,
+      appliedAmount: normalizedAmount,
+    }
+  },
+})
+
+export const setGoalPaused = mutation({
+  args: {
+    id: v.id('goals'),
+    paused: v.boolean(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx)
+    validateOptionalText(args.reason, 'Goal pause reason', 800)
+
+    const goal = await ctx.db.get(args.id)
+    ensureOwned(goal, identity.subject, 'Goal record not found.')
+
+    const beforeState = normalizeGoalPausedState(goal)
+    if (beforeState.paused === args.paused && (beforeState.pauseReason ?? '') === ((args.reason?.trim() || undefined) ?? '')) {
+      return {
+        id: goal._id,
+        paused: beforeState.paused,
+        pauseReason: beforeState.pauseReason ?? null,
+      }
+    }
+
+    const now = Date.now()
+    const nextReason = args.paused ? args.reason?.trim() || undefined : undefined
+    await ctx.db.patch(goal._id, {
+      paused: args.paused,
+      pausedAt: args.paused ? now : undefined,
+      pauseReason: nextReason,
+    })
+
+    await insertGoalEvent(ctx, {
+      userId: identity.subject,
+      goalId: goal._id,
+      eventType: args.paused ? 'paused' : 'resumed',
+      source: 'quick_action',
+      pausedBefore: beforeState.paused,
+      pausedAfter: args.paused,
+      note: nextReason,
+      metadata: {
+        title: goal.title,
+        pausedAt: args.paused ? now : null,
+      },
+      occurredAt: now,
+    })
+
+    await recordFinanceAuditEvent(ctx, {
+      userId: identity.subject,
+      entityType: 'goal',
+      entityId: String(goal._id),
+      action: args.paused ? 'paused' : 'resumed',
+      before: {
+        paused: beforeState.paused,
+        pausedAt: beforeState.pausedAt ?? null,
+        pauseReason: beforeState.pauseReason ?? null,
+      },
+      after: {
+        paused: args.paused,
+        pausedAt: args.paused ? now : null,
+        pauseReason: nextReason ?? null,
+      },
+      metadata: {
+        source: 'quick_action',
+      },
+    })
+
+    return {
+      id: goal._id,
+      paused: args.paused,
+      pauseReason: nextReason ?? null,
+    }
   },
 })
 
@@ -7676,6 +8078,20 @@ export const removeGoal = mutation({
     const identity = await requireIdentity(ctx)
     const existing = await ctx.db.get(args.id)
     ensureOwned(existing, identity.subject, 'Goal record not found.')
+    const now = Date.now()
+
+    await insertGoalEvent(ctx, {
+      userId: identity.subject,
+      goalId: args.id,
+      eventType: 'removed',
+      source: 'manual',
+      beforeCurrentAmount: existing.currentAmount,
+      beforeTargetAmount: existing.targetAmount,
+      beforeTargetDate: existing.targetDate,
+      pausedBefore: existing.paused === true,
+      metadata: buildGoalSnapshot(existing),
+      occurredAt: now,
+    })
 
     await ctx.db.delete(args.id)
 
@@ -7696,6 +8112,9 @@ export const removeGoal = mutation({
         customInterval: existing.customInterval ?? null,
         customUnit: existing.customUnit ?? null,
         fundingSources: existing.fundingSources ?? [],
+        paused: existing.paused === true,
+        pausedAt: existing.pausedAt ?? null,
+        pauseReason: existing.pauseReason ?? null,
       },
     })
   },

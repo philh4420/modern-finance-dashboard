@@ -164,6 +164,7 @@ function App() {
   const accountTransfers = financeState?.data.accountTransfers ?? []
   const accountReconciliationChecks = financeState?.data.accountReconciliationChecks ?? []
   const goals = financeState?.data.goals ?? []
+  const goalEvents = financeState?.data.goalEvents ?? []
   const envelopeBudgetHistory = financeState?.data.envelopeBudgets ?? []
   const planningMonthVersions = financeState?.data.planningMonthVersions ?? []
   const planningActionTasks = financeState?.data.planningActionTasks ?? []
@@ -236,6 +237,7 @@ function App() {
 
   const goalsSection = useGoalsSection({
     goals,
+    goalEvents,
     clearError,
     handleMutationError,
   })
@@ -1004,6 +1006,7 @@ function App() {
         {activeTab === 'goals' ? (
           <GoalsTab
             goalsWithMetrics={goalsSection.goalsWithMetrics}
+            goalEvents={goalsSection.goalEvents}
             goalForm={goalsSection.goalForm}
             setGoalForm={goalsSection.setGoalForm}
             goalEditId={goalsSection.goalEditId}
@@ -1014,6 +1017,10 @@ function App() {
             onDeleteGoal={goalsSection.onDeleteGoal}
             saveGoalEdit={goalsSection.saveGoalEdit}
             startGoalEdit={goalsSection.startGoalEdit}
+            onRecordGoalContribution={goalsSection.onRecordGoalContribution}
+            onSetGoalPaused={goalsSection.onSetGoalPaused}
+            busyGoalContributionId={goalsSection.busyGoalContributionId}
+            busyGoalPauseId={goalsSection.busyGoalPauseId}
             incomes={incomes}
             accounts={accounts}
             cards={cards}
@@ -1091,6 +1098,8 @@ function App() {
               accountTransfers={accountTransfers}
               accountReconciliationChecks={accountReconciliationChecks}
               goals={goals}
+              goalEvents={goalEvents}
+              goalsWithMetrics={goalsSection.goalsWithMetrics}
               purchases={purchases}
               envelopeBudgets={envelopeBudgetHistory}
               planningMonthVersions={planningMonthVersions}

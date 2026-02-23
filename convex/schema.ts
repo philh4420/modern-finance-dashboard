@@ -129,6 +129,18 @@ const goalFundingSourceMapItem = v.object({
   sourceId: v.string(),
   allocationPercent: v.optional(v.number()),
 })
+const goalEventType = v.union(
+  v.literal('created'),
+  v.literal('edited'),
+  v.literal('target_changed'),
+  v.literal('schedule_changed'),
+  v.literal('contribution'),
+  v.literal('progress_adjustment'),
+  v.literal('paused'),
+  v.literal('resumed'),
+  v.literal('removed'),
+)
+const goalEventSource = v.union(v.literal('manual'), v.literal('quick_action'), v.literal('system'))
 const cycleRunSource = v.union(v.literal('manual'), v.literal('automatic'))
 const cycleRunStatus = v.union(v.literal('completed'), v.literal('failed'))
 const reconciliationStatus = v.union(v.literal('pending'), v.literal('posted'), v.literal('reconciled'))
@@ -618,10 +630,35 @@ export default defineSchema({
     customInterval: v.optional(v.number()),
     customUnit: v.optional(customCadenceUnit),
     fundingSources: v.optional(v.array(goalFundingSourceMapItem)),
+    paused: v.optional(v.boolean()),
+    pausedAt: v.optional(v.number()),
+    pauseReason: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index('by_userId', ['userId'])
     .index('by_userId_createdAt', ['userId', 'createdAt']),
+  goalEvents: defineTable({
+    userId: v.string(),
+    goalId: v.id('goals'),
+    eventType: goalEventType,
+    source: goalEventSource,
+    amountDelta: v.optional(v.number()),
+    beforeCurrentAmount: v.optional(v.number()),
+    afterCurrentAmount: v.optional(v.number()),
+    beforeTargetAmount: v.optional(v.number()),
+    afterTargetAmount: v.optional(v.number()),
+    beforeTargetDate: v.optional(v.string()),
+    afterTargetDate: v.optional(v.string()),
+    pausedBefore: v.optional(v.boolean()),
+    pausedAfter: v.optional(v.boolean()),
+    metadataJson: v.optional(v.string()),
+    note: v.optional(v.string()),
+    occurredAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_createdAt', ['userId', 'createdAt'])
+    .index('by_userId_goalId_createdAt', ['userId', 'goalId', 'createdAt']),
   transactionRules: defineTable({
     userId: v.string(),
     name: v.string(),

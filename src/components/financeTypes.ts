@@ -20,6 +20,17 @@ export type AccountPurpose = 'bills' | 'emergency' | 'spending' | 'goals' | 'deb
 export type GoalPriority = 'low' | 'medium' | 'high'
 export type GoalType = 'emergency_fund' | 'sinking_fund' | 'debt_payoff' | 'big_purchase'
 export type GoalFundingSourceType = 'account' | 'card' | 'income'
+export type GoalEventType =
+  | 'created'
+  | 'edited'
+  | 'target_changed'
+  | 'schedule_changed'
+  | 'contribution'
+  | 'progress_adjustment'
+  | 'paused'
+  | 'resumed'
+  | 'removed'
+export type GoalEventSource = 'manual' | 'quick_action' | 'system'
 export type InsightSeverity = 'good' | 'warning' | 'critical'
 export type ReconciliationStatus = 'pending' | 'posted' | 'reconciled'
 export type RuleMatchType = 'contains' | 'exact' | 'starts_with'
@@ -100,6 +111,7 @@ export type AccountEntry = Doc<'accounts'>
 export type AccountTransferEntry = Doc<'accountTransfers'>
 export type AccountReconciliationCheckEntry = Doc<'accountReconciliationChecks'>
 export type GoalEntry = Doc<'goals'>
+export type GoalEventEntry = Doc<'goalEvents'>
 export type CycleAuditLogEntry = Doc<'cycleAuditLogs'>
 export type CycleStepAlertEntry = Doc<'cycleStepAlerts'>
 export type MonthlyCycleRunEntry = Doc<'monthlyCycleRuns'>
@@ -427,7 +439,18 @@ export type GoalWithMetrics = GoalEntry & {
   fundingSourcesValue: GoalFundingSourceMapEntry[]
   plannedMonthlyContribution: number
   requiredMonthlyContribution: number
+  expectedProgressPercentNow: number
+  paceCoverageRatio: number
+  contributionConsistencyScore: number
+  goalHealthScore: number
+  predictedCompletionDate?: string
+  predictedMonthsToComplete?: number
+  predictedDaysDeltaToTarget?: number
+  atRiskReasons: string[]
   milestones: GoalMilestone[]
+  pausedValue: boolean
+  pausedAtValue?: number
+  pauseReasonValue?: string
 }
 
 export type GoalMilestone = {

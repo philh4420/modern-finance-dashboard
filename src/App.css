@@ -5460,6 +5460,333 @@ tbody td {
   justify-self: end;
 }
 
+.goals-phase2-grid {
+  margin-top: 0.2rem;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.72rem;
+}
+
+.goals-phase3-grid {
+  margin-top: 0.78rem;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.72rem;
+}
+
+.goals-phase2-card {
+  grid-column: span 4;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background:
+    radial-gradient(135% 145% at 100% -12%, color-mix(in oklab, var(--tone-finance) 10%, transparent), transparent 68%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 38%, transparent),
+    0 16px 36px -34px color-mix(in oklab, black 44%, transparent);
+  padding: 0.84rem 0.9rem;
+  display: grid;
+  gap: 0.72rem;
+  align-content: start;
+}
+
+.goals-phase2-card--tradeoff {
+  grid-column: span 12;
+}
+
+.goals-phase3-card--wide {
+  grid-column: span 12;
+}
+
+.goals-phase2-card__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.goals-phase2-card__head h3 {
+  margin: 0.08rem 0 0;
+  font-size: 1rem;
+  line-height: 1.16;
+  letter-spacing: -0.015em;
+}
+
+.goals-phase2-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.44rem;
+}
+
+.goals-phase2-summary-grid article {
+  border-radius: 0.8rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.54rem 0.58rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.goals-phase2-summary-grid article p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.goals-phase2-summary-grid article strong {
+  font-size: 1rem;
+  letter-spacing: -0.015em;
+}
+
+.goals-phase2-summary-grid article small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.28;
+}
+
+.goals-alert-list,
+.goals-optimizer-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.goals-alert-list li,
+.goals-optimizer-list li {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.56rem 0.62rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.goals-action-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.goals-action-list li {
+  border-radius: 0.84rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.56rem 0.62rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.goals-action-list li > div {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.goals-action-list li strong {
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+
+.goals-action-list li p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.34;
+}
+
+.goals-action-list li small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.28;
+}
+
+.table-wrap--soft {
+  margin-top: 0;
+  border-radius: 0.86rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 95%, white 5%);
+  padding: 0.25rem 0.45rem;
+}
+
+.row-actions--goals {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.row-actions--goals .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.goals-alert-list__head,
+.goals-optimizer-list__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.goals-alert-list__head strong,
+.goals-optimizer-list__head strong {
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+
+.goals-alert-list li p,
+.goals-optimizer-list__body p {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.34;
+}
+
+.goals-alert-list li small,
+.goals-optimizer-list__body small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+.goals-optimizer-list li {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.55rem;
+}
+
+.goals-optimizer-list__rank {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 92%, white 8%);
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.goals-optimizer-list__body {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.goals-tradeoff-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.goals-tradeoff-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.goals-tradeoff-card {
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--stroke) 78%, transparent);
+  background: color-mix(in oklab, var(--surface-card) 94%, white 6%);
+  padding: 0.72rem 0.76rem;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.goals-tradeoff-card--recommended {
+  border-color: color-mix(in oklab, var(--tone-positive) 34%, var(--stroke));
+  background:
+    radial-gradient(125% 130% at 100% -12%, color-mix(in oklab, var(--tone-positive) 14%, transparent), transparent 66%),
+    color-mix(in oklab, var(--surface-card) 93%, white 7%);
+}
+
+.goals-tradeoff-card__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.goals-tradeoff-card__head strong {
+  font-size: 0.92rem;
+  letter-spacing: -0.01em;
+}
+
+.goals-tradeoff-card p {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.36;
+}
+
+.goals-tradeoff-card small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+@media (max-width: 1240px) {
+  .goals-phase2-card {
+    grid-column: span 6;
+  }
+
+  .goals-phase2-card--tradeoff {
+    grid-column: span 12;
+  }
+
+  .goals-phase3-grid .goals-phase2-card {
+    grid-column: span 6;
+  }
+
+  .goals-phase3-card--wide {
+    grid-column: span 12;
+  }
+}
+
+@media (max-width: 860px) {
+  .goals-phase2-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .goals-phase3-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .goals-phase2-card,
+  .goals-phase2-card--tradeoff {
+    grid-column: span 1;
+  }
+
+  .goals-phase3-grid .goals-phase2-card,
+  .goals-phase3-card--wide {
+    grid-column: span 1;
+  }
+
+  .goals-phase2-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .goals-tradeoff-controls,
+  .goals-tradeoff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .goals-optimizer-list li {
+    grid-template-columns: 1fr;
+  }
+
+  .goals-action-list li {
+    grid-template-columns: 1fr;
+  }
+
+  .goals-optimizer-list__rank {
+    width: 1.35rem;
+    height: 1.35rem;
+  }
+}
+
 .purchases-tab-shell {
   align-items: stretch;
   gap: clamp(1rem, 1vw, 1.34rem);

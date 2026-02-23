@@ -47,6 +47,7 @@ type DeletionTable =
   | 'accountTransfers'
   | 'accountReconciliationChecks'
   | 'goals'
+  | 'goalEvents'
   | 'financePreferences'
   | 'consentLogs'
   | 'consentSettings'
@@ -85,6 +86,7 @@ const deletionTableValidator = v.union(
   v.literal('accountTransfers'),
   v.literal('accountReconciliationChecks'),
   v.literal('goals'),
+  v.literal('goalEvents'),
   v.literal('financePreferences'),
   v.literal('consentLogs'),
   v.literal('consentSettings'),
@@ -818,6 +820,7 @@ export const requestDeletion = action({
       'accountTransfers',
       'accountReconciliationChecks',
       'goals',
+      'goalEvents',
       'financePreferences',
       'consentLogs',
       'consentSettings',
@@ -960,6 +963,7 @@ export const _collectExportData = internalQuery({
       accountTransfers,
       accountReconciliationChecks,
       goals,
+      goalEvents,
       transactionRules,
       envelopeBudgets,
       planningMonthVersions,
@@ -996,6 +1000,7 @@ export const _collectExportData = internalQuery({
       ctx.db.query('accountTransfers').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('accountReconciliationChecks').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('goals').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
+      ctx.db.query('goalEvents').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('transactionRules').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('envelopeBudgets').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
       ctx.db.query('planningMonthVersions').withIndex('by_userId', (q) => q.eq('userId', userId)).collect(),
@@ -1034,6 +1039,7 @@ export const _collectExportData = internalQuery({
       accountTransfers: docsToPortableRows(accountTransfers),
       accountReconciliationChecks: docsToPortableRows(accountReconciliationChecks),
       goals: docsToPortableRows(goals),
+      goalEvents: docsToPortableRows(goalEvents),
       transactionRules: docsToPortableRows(transactionRules),
       envelopeBudgets: docsToPortableRows(envelopeBudgets),
       planningMonthVersions: docsToPortableRows(planningMonthVersions),

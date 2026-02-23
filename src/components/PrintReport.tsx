@@ -13,6 +13,8 @@ import type {
   FinancePreference,
   ForecastWindow,
   GoalEntry,
+  GoalEventEntry,
+  GoalWithMetrics,
   IncomeEntry,
   IncomeChangeDirection,
   IncomeChangeEventEntry,
@@ -56,6 +58,8 @@ type PrintReportProps = {
   accountTransfers: AccountTransferEntry[]
   accountReconciliationChecks: AccountReconciliationCheckEntry[]
   goals: GoalEntry[]
+  goalEvents: GoalEventEntry[]
+  goalsWithMetrics: GoalWithMetrics[]
   purchases: PurchaseEntry[]
   envelopeBudgets: EnvelopeBudgetEntry[]
   planningMonthVersions: PlanningMonthVersionEntry[]
@@ -210,6 +214,13 @@ const loanEventTypeLabel = (eventType: LoanEventEntry['eventType']) => {
   if (eventType === 'subscription_fee') return 'Subscription'
   if (eventType === 'charge') return 'Charge'
   return 'Payment'
+}
+
+const goalEventTypeLabel = (eventType: GoalEventEntry['eventType']) => {
+  if (eventType === 'target_changed') return 'Target changed'
+  if (eventType === 'schedule_changed') return 'Schedule changed'
+  if (eventType === 'progress_adjustment') return 'Progress adjusted'
+  return eventType.replace(/_/g, ' ')
 }
 
 const cadenceLabelForPrint = (
@@ -626,6 +637,8 @@ export function PrintReport({
   accountTransfers,
   accountReconciliationChecks,
   goals,
+  goalEvents,
+  goalsWithMetrics,
   purchases,
   envelopeBudgets,
   planningMonthVersions,
@@ -784,6 +797,150 @@ export function PrintReport({
     .filter((event) => inMonthRange(monthKeyFromTimestamp(event.createdAt), config.startMonth, config.endMonth))
     .sort((left, right) => right.createdAt - left.createdAt)
     .slice(0, 80)
+  const goalMetricsRows = (goalsWithMetrics.length > 0 ? goalsWithMetrics : goals).map((goal) => {
+    const targetAmount = goal.targetAmount
+    const currentAmount = goal.currentAmount
+    const remaining = 'remaining' in goal && typeof goal.remaining === 'number' ? goal.remaining : Math.max(targetAmount - currentAmount, 0)
+    const progressPercent =
+      'progressPercent' in goal && typeof goal.progressPercent === 'number'
+        ? goal.progressPercent
+        : targetAmount > 0
+          ? (currentAmount / targetAmount) * 100
+          : 0
+    const goalHealthScore =
+      'goalHealthScore' in goal && typeof goal.goalHealthScore === 'number' ? goal.goalHealthScore : null
+    const plannedMonthlyContribution =
+      'plannedMonthlyContribution' in goal && typeof goal.plannedMonthlyContribution === 'number'
+        ? goal.plannedMonthlyContribution
+        : 0
+    const requiredMonthlyContribution =
+      'requiredMonthlyContribution' in goal && typeof goal.requiredMonthlyContribution === 'number'
+        ? goal.requiredMonthlyContribution
+        : 0
+    const predictedCompletionDate =
+      'predictedCompletionDate' in goal && typeof goal.predictedCompletionDate === 'string' ? goal.predictedCompletionDate : undefined
+    const predictedDaysDeltaToTarget =
+      'predictedDaysDeltaToTarget' in goal && typeof goal.predictedDaysDeltaToTarget === 'number'
+        ? goal.predictedDaysDeltaToTarget
+        : undefined
+    const milestones =
+      'milestones' in goal && Array.isArray(goal.milestones)
+        ? goal.milestones
+        : []
+    const pausedValue = 'pausedValue' in goal ? goal.pausedValue === true : goal.paused === true
+    const pauseReasonValue =
+      'pauseReasonValue' in goal && typeof goal.pauseReasonValue === 'string'
+        ? goal.pauseReasonValue
+        : typeof goal.pauseReason === 'string'
+          ? goal.pauseReason
+          : undefined
+    const cadenceValue =
+      'cadenceValue' in goal && typeof goal.cadenceValue === 'string'
+        ? goal.cadenceValue
+        : (goal.cadence ?? 'monthly')
+    const customIntervalValue =
+      'customIntervalValue' in goal && typeof goal.customIntervalValue === 'number'
+        ? goal.customIntervalValue
+        : goal.customInterval
+    const customUnitValue =
+      'customUnitValue' in goal && typeof goal.customUnitValue === 'string'
+        ? goal.customUnitValue
+        : goal.customUnit
+    const goalTypeValue =
+      'goalTypeValue' in goal && typeof goal.goalTypeValue === 'string'
+        ? goal.goalTypeValue
+        : (goal.goalType ?? 'sinking_fund')
+
+    return {
+      ...goal,
+      remaining: roundCurrency(remaining),
+      progressPercent,
+      goalHealthScore,
+      plannedMonthlyContribution,
+      requiredMonthlyContribution,
+      predictedCompletionDate,
+      predictedDaysDeltaToTarget,
+      milestones,
+      pausedValue,
+      pauseReasonValue,
+      cadenceValue,
+      customIntervalValue,
+      customUnitValue,
+      goalTypeValue,
+    }
+  })
+  const goalNameById = goalMetricsRows.reduce((map, goal) => {
+    map.set(String(goal._id), goal.title)
+    return map
+  }, new Map<string, string>())
+  const goalEventsInRange = [...goalEvents]
+    .filter((event) => inMonthRange(monthKeyFromTimestamp(typeof event.occurredAt === 'number' ? event.occurredAt : event.createdAt), config.startMonth, config.endMonth))
+    .sort((left, right) => (typeof right.occurredAt === 'number' ? right.occurredAt : right.createdAt) - (typeof left.occurredAt === 'number' ? left.occurredAt : left.createdAt))
+  const goalContributionEventsInRange = goalEventsInRange.filter((event) => event.eventType === 'contribution')
+  const goalContributionsByGoalId = goalContributionEventsInRange.reduce((map, event) => {
+    const key = String(event.goalId)
+    const current = map.get(key) ?? { amount: 0, count: 0 }
+    current.amount += typeof event.amountDelta === 'number' ? event.amountDelta : 0
+    current.count += 1
+    map.set(key, current)
+    return map
+  }, new Map<string, { amount: number; count: number }>())
+  const goalHealthAverage =
+    goalMetricsRows.filter((goal) => typeof goal.goalHealthScore === 'number').length > 0
+      ? roundCurrency(
+          goalMetricsRows
+            .filter((goal) => typeof goal.goalHealthScore === 'number')
+            .reduce((sum, goal) => sum + (goal.goalHealthScore ?? 0), 0) /
+            Math.max(goalMetricsRows.filter((goal) => typeof goal.goalHealthScore === 'number').length, 1),
+        )
+      : null
+  const goalAtRiskCount = goalMetricsRows.filter(
+    (goal) =>
+      goal.progressPercent < 100 &&
+      ((typeof goal.goalHealthScore === 'number' && goal.goalHealthScore < 55) ||
+        (typeof goal.predictedDaysDeltaToTarget === 'number' && goal.predictedDaysDeltaToTarget > 0)),
+  ).length
+  const goalContributionTotalInRange = roundCurrency(
+    goalContributionEventsInRange.reduce((sum, event) => sum + (typeof event.amountDelta === 'number' ? event.amountDelta : 0), 0),
+  )
+  const currentYear = generatedAt.getFullYear()
+  const currentYearStart = new Date(currentYear, 0, 1).getTime()
+  const nextYearStart = new Date(currentYear + 1, 0, 1).getTime()
+  const goalEventsThisYear = goalEvents.filter((event) => {
+    const ts = typeof event.occurredAt === 'number' ? event.occurredAt : event.createdAt
+    return ts >= currentYearStart && ts < nextYearStart
+  })
+  const annualGoalReviewRows = goalMetricsRows
+    .map((goal) => {
+      const yearEvents = goalEventsThisYear.filter((event) => String(event.goalId) === String(goal._id))
+      const netDelta = roundCurrency(yearEvents.reduce((sum, event) => sum + (typeof event.amountDelta === 'number' ? event.amountDelta : 0), 0))
+      const startAmount = roundCurrency(Math.max(goal.currentAmount - netDelta, 0))
+      const endAmount = roundCurrency(goal.currentAmount)
+      const contributionAmount = roundCurrency(
+        yearEvents.reduce(
+          (sum, event) => sum + (event.eventType === 'contribution' ? (typeof event.amountDelta === 'number' ? event.amountDelta : 0) : 0),
+          0,
+        ),
+      )
+      return {
+        id: String(goal._id),
+        title: goal.title,
+        startAmount,
+        endAmount,
+        progressDelta: roundCurrency(endAmount - startAmount),
+        contributionAmount,
+        eventCount: yearEvents.length,
+      }
+    })
+    .sort((left, right) => right.progressDelta - left.progressDelta)
+  const annualGoalReviewSummary = {
+    year: currentYear,
+    startTotal: roundCurrency(annualGoalReviewRows.reduce((sum, row) => sum + row.startAmount, 0)),
+    endTotal: roundCurrency(annualGoalReviewRows.reduce((sum, row) => sum + row.endAmount, 0)),
+    progressDeltaTotal: roundCurrency(annualGoalReviewRows.reduce((sum, row) => sum + row.progressDelta, 0)),
+    contributionTotal: roundCurrency(annualGoalReviewRows.reduce((sum, row) => sum + row.contributionAmount, 0)),
+    eventCount: goalEventsThisYear.length,
+  }
   const incomePaymentChecksByIncomeId = incomePaymentChecks.reduce((map, entry) => {
     const key = String(entry.incomeId)
     const current = map.get(key) ?? []
@@ -2359,33 +2516,282 @@ export function PrintReport({
       {config.includeGoals ? (
         <section className="print-section print-section--component">
           <h2>Goals</h2>
-          {goals.length === 0 ? (
+          {goalMetricsRows.length === 0 ? (
             <p className="print-subnote">No goal entries.</p>
           ) : (
-            <div className="print-table-wrap">
-              <table className="print-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Title</th>
-                    <th scope="col">Target</th>
-                    <th scope="col">Current</th>
-                    <th scope="col">Priority</th>
-                    <th scope="col">Target Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {goals.map((goal) => (
-                    <tr key={goal._id}>
-                      <td>{goal.title}</td>
-                      <td className="table-amount">{formatMoney(goal.targetAmount)}</td>
-                      <td className="table-amount">{formatMoney(goal.currentAmount)}</td>
-                      <td>{goal.priority}</td>
-                      <td>{goal.targetDate ? goal.targetDate : 'n/a'}</td>
+            <>
+              <div className="print-kpi-grid">
+                <div className="print-kpi">
+                  <p>Goals tracked</p>
+                  <strong>{goalMetricsRows.length}</strong>
+                  <small>{goalMetricsRows.filter((goal) => goal.progressPercent >= 100).length} completed</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Average health score</p>
+                  <strong>{goalHealthAverage === null ? 'n/a' : `${Math.round(goalHealthAverage)}/100`}</strong>
+                  <small>{goalAtRiskCount} at-risk goals</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Contributions in range</p>
+                  <strong>{formatMoney(goalContributionTotalInRange)}</strong>
+                  <small>{goalContributionEventsInRange.length} contribution events</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Goal events in range</p>
+                  <strong>{goalEventsInRange.length}</strong>
+                  <small>contributions, edits, pauses, target changes</small>
+                </div>
+              </div>
+
+              <h3 className="print-subhead">Goal Portfolio</h3>
+              <div className="print-table-wrap">
+                <table className="print-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Goal</th>
+                      <th scope="col">Type</th>
+                      <th scope="col">Target</th>
+                      <th scope="col">Current</th>
+                      <th scope="col">Remaining</th>
+                      <th scope="col">Progress</th>
+                      <th scope="col">Health</th>
+                      <th scope="col">Contribution pace</th>
+                      <th scope="col">Forecast</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {goalMetricsRows.map((goal) => {
+                      const contributionStats = goalContributionsByGoalId.get(String(goal._id))
+                      const forecastLabel =
+                        goal.predictedCompletionDate && typeof goal.predictedDaysDeltaToTarget === 'number'
+                          ? `${goal.predictedCompletionDate} (${goal.predictedDaysDeltaToTarget > 0 ? `+${goal.predictedDaysDeltaToTarget}d` : `${goal.predictedDaysDeltaToTarget}d`})`
+                          : goal.predictedCompletionDate ?? 'n/a'
+                      const statusLabel =
+                        goal.progressPercent >= 100
+                          ? 'completed'
+                          : goal.pausedValue
+                            ? 'paused'
+                            : typeof goal.predictedDaysDeltaToTarget === 'number' && goal.predictedDaysDeltaToTarget > 0
+                              ? 'at risk'
+                              : 'on track'
+                      return (
+                        <tr key={goal._id}>
+                          <td>
+                            {goal.title}
+                            {goal.pausedValue ? ` (paused${goal.pauseReasonValue ? `: ${goal.pauseReasonValue}` : ''})` : ''}
+                          </td>
+                          <td>{goal.goalTypeValue.replace(/_/g, ' ')}</td>
+                          <td className="table-amount">{formatMoney(goal.targetAmount)}</td>
+                          <td className="table-amount">{formatMoney(goal.currentAmount)}</td>
+                          <td className="table-amount">{formatMoney(goal.remaining)}</td>
+                          <td>
+                            {formatPercent(goal.progressPercent / 100)} · {statusLabel}
+                          </td>
+                          <td>{goal.goalHealthScore === null ? 'n/a' : `${goal.goalHealthScore}/100`}</td>
+                          <td>
+                            {formatMoney(goal.plannedMonthlyContribution)} planned / {formatMoney(goal.requiredMonthlyContribution)} required
+                            {contributionStats ? ` · ${contributionStats.count} logs / ${formatMoney(roundCurrency(contributionStats.amount))}` : ''}
+                          </td>
+                          <td>{forecastLabel}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 className="print-subhead">Milestones + Completion Forecasts</h3>
+              <div className="print-table-wrap">
+                <table className="print-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Goal</th>
+                      <th scope="col">25%</th>
+                      <th scope="col">50%</th>
+                      <th scope="col">75%</th>
+                      <th scope="col">100%</th>
+                      <th scope="col">Predicted completion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {goalMetricsRows.map((goal) => {
+                      const milestoneMap = new Map(goal.milestones.map((milestone) => [milestone.percent, milestone] as const))
+                      const milestoneCell = (percent: 25 | 50 | 75 | 100) => {
+                        const milestone = milestoneMap.get(percent)
+                        if (!milestone) return 'n/a'
+                        return `${milestone.targetDate}${milestone.achieved ? ' ✓' : ''}`
+                      }
+                      return (
+                        <tr key={`goal-milestone-print-${goal._id}`}>
+                          <td>{goal.title}</td>
+                          <td>{milestoneCell(25)}</td>
+                          <td>{milestoneCell(50)}</td>
+                          <td>{milestoneCell(75)}</td>
+                          <td>{milestoneCell(100)}</td>
+                          <td>
+                            {goal.predictedCompletionDate ?? 'n/a'}
+                            {typeof goal.predictedDaysDeltaToTarget === 'number'
+                              ? ` (${goal.predictedDaysDeltaToTarget > 0 ? `+${goal.predictedDaysDeltaToTarget}d late` : goal.predictedDaysDeltaToTarget < 0 ? `${Math.abs(goal.predictedDaysDeltaToTarget)}d early` : 'on time'})`
+                              : ''}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 className="print-subhead">Contribution History (Range)</h3>
+              {goalContributionEventsInRange.length === 0 ? (
+                <p className="print-subnote">No goal contributions recorded in selected range.</p>
+              ) : (
+                <div className="print-table-wrap">
+                  <table className="print-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">When</th>
+                        <th scope="col">Goal</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Source</th>
+                        <th scope="col">Balance</th>
+                        <th scope="col">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {goalContributionEventsInRange.map((event) => (
+                        <tr key={`goal-contribution-${event._id}`}>
+                          <td>{cycleDateLabel.format(new Date(typeof event.occurredAt === 'number' ? event.occurredAt : event.createdAt))}</td>
+                          <td>{goalNameById.get(String(event.goalId)) ?? 'Deleted goal'}</td>
+                          <td className="table-amount">{formatMoney(typeof event.amountDelta === 'number' ? event.amountDelta : 0)}</td>
+                          <td>{event.source.replace(/_/g, ' ')}</td>
+                          <td>
+                            {typeof event.beforeCurrentAmount === 'number' && typeof event.afterCurrentAmount === 'number'
+                              ? `${formatMoney(event.beforeCurrentAmount)} -> ${formatMoney(event.afterCurrentAmount)}`
+                              : '-'}
+                          </td>
+                          <td>{event.note?.trim() || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <h3 className="print-subhead">Annual Goal Review Snapshot ({annualGoalReviewSummary.year})</h3>
+              <div className="print-kpi-grid">
+                <div className="print-kpi">
+                  <p>Start funded</p>
+                  <strong>{formatMoney(annualGoalReviewSummary.startTotal)}</strong>
+                  <small>estimated opening of active goals</small>
+                </div>
+                <div className="print-kpi">
+                  <p>End funded</p>
+                  <strong>{formatMoney(annualGoalReviewSummary.endTotal)}</strong>
+                  <small>current active goal funding</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Progress delta</p>
+                  <strong>{formatMoney(annualGoalReviewSummary.progressDeltaTotal)}</strong>
+                  <small>net change this year</small>
+                </div>
+                <div className="print-kpi">
+                  <p>Contribution total</p>
+                  <strong>{formatMoney(annualGoalReviewSummary.contributionTotal)}</strong>
+                  <small>{annualGoalReviewSummary.eventCount} events logged</small>
+                </div>
+              </div>
+              {annualGoalReviewRows.length === 0 ? (
+                <p className="print-subnote">No annual goal review rows available.</p>
+              ) : (
+                <div className="print-table-wrap">
+                  <table className="print-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Goal</th>
+                        <th scope="col">Start</th>
+                        <th scope="col">End</th>
+                        <th scope="col">Progress delta</th>
+                        <th scope="col">Contributions</th>
+                        <th scope="col">Events</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {annualGoalReviewRows.slice(0, 24).map((row) => (
+                        <tr key={`goal-annual-review-${row.id}`}>
+                          <td>{row.title}</td>
+                          <td className="table-amount">{formatMoney(row.startAmount)}</td>
+                          <td className="table-amount">{formatMoney(row.endAmount)}</td>
+                          <td className="table-amount">{formatMoney(row.progressDelta)}</td>
+                          <td className="table-amount">{formatMoney(row.contributionAmount)}</td>
+                          <td>{row.eventCount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {config.includeAuditLogs ? (
+                <>
+                  <h3 className="print-subhead">Goal Event History (Range)</h3>
+                  {goalEventsInRange.length === 0 ? (
+                    <p className="print-subnote">No goal events in selected range.</p>
+                  ) : (
+                    <div className="print-table-wrap">
+                      <table className="print-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">When</th>
+                            <th scope="col">Goal</th>
+                            <th scope="col">Event</th>
+                            <th scope="col">Source</th>
+                            <th scope="col">Change</th>
+                            <th scope="col">Detail</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {goalEventsInRange.slice(0, 200).map((event) => {
+                            const metadata = parseAuditJson<Record<string, unknown>>(event.metadataJson)
+                            const metadataTitle =
+                              typeof metadata?.title === 'string' && metadata.title.trim().length > 0 ? metadata.title.trim() : null
+                            const title = goalNameById.get(String(event.goalId)) ?? metadataTitle ?? 'Deleted goal'
+                            const detailParts: string[] = []
+                            if (typeof event.beforeTargetAmount === 'number' && typeof event.afterTargetAmount === 'number') {
+                              detailParts.push(`${formatMoney(event.beforeTargetAmount)} -> ${formatMoney(event.afterTargetAmount)}`)
+                            }
+                            if (typeof event.beforeTargetDate === 'string' && typeof event.afterTargetDate === 'string') {
+                              detailParts.push(`${event.beforeTargetDate} -> ${event.afterTargetDate}`)
+                            }
+                            if (event.pausedBefore !== undefined || event.pausedAfter !== undefined) {
+                              detailParts.push(`paused ${String(event.pausedBefore ?? false)} -> ${String(event.pausedAfter ?? false)}`)
+                            }
+                            if (event.note?.trim()) {
+                              detailParts.push(event.note.trim())
+                            }
+                            return (
+                              <tr key={`goal-event-history-print-${event._id}`}>
+                                <td>{cycleDateLabel.format(new Date(typeof event.occurredAt === 'number' ? event.occurredAt : event.createdAt))}</td>
+                                <td>{title}</td>
+                                <td>{goalEventTypeLabel(event.eventType)}</td>
+                                <td>{event.source.replace(/_/g, ' ')}</td>
+                                <td>
+                                  {typeof event.amountDelta === 'number'
+                                    ? `${event.amountDelta >= 0 ? '+' : ''}${formatMoney(event.amountDelta)}`
+                                    : typeof event.beforeCurrentAmount === 'number' && typeof event.afterCurrentAmount === 'number'
+                                      ? `${formatMoney(event.beforeCurrentAmount)} -> ${formatMoney(event.afterCurrentAmount)}`
+                                      : '-'}
+                                </td>
+                                <td>{detailParts.length > 0 ? detailParts.join(' · ') : '-'}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </>
           )}
         </section>
       ) : null}
